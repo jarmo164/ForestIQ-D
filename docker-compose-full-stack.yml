@@ -1,0 +1,38 @@
+version: '3'
+
+services:
+  db:
+    image: metsis-postgres:latest
+    environment:
+      POSTGRES_DB: metsis
+      POSTGRES_USER: metsis
+      POSTGRES_PASSWORD: metsis
+    networks:
+      - apidb
+  api:
+    image: metsis-ee-api:latest
+    environment:
+      - METSIS_PORT=9100
+      - METSIS_SYSTEM_OWNER=laekvere
+      - METSIS_DEVMODE=true
+      - FINEFRAME_AUTH_USUAL_TOKEN_TTL_MIN=200
+      - FINEFRAME_AUTH_REFRESH_TOKEN_TTL_MIN=60
+      - FINEFRAME_AUTH_TOTP_TOKEN_TTL_MIN=3
+      - FINEFRAME_DB_URL=jdbc:postgresql://db:5432/metsis
+      - FINEFRAME_DB_USER=app
+      - FINEFRAME_DB_PASSWORD=app
+    networks:
+      - apidb
+      - uiapi
+
+  ui:
+    image: metsis-ee-ui:latest
+    ports:
+      - "443:443"
+      - "80:80"
+    networks:
+      - uiapi
+
+networks:
+  uiapi:
+  apidb:

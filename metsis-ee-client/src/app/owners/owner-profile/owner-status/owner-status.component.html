@@ -1,0 +1,80 @@
+<div *ngIf="status.loading" class="big-loader centered"></div>
+<div *ngIf="status.error" class="alert alert-danger">{{status.error}}</div>
+
+<div *ngIf="status.data">
+  <div class="row row-underlined" *ngIf="status.data.assignee">
+    <span class="col-sm-4 nowrap">Current assignee:</span>
+    <span class="col-sm-8">{{status.data.assignee?.name}}</span>
+  </div>
+  <form (ngSubmit)="doChangeAssignee()" *ngIf="authService.userHasPrivilege('ADMIN')">
+    <fieldset [disabled]="assigneeChange.loading">
+      <div class="row row-underlined">
+        <label class="col-sm-4 nowrap col-form-label">New assignee:</label>
+        <select name="new-assignee" class="col-sm-8 form-control" [(ngModel)]="newAssignee">
+          <option (ngValue)="null"></option>
+          <option *ngFor="let assignee of status.data.possibleAssignees" [ngValue]="assignee.id">{{assignee.name}}
+          </option>
+        </select>
+      </div>
+      <div class="row row-underlined" *ngIf="assigneeChange.error">
+        <div class="alert alert-danger">{{assigneeChange.error}}</div>
+      </div>
+      <div class="row row-underlined">
+        <button class="btn btn-info col-sm-12">Reassign</button>
+      </div>
+    </fieldset>
+  </form>
+  <form (ngSubmit)="doChangeOwnerStatus()">
+    <fieldset [disabled]="changeOwnerStatus.loading">
+      <div class="row row-underlined" *ngIf="status.data.status">
+        <span class="col-sm-4 nowrap">Current status:</span>
+        <span class="col-sm-8"><app-owner-status-bubble [status]="status.data.status"></app-owner-status-bubble></span>
+      </div>
+      <div class="row row-underlined">
+        <label class="col-sm-4 nowrap col-form-label" for="new-status">New status:</label>
+        <select name="new-status" id="new-status" class="form-control col-sm-8"
+                [(ngModel)]="changeOwnerStatusModel.newStatus">
+          <option [ngValue]="null"></option>
+          <option *ngFor="let osKey of status.data.possibleOwnerStatuses" [ngValue]="osKey">{{osKey}}
+          </option>
+        </select>
+      </div>
+      <div class="row row-underlined">
+        <label class="col-sm-4 nowrap col-form-label" for="new-status-comment">Comment:</label>
+        <textarea name="new-status-comment" id="new-status-comment" class="form-control col-sm-8"
+                  [(ngModel)]="changeOwnerStatusModel.comment"></textarea>
+      </div>
+      <div class="row row-underlined" *ngIf="changeOwnerStatus.error">
+        <div class="alert alert-danger">{{changeOwnerStatus.error}}</div>
+      </div>
+      <div class="row row-underlined">
+        <button type="submit" class="btn btn-success col-sm-12">Change status</button>
+      </div>
+    </fieldset>
+  </form>
+  <form (ngSubmit)="addReminder()">
+    <fieldset [disabled]="reminderAdder.loading">
+      <div class="row row-underlined">
+        <label class="col-sm-4 nowrap col-form-label" for="new-reminder-text">New reminder:</label>
+        <textarea name="new-reminder-text" id="new-reminder-text" class="form-control col-sm-8"
+                  [(ngModel)]="newReminder.text"></textarea>
+      </div>
+      <div class="row row-underlined">
+        <label class="col-sm-4 nowrap col-form-label" for="new_reminder_due">Due:</label>
+        <input [(ngModel)]="newReminder.dueTime" [owlDateTimeTrigger]="new_reminder_due"
+               [owlDateTime]="new_reminder_due"
+               [min]="minRemindersDate"
+               id="new_reminder_due" class="form-control col-sm-8" name="new_reminder_due">
+        <owl-date-time #new_reminder_due></owl-date-time>
+      </div>
+      <div class="row row-underlined">
+        <label class="col-sm-4 nowrap col-form-label" for="new-reminder-cadastre">Cadastre:</label>
+        <input name="new-reminder-cadastre" id="new-reminder-cadastre" class="form-control col-sm-8"
+               [(ngModel)]="newReminder.cadastre"/>
+      </div>
+      <div class="row row-underlined">
+        <button type="submit" class="btn btn-dark col-sm-12">Add reminder</button>
+      </div>
+    </fieldset>
+  </form>
+</div>

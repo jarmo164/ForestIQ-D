@@ -1,0 +1,22 @@
+<div class="wrapper">
+  <div class="sidebar" *ngIf="authService.isLoggedIn() && !authService.isFullScreenPage()">
+    <h2><a [routerLink]="'/'" style="color: white;">Metsis</a></h2>
+    <ul>
+      <li *ngIf="authService.userHasPrivilege('ADMIN')"><a routerLink="workdesk/admin"><i class="fas fa-search-plus"></i>Find work</a></li>
+      <li *ngIf="authService.userHasPrivilege('OWNER_PROFILE') || authService.userHasPrivilege('ASSIGNED_OWNERS')"><a routerLink="workdesk/caller"><i class="fas fa-headset"></i>My work</a></li>
+      <li *ngIf="authService.userHasPrivilege('EVALUATION')"><a routerLink="workdesk/evaluator"><i class="fas fa-euro"></i>Evaluations</a></li>
+      <li *ngIf="authService.userHasPrivilege('OWNER_PROFILE') || authService.userHasPrivilege('ASSIGNED_OWNERS')"><a routerLink="reminders"><i class="fas fa-bell"></i>Reminders</a></li>
+      <li *ngIf="authService.userHasPrivilege('OWNER_PROFILE')"><a routerLink="owners"><i class="fas fa-user"></i>Find owner</a></li>
+      <li *ngIf="authService.userHasPrivilege('PHONES')"><a routerLink="phones"><i class="fas fa-book"></i>Phonebook</a></li>
+      <li *ngIf="authService.userHasPrivilege('ADMIN')"><a routerLink="contracts"><i class="fas fa-address-card"></i>Contracts</a></li>
+      <li *ngIf="authService.userHasPrivilege('ADMIN')"><a routerLink="admin"><i class="fas fa-project-diagram"></i>Admin</a></li>
+      <li><a routerLink="me"><i class="fas fa-user-cog"></i>My account</a></li>
+      <li><a routerLink="messages"><i class="fas fa-comment-dots"></i>Messages ({{messagesService.newMessagesCount | async}})</a></li>
+      <li><a href="javascript:void(0);" (click)="authService.logOut()"><i class="fas fa-sign-out-alt"></i>Log out</a></li>
+    </ul>
+  </div>
+
+  <div class="main_content">
+    <router-outlet></router-outlet>
+  </div>
+</div>

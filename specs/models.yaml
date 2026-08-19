@@ -1,0 +1,738 @@
+components:
+  schemas:
+    ApiUserIdAndName:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique ID
+        name:
+          type: string
+          description: Name
+      required:
+        - id
+        - name
+
+    ApiPrivilege:
+      type: string
+      enum:
+        - ADMIN
+        - OWNER_PROFILE
+        - ASSIGNED_OWNERS
+        - PHONES
+        - EVALUATION
+
+    ApiMaintainableUser:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique ID
+        name:
+          type: string
+          description: Name
+        privileges:
+          type: array
+          items:
+            $ref: 'models.yaml#/components/schemas/ApiPrivilege'
+            description: User privilege
+      required:
+        - id
+        - name
+        - privileges
+    ApiMaintainableUserWithPassword:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique ID
+        name:
+          type: string
+          description: Name
+        privileges:
+          type: array
+          items:
+            $ref: 'models.yaml#/components/schemas/ApiPrivilege'
+            description: User privilege
+        password:
+          type: string
+          description: Password
+      required:
+        - id
+        - name
+        - privileges
+        - password
+
+    ApiUserOwnerStatusChangeStatistics:
+      type: object
+      properties:
+        userId:
+          type: string
+          description: ID of the user this statistic is about
+        statisticsFrames:
+          type: array
+            items:
+              $ref: 'models.yaml#/components/schemas/ApiUserOwnerStatusChangeStatisticsFrame'
+      required:
+        - userId
+        - statisticsFrames
+
+    ApiUserOwnerStatusChangeStatisticsFrame:
+      type: object
+      properties:
+        since:
+          type: string
+          format: date-time
+        count:
+          type: integer
+          format: int64
+      required:
+        - since
+        - count
+
+    ApiUserStatisticsGranularity:
+      type: string
+      enum:
+        - DAY
+        - HOUR
+
+    ApiUsersStatisticsFilters:
+      type: object
+      properties:
+        statuses:
+          type: array
+          items:
+            type: string
+        users:
+          type: array
+          items:
+            $ref: 'models.yaml#/components/schemas/ApiUserIdAndName'
+      required:
+        - statuses
+        - users
+
+    ApiOwnerStatus:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Status code
+        colorHex:
+          type: string
+          description: This statuses distinctive color in UI
+        durationDays:
+          type: string
+          description: For how long this status will disale the user
+        protectedStatus:
+          type: boolean
+          description: Is this status protected against deletion.
+      required:
+        - id
+        - colorHex
+        - durationDays
+        - protectedStatus
+
+    ApiOwnerStatusModifiableParams:
+      type: object
+      properties:
+        colorHex:
+          type: string
+          description: This statuses distinctive color in UI
+        durationDays:
+          type: string
+          description: For how long this status will disale the user
+      required:
+        - colorHex
+        - durationDays
+
+    ApiAssignOwnersToUser:
+      type: object
+      properties:
+        owners:
+          type: array
+          items:
+            type: string
+        userId:
+          type: string
+        reassign:
+          type: boolean
+      required:
+        - owners
+        - userId
+        - reassign
+
+    ApiOwnerOverview:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        statusSetAt:
+          type: string
+          format: date-time
+        assignee:
+          $ref: 'models.yaml#/components/schemas/ApiUserIdAndName'
+        lastChange:
+          $ref: 'models.yaml#/components/schemas/ApiOwnerLastChange'
+        phone:
+          type: string
+      required:
+        - id
+        - name
+
+    ApiOwnerLastChange:
+      type: object
+      properties:
+        createdAt:
+          type: string
+          format: date-time
+        author:
+          $ref: 'models.yaml#/components/schemas/ApiUserIdAndName'
+      required:
+        - createdAt
+        - author
+
+    ApiAdminWorkdeskConservationsIncludes:
+      type: string
+      enum:
+        - YES
+        - NO
+        - NOT_IMPORTANT
+
+    ApiOwnerType:
+      type: string
+      enum:
+        - COUNTRY
+        - PERSON
+        - COMPANY
+
+    ApiAdminWorkdeskAssignmentsSearchFilters:
+      type: object
+      properties:
+        counties:
+          type: array
+          items:
+            type: string
+        municipalities:
+          type: array
+          items:
+            type: string
+        users:
+          type: array
+          items:
+            $ref: 'models.yaml#/components/schemas/ApiUserIdAndName'
+        statuses:
+          type: array
+          items:
+            type: string
+      required:
+        - counties
+        - municipalities
+        - users
+        - statuses
+
+    ApiContract:
+      type: object
+      properties:
+        id:
+          type: string
+        contractNumber:
+          type: string
+        buyer:
+          $ref: 'models.yaml#/components/schemas/ApiContractBuyerParty'
+        sellers:
+          type: array
+          items:
+            $ref: 'models.yaml#/components/schemas/ApiContractSellerParty'
+        details:
+          $ref: 'models.yaml#/components/schemas/ApiContractDetails'
+        templateNumber:
+          type: integer
+          format: int64
+
+    ApiContractParty:
+      type: object
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        proxy:
+          $ref: 'models.yaml#/components/schemas/ApiContractPartyProxy'
+        contacts:
+          $ref: 'models.yaml#/components/schemas/ApiContractPartyContacts'
+      required:
+        - name
+        - code
+        - contacts
+
+    ApiContractBuyerParty:
+      type: object
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        proxy:
+          $ref: 'models.yaml#/components/schemas/ApiContractPartyProxy'
+        contacts:
+          $ref: 'models.yaml#/components/schemas/ApiContractPartyContacts'
+      required:
+        - name
+        - code
+        - contacts
+
+    ApiContractSellerParty:
+      type: object
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        bankAccountNumber:
+          type: string
+        moneyObtainedFromTheDeal:
+          type: number
+          format: double
+          minimum: 0.0
+        proxy:
+          $ref: 'models.yaml#/components/schemas/ApiContractPartyProxy'
+        contacts:
+          $ref: 'models.yaml#/components/schemas/ApiContractPartyContacts'
+      required:
+        - name
+        - code
+        - contacts
+        - bankAccountNumber
+
+    ApiContractPartyProxy:
+      type: object
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+      required:
+        - name
+        - code
+
+    ApiContractPartyContacts:
+      type: object
+      properties:
+        email:
+          type: string
+        phone:
+          type: string
+        address:
+          type: string
+
+    ApiContractDetails:
+      type: object
+      properties:
+        dateOfEnforcement:
+          type: string
+          format: date-time
+        finalDate:
+          type: string
+          format: date-time
+        price:
+          type: number
+          format: double
+        writtenPrice:
+          type: string
+        bankDaysToPayUp:
+          type: integer
+          format: int64
+        additionalTerms:
+          type: string
+        cadastres:
+          type: array
+          items:
+            $ref: 'models.yaml#/components/schemas/ApiContractCadastre'
+        required:
+          - dateOfEnforcement
+          - finalDate
+          - price
+          - writtenPrice
+          - bankDaysToPayUp
+          - cadastres
+
+    ApiContractCadastre:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        registrationPartNumber:
+          type: string
+        forestSections:
+          type: array
+          items:
+            $ref: 'models.yaml#/components/schemas/ApiContractForestSection'
+      required:
+        - id
+
+    ApiContractForestSection:
+      type: object
+      properties:
+        sectionNumber:
+          type: integer
+          format: int64
+        area:
+          type: number
+          format: double
+        amountToBeCut:
+          type: number
+          format: double
+        typeOfWork:
+          type: string
+        notificationId:
+          type: string
+      required:
+        - sectionNumber
+        - area
+
+    ApiContractOverview:
+      type: object
+      properties:
+        id:
+          type: string
+        sellers:
+          type: string
+        buyer:
+          type: string
+        contractNo:
+          type: string
+        created:
+          type: string
+          format: date-time
+      required:
+        - id
+        - sellers
+        - buyer
+        - contractNo
+        - created
+
+    ApiEvaluation:
+      type: object
+      properties:
+        ownerPrice:
+          type: number
+          format: double
+        ourPrice:
+          type: number
+          format: double
+
+    ApiCadastreLabel:
+      type: string
+      enum:
+        - CONSERVATION_AREA
+        - DEAD_LAND
+        - SWAMP
+        - REAL_ESTATE
+        - NOTIFICATIONS_CONSUMED
+
+    ApiCadastreNotification:
+      type: object
+      properties:
+        notificationId:
+          type: int
+          format: int64
+        notificationNumber:
+          type: int
+          format: int64
+        cadastreSubPartCode:
+          type: int
+          format: int64
+        workCode:
+          type: string
+        state:
+          type: int
+          format: int64
+        damageCode:
+          type: string
+        area:
+          type: number
+          format: double
+        amountToBeCut:
+          type: number
+          format: double
+        decision:
+          type: string
+        registrationDate:
+          type: string
+          format: date-time
+        confirmationDate:
+          type: string
+          format: date-time
+        cadasreNo:
+          type: string
+
+    ApiCadastreForestryPlan:
+      type: object
+      properties:
+        cadastreNo:
+          type: string
+        registrationDate:
+          type: string
+          format: date-time
+        sections:
+          type: array
+          items:
+            $ref: 'models.yaml#/components/schemas/ApiCadastreForestryPlanSection'
+      required:
+        - cadastreNo
+        - registrationDate
+        - sections
+
+    ApiCadastreForestryPlanSection:
+      type: object
+      properties:
+        sectionNo:
+          type: int
+          format: int64
+        treeSpecies:
+          type: string
+        area:
+          type: number
+          format: double
+        polygon:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: 'models.yaml#/components/schemas/ApiGeographicalCoordinate'
+
+    ApiGeographicalCoordinate:
+      type: object
+      properties:
+        lat:
+          type: int
+          format: int64
+        lng:
+          type: int
+          format: int64
+      required:
+        - lat
+        - lng
+
+    ApiCadastreAreas:
+      type: object
+      properties:
+        area:
+          type: number
+          format: double
+        forestArea:
+          type: number
+          format: double
+        arableArea:
+          type: number
+          format: double
+        yardArea:
+          type: number
+          format: double
+        meadowArea:
+          type: number
+          format: double
+        underWaterArea:
+          type: number
+          format: double
+        buildingsArea:
+          type: number
+          format: double
+        otherArea:
+          type: number
+          format: double
+
+    ApiSortDirection:
+      type: string
+      enum:
+        - ASC
+        - DESC
+
+    ApiOwnersPage:
+      type: object
+      properties:
+        number:
+          type: integer
+          description: Page number
+        size:
+          type: integer
+          description: Number of items on this page
+        total:
+          type: integer
+          description: Total number of items
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiOwnerOverview'
+          description: Items on the page
+      required:
+        - number
+        - size
+        - total
+        - content
+
+    ApiOwner:
+      allOf:
+        - $ref: '#/components/schemas/ApiOwnerOverview'
+        - type: object
+          properties:
+            type:
+              $ref: '#/components/schemas/ApiOwnerType'
+            email:
+              type: string
+            address:
+              type: string
+            info:
+              type: string
+            lastCadastreListRefresh:
+              type: string
+              format: date-tine
+            cadastres:
+              type: array
+              items:
+                $ref: '#/components/schemas/ApiOwnerCadastreOverview'
+          required:
+            - cadastres
+
+    ApiOwnerCadastreOverview:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        marked:
+          type: boolean
+        area:
+          type: number
+          format: double
+        centroid:
+          $ref: '#/components/schemas/ApiGeographicalCoordinate'
+        polygon:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/ApiGeographicalCoordinate'
+
+    ApiAddOwner:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/ApiOwnerType'
+      required:
+        - name
+        - type
+
+    ApiOwnerStatusChange:
+      type: object
+      properties:
+        code:
+          type: string
+      required:
+        - code
+
+    ApiNewLogEntry:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
+    ApiLogEntry:
+      type: object
+      properties:
+        message:
+          type: string
+        createdAt:
+          type: string
+        createdBy:
+          type: string
+      required:
+        - message
+        - createdAt
+        - createdBy
+
+    ApiOwnerAssignee:
+      type: object
+      properties:
+        assignee:
+          type: string
+      required:
+        - assignee
+
+    ApiMyWorkSearchFilters:
+      type: object
+      properties:
+        statuses:
+          type: array
+          items:
+            type: string
+      required:
+        - statuses
+
+    ApiReminder:
+      type: object
+      properties:
+        id:
+          type: string
+        owner:
+          $ref: '#/components/schemas/ApiOwnerOverview'
+        text:
+          type: string
+        dueTime:
+          type: string
+          format: date-time
+        creator:
+          type: string
+      required:
+        - id
+        - owner
+        - text
+        - dueTime
+        - creator
+
+    ApiNewReminder:
+      type: object
+      properties:
+        ownerId:
+          type: string
+        text:
+          type: string
+        dueTime:
+          type: string
+          format: date-time
+        creator:
+          type: string
+      required:
+        - ownerId
+        - text
+        - dueTime
+        - creator
+
+    ApiPerson:
+      type: object
+      properties:
+        source:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+        address:
+          type: string
+        code:
+          type: string

@@ -1,0 +1,11 @@
+{
+  "/api": {
+    "target": "http://host.docker.internal:9100",
+    "secure": false
+  },
+  "/ws": {
+    "target": "http://host.docker.internal:9100",
+    "secure": false,
+    "ws": true
+  }
+}

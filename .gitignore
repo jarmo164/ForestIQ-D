@@ -1,0 +1,48 @@
+.idea
+*.iml
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Build outputs
+build
+dist
+out
+metsis-ee-api/.gradle/
+metsis-ee-api/build/
+metsis-ee-api/out/
+metsis-ee-api/velocity.log
+velocity.log
+metsis-ee-distribution/
+metsis-ee-distribution.tar
+*.tar
+.gradle
+venv
+node_modules/
+coverage/
+tmp/
+
+# Runtime/local files
+.run/
+*.log
+*.pid
+
+# Generated/private data exports
+Andmed/
+Eesti_KATASTER_CSV.csv
+*.csv
+*.xlsx
+*.xls
+
+# Secrets and local certificates
+*.pem
+*.key
+*.p12
+*.jks
+!metsis-ee-api/src/test/resources/test-priv.key
+!metsis-ee-api/src/test/resources/test-pub.key
+
+__pycache__/
+*.py[cod]
+forest-plan-discovery-work-folder

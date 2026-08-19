@@ -1,0 +1,102 @@
+<div class="row">
+  <div class="col-sm-4">
+    <div class="card">
+      <div class="card-header">Assigned work</div>
+      <div class="card-body">
+        <div *ngIf="adminWorkdeskPreparationData.error" class="alert alert-danger">
+          {{adminWorkdeskPreparationData.error}}
+        </div>
+        <div *ngIf="adminWorkdeskPreparationData.loading" class="big-loader"></div>
+
+        <div *ngIf="adminWorkdeskPreparationData.data">
+          <form (ngSubmit)="doSearch()">
+            <fieldset [disabled]="assignedWorkSearch.loading">
+              <div class="form-group row">
+                <label class="col-sm-4 col-form-label">Assignee:</label>
+                <angular2-multiselect [data]="adminWorkdeskPreparationData.data.assignees"
+                                      [(ngModel)]="assignedWorkSearchModel.assignees"
+                                      [name]="'assignees'"
+                                      [settings]="{classes: 'col-sm-8 multiselect', enableSearchFilter: false}">
+                </angular2-multiselect>
+              </div>
+              <div class="form-group row">
+                <label for="status" class="col-sm-3 col-form-label">Status:</label>
+                <select class="form-control col-sm-9" [(ngModel)]="assignedWorkSearchModel.status"
+                        name="status" id="status">
+                  <option [ngValue]="null"></option>
+                  <option *ngFor="let status of adminWorkdeskPreparationData.data.statuses" [ngValue]="status.id">{{status.id}}</option>
+                </select>
+              </div>
+              <div class="form-group row">
+                <label for="max-results" class="col-sm-3 col-form-label">Max results:</label>
+                <input class="form-control col-sm-9" type="number" min="1" [(ngModel)]="assignedWorkSearchModel.maxResults"
+                        name="max-results" id="max-results">
+              </div>
+              <div class="form-group row">
+                <div class="col-sm-12">
+                  <button class="btn btn-info" type="submit">Search</button>
+                </div>
+              </div>
+            </fieldset>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-8" *ngIf="assignedWorkSearch.any()">
+    <div class="card">
+      <div class="card-header">
+        <span class="fa fa-align-justify"></span> Results
+      </div>
+      <div class="card-body">
+        <div *ngIf="assignedWorkSearch.loading" class="big-loader centered"></div>
+        <div *ngIf="assignedWorkSearch.error" class="alert alert-danger">{{assignedWorkSearch.error}}</div>
+
+        <div class="results" *ngIf="assignedWorkSearch.data">
+          <p><i>Found {{assignedWorkSearch.data.length}} owner(s):</i></p>
+          <form (ngSubmit)="reassignWork()">
+            <fieldset [disabled]="workAssign.loading">
+              <table class="table table-striped">
+                <tr>
+                  <th></th>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Phone</th>
+                  <th>Status</th>
+                  <th>Status set at</th>
+                  <th>Assignee</th>
+                </tr>
+                <tr *ngFor="let owner of assignedWorkSearch.data">
+                  <td><input type="checkbox" [(ngModel)]="owner.selected" name="owner_{{owner.id}}_selected">
+                  </td>
+                  <td>
+                    <a target="_blank" routerLink="/owners/{{owner.id}}">{{owner.id}}</a>
+                  </td>
+                  <td>{{owner.name}}</td>
+                  <td>{{owner.phone}}</td>
+                  <td><app-owner-status-bubble [status]="{id: owner.status, colorHex: null}"></app-owner-status-bubble></td>
+                  <td>{{owner.statusSetAt  | date: 'HH:mm dd.MM.yyyy'}}</td>
+                  <td>{{owner.assignee?.name}}</td>
+                </tr>
+              </table>
+
+              <div class="col-sm-12">
+                <div class="row">
+                  <button type="submit" class="btn btn-success col-sm-6">Reassign selected owners to:</button>
+                  <div class="col-sm-1">&nbsp;</div>
+                  <select type="number" class="col-sm-5 form-control" [(ngModel)]="workAssignee"
+                          name="workAssignee">
+                    <option [ngValue]="null"></option>
+                    <option *ngFor="let c of adminWorkdeskPreparationData.data.callers" [ngValue]="c.id">
+                      {{c.name}}
+                    </option>
+                  </select>
+                </div>
+              </div>
+            </fieldset>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

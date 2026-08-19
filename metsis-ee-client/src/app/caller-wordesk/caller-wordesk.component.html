@@ -1,0 +1,90 @@
+<div class="simple-content-container">
+  <div class="row">
+
+    <div class="col-sm-4">
+      <div class="big-loader" *ngIf="prepData.loading"></div>
+      <div class="card" *ngIf="prepData.data">
+        <div class="card-header">
+          <span class="fa fa-search"></span> Filter of owners assigned to me
+        </div>
+        <div class="card-body">
+          <form (ngSubmit)="searchMyWork('status_set_at', 'asc')">
+            <fieldset [disabled]="work.loading">
+              <div class="form-group row">
+                <label for="id" class="col-sm-3 col-form-label">ID</label>
+                <input type="text" class="form-control col-sm-9" id="id" name="id"
+                       placeholder="Owner ID" [(ngModel)]="myWorkSearchCriteria.id">
+              </div>
+              <div class="form-group row">
+                <label for="cadastre" class="col-sm-3 col-form-label">Cadastre</label>
+                <input type="text" class="form-control col-sm-9" id="cadastre" name="cadastre"
+                       placeholder="Cadastre" [(ngModel)]="myWorkSearchCriteria.cadastre">
+              </div>
+              <div class="form-group row">
+                <label for="name" class="col-sm-3 col-form-label">Name</label>
+                <input type="text" class="form-control col-sm-9" id="name" name="name"
+                       placeholder="Owner name (may be partial)" [(ngModel)]="myWorkSearchCriteria.name">
+              </div>
+              <div class="form-group row">
+                <label for="phone" class="col-sm-3 col-form-label">Phone</label>
+                <input type="text" class="form-control col-sm-9" id="phone" name="phone"
+                       placeholder="Owners phone numer (may be partial)" [(ngModel)]="myWorkSearchCriteria.phone">
+              </div>
+              <div class="form-group row">
+                <label for="email" class="col-sm-3 col-form-label">E-Mail</label>
+                <input type="text" class="form-control col-sm-9" id="email" name="email"
+                       placeholder="Owners e-mail (may be partial)" [(ngModel)]="myWorkSearchCriteria.email">
+              </div>
+
+              <div class="form-group row">
+                <label class="col-sm-3 col-form-label" [for]="'statuses'">Statuses:</label>
+                <angular2-multiselect [data]="possibleOwnerStatuses"
+                                      [(ngModel)]="myWorkSearchCriteria.statuses"
+                                      [name]="'statuses'"
+                                      [settings]="{classes: 'col-sm-9 multiselect'}">
+                </angular2-multiselect>
+              </div>
+
+              <div class="row">
+                <div class="col-sm-6">
+                  <button type="submit" class="btn btn-primary"><span class="fa fa-search"></span> Search</button>
+                </div>
+              </div>
+
+            </fieldset>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-sm-8">
+      <div class="card">
+        <div class="card-header">
+          <span class="fa fa-align-justify"></span> Results
+        </div>
+        <div class="card-body">
+          <div *ngIf="work.loading" class="big-loader centered"></div>
+          <div *ngIf="work.error" class="alert alert-danger">{{work.error}}</div>
+
+          <div class="results" *ngIf="work.data">
+            <p><i>Found {{work.data.length}} owner(s):</i></p>
+            <table class="table table-striped">
+              <tr>
+                <th><span (click)="searchMyWork('id', 'asc')" class="fa fa-angle-down cursor-pointer"></span> Owner ID <span (click)="searchMyWork('asc', 'desc')" class="fa fa-angle-up cursor-pointer"></span></th>
+                <th><span (click)="searchMyWork('name', 'asc')" class="fa fa-angle-down cursor-pointer"></span> Owner Name <span (click)="searchMyWork('name', 'desc')" class="fa fa-angle-up cursor-pointer"></span></th>
+                <th><span (click)="searchMyWork('status', 'asc')" class="fa fa-angle-down cursor-pointer"></span> Status <span (click)="searchMyWork('status', 'desc')" class="fa fa-angle-up cursor-pointer"></span></th>
+                <th><span (click)="searchMyWork('status_set_at', 'asc')" class="fa fa-angle-down cursor-pointer"></span> Status last changed <span (click)="searchMyWork('status_set_at', 'desc')" class="fa fa-angle-up cursor-pointer"></span></th>
+              </tr>
+              <tr *ngFor="let owner of work.data">
+                <td><a target="_blank" routerLink="/owners/{{owner.id}}">{{owner.id}}</a></td>
+                <td>{{owner.name}}</td>
+                <td><app-owner-status-bubble [status]="{id: owner.status, colorHex: null}"></app-owner-status-bubble></td>
+                <td>{{owner.statusSetAt | date: 'HH:mm dd.MM.yyyy'}}</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

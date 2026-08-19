@@ -1,0 +1,92 @@
+agm-map {
+  height: 100vh;
+}
+
+.map-wrapper {
+  position: relative;
+  font-size: 0.9rem !important;
+}
+
+.map-left-pane {
+  position: absolute;
+  top: 75px;
+  left: 10px;
+  z-index: 99;
+  width: 25vw;
+}
+
+.map-right-pane {
+  position: absolute;
+  top: 75px;
+  right: 10px;
+  z-index: 100;
+  width: 25vw;
+}
+
+.owner-form {
+  padding-right: 25px;
+}
+
+.toggle-owner-info {
+  font-size: 20px;
+  background: #17a2b8;
+  padding: 5px;
+  border-radius: 2px;
+  cursor: pointer;
+  color: white;
+}
+
+.owner-card-body {
+  max-height: 60vh;
+  overflow: scroll;
+}
+
+.owner-tab-nav a {
+  padding: 10px 10px 10px 5px;
+  color: white;
+  cursor: pointer;
+  border-right: 1px solid white;
+}
+
+.owner-tab-nav a:first-of-type {
+  padding-left: 10px;
+}
+
+.owner-tab-nav a:last-of-type {
+  border-right: 0 !important;
+}
+
+.owner-tab-nav {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  width: 93%;
+  background-color: #17a2b8;
+  margin-top: 5px;
+  margin-left: 15px;
+}
+
+.marked {
+  background-color: rgba(255, 178, 13, 0.3) !important;
+}
+
+.next-assigned-owner {
+  float: right;
+  margin-right: 5px;
+  background-color: #17a2b8;
+  border-radius: 10px;
+  padding: 3px;
+  color: white;
+  cursor: pointer;
+}
+
+.refresh-owner-properties-button {
+  margin-bottom: 20px;
+}
+
+.owner-man {
+  color: blue !important;
+}
+
+.owner-woman {
+  color: deeppink !important;
+}

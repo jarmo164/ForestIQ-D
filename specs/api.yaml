@@ -1,0 +1,2012 @@
+openapi: 3.0.3
+info:
+  title: Metsis API
+  description: Metsis API is HTTP RESTful JSON based API meant to be consumed by Metsis UI SPA.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080/api/v1
+
+tags:
+  - name: usersAdministration
+    x-displayName: Users Administration
+  - name: usersStatistics
+    x-displayName: Users Statistics
+  - name: ownerStatuses
+    x-displayName: Owner Statuses
+  - name: adminWorkdesk
+    x-displayName: Administrator Workdesk
+  - name: contracts
+    x-displayName: Contracts
+  - name: evaluations
+    x-displayName: Evaluations
+  - name: applicationMessages
+    x-displayName: Application Messages
+  - name: cadastres
+    x-displayName: Cadastres
+  - name: owners
+    x-displayName: Owners
+  - name: myWork
+    x-displayName: My Work
+  - name: reminders
+    x-displayName: Reminders
+  - name: persons
+    x-displayName: Persons
+
+paths:
+
+  /users:
+    get:
+      summary: Fetches minimal information about application users (id, name, privileges)
+      operationId: findAllUsers
+      tags:
+        - usersAdministration
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiMaintainableUser'
+    post:
+      summary: Creates a new application user
+      operationId: createUser
+      tags:
+        - usersAdministration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiMaintainableUser'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiMaintainableUserWithPassword'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /users/{id}:
+    delete:
+      summary: Deletes user
+      operationId: deleteUser
+      tags:
+        - usersAdministration
+      parameters:
+        - name: id
+          in: path
+          description: User ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: User with given ID was not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /users/{id}/privileges:
+    put:
+      summary: Changes user privileges
+      operationId: changeUserPrivileges
+      tags:
+        - usersAdministration
+      parameters:
+        - name: id
+          in: path
+          description: User ID
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: 'models.yaml#/components/schemas/ApiPrivilege'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiMaintainableUser'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: User with given ID was not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /user-statistics:
+    get:
+      summary: Fetches statistics about user made owner status changes
+      operationId: getUsersStatistics
+      tags:
+        - usersStatistics
+      parameters:
+        - name: userId
+          in: query
+          description: User IDs to find statistics about.
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: fromStatus
+          in: query
+          description: Status changed from one state to another. This is the from side of transition.
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: toStatus
+          in: query
+          description: Status changed from one state to another. This is the to side of transition.
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: granularity
+          in: query
+          description: Granularity of statistics. One datapoint represents either DAY or HOUR.
+          required: true
+          schema:
+            $ref: 'models.yaml#/components/schemas/ApiUserStatisticsGranularity'
+        - name: since
+          in: query
+          description: Start time of statistics
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: upTo
+          in: query
+          description: End time of statistics
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiUserOwnerStatusChangeStatistics'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /user-statistics/filters:
+    get:
+      summary: Fetches filters to help querying user statistics
+      operationId: getUsersStatisticsFilters
+      tags:
+        - usersStatistics
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiUsersStatisticsFilters'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /owner-statuses:
+    get:
+      summary: Fetches all possible owner statuses
+      operationId: getOwnerStatuses
+      tags:
+        - ownerStatuses
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiOwnerStatus'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+    post:
+      summary: Add new owner status
+      operationId: addOwnerStatus
+      tags:
+        - ownerStatuses
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiOwnerStatus'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiOwnerStatus'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /owner-statuses/{id}:
+    put:
+      summary: Change owner status
+      operationId: changeOwnerStatus
+      tags:
+        - ownerStatuses
+      parameters:
+        - name: id
+          in: path
+          description: Status ID
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiOwnerStatusModifiableParams'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiOwnerStatus'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+    delete:
+      summary: Delete owner status
+      operationId: deleteOwnerStatus
+      tags:
+        - ownerStatuses
+      parameters:
+        - name: id
+          in: path
+          description: Status ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /admin-workdesk/owners/:
+    get:
+      summary: Search across all owners by different criteria.
+      operationId: findOwners
+      tags:
+        - adminWorkdesk
+      parameters:
+        - name: county
+          in: query
+          description: County
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+        - name: municipality
+          in: query
+          description: Municipality
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+        - name: minArea
+          in: query
+          description: Minimum area
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: maxArea
+          in: query
+          description: Maximum area
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: minForestArea
+          in: query
+          description: Maximum forest area
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: maxForestArea
+          in: query
+          description: Maximum forest area
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: minArableArea
+          in: query
+          description: Maximum arable area
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: maxArableArea
+          in: query
+          description: Maximum arable area
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: conservations
+          in: query
+          description: Natural conservations
+          required: true
+          schema:
+            $ref: 'models.yaml#/components/schemas/ApiAdminWorkdeskConservationsIncludes'
+        - name: withSuspensionReason
+          in: query
+          description: Owners who are otherwise suspended from search with given reason
+          required: false
+          schema:
+            type: string
+        - name: mustHavePhoneNumber
+          in: query
+          description: Only include owners with phone number
+          required: false
+          schema:
+            type: boolean
+        - name: assignee
+          in: query
+          description: Owners who are assigned to given assignee (user id)
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Owners with status
+          required: false
+          schema:
+            type: string
+        - name: size
+          in: query
+          description: Maximum number of results
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: owner_type
+          in: query
+          description: Which kind of owners to include
+          required: true
+          schema:
+            type: array
+            items:
+              $ref: 'models.yaml#/components/schemas/ApiOwnerType'
+        - name: hasNotificationsSince
+          in: query
+          description: Cadastre has forestnotifications at least as new as this date.
+          required: false
+          schema:
+            type: date
+        - name: hasForestPlanSince
+          in: query
+          description: Cadastre has forestry plan at least as new as this date.
+          required: false
+          schema:
+            type: date
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiOwnerOverview'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /admin-workdesk/owners/assignments:
+    post:
+      summary: Assign many owners to a user with one request
+      operationId: assignOwnersToUser
+      tags:
+        - adminWorkdesk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiAssignOwnersToUser'
+      responses:
+        '200':
+          description: successful operation
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /admin-workdesk/owners/assignments/filters:
+    get:
+      operationId: getAssignmentsSearchFilters
+      tags:
+        - adminWorkdesk
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiAdminWorkdeskAssignmentsSearchFilters'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /contract-starter:
+    get:
+      operationId: getContractStarter
+      tags:
+        - contracts
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiContract'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /contracts:
+    get:
+      operationId: getContracts
+      tags:
+        - contracts
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiContractOverview'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+    post:
+      operationId: saveContract
+      tags:
+        - contracts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiContract'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiContract'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+
+  /contracts/{id}:
+    get:
+      operationId: getContract
+      tags:
+        - contracts
+      parameters:
+        - name: id
+          in: path
+          description: ID of the contract
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiContract'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Base contract not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+    delete:
+      operationId: deleteContract
+      tags:
+        - contracts
+      parameters:
+        - name: id
+          in: path
+          description: ID of the contract
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: User with given ID was not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /contracts/{id}/pdf:
+    get:
+      operationId: getContractPdf
+      tags:
+        - contracts
+      parameters:
+        - name: id
+          in: path
+          description: ID of the contract
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Contract not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /contracts/suggestors/cadastres/{cadastreNoPart}:
+    get:
+      operationId: getCadastreNoSuggestions
+      tags:
+        - contracts
+      parameters:
+        - name: cadastreNoPart
+          in: path
+          description: Part of the cadastre number
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /contracts/suggestors/owners/{ownerIdPart}:
+    get:
+      operationId: getOwnerIDSuggestions
+      tags:
+        - contracts
+      parameters:
+        - name: ownerIdPart
+          in: path
+          description: Part of the owner ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /contracts/cadastre-details/{cadastreNo}:
+    get:
+      operationId: getCadastreDetails
+      tags:
+        - contracts
+      parameters:
+        - name: cadastreNo
+          in: path
+          description: Cadastre Number
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiContractCadastre'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Nnot found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /contracts/person-details/{personId}:
+    get:
+      operationId: getPersonDetails
+      tags:
+        - contracts
+      parameters:
+        - name: personId
+          in: path
+          description: Person ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiContractParty'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Nnot found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /evaluations:
+    get:
+      operationId: getEvaluations
+      tags:
+        - evaluations
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiOwnerOverview'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+
+  /application-messages:
+    delete:
+      operationId: deleteApplicationMessage
+      tags:
+        - applicationMessages
+      responses:
+        '200':
+          description: successful operation
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /cadastres/{id}/labels/{label}:
+    post:
+      operationId: addLabelToCadastre
+      tags:
+        - cadastres
+      parameters:
+        - name: id
+          in: path
+          description: Cadastre no
+          required: true
+          schema:
+            type: string
+        - name: label
+          in: path
+          description: Label
+          required: true
+          schema:
+            $ref: 'models.yaml#/components/schemas/ApiCadastreLabel'
+      responses:
+        '200':
+          description: successful operation
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+    delete:
+      operationId: removeLabelFromCadastre
+      tags:
+        - cadastres
+      parameters:
+        - name: id
+          in: path
+          description: Cadastre no
+          required: true
+          schema:
+            type: string
+        - name: label
+          in: path
+          description: Label
+          required: true
+          schema:
+            $ref: 'models.yaml#/components/schemas/ApiCadastreLabel'
+      responses:
+        '200':
+          description: successful operation
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /cadastres/{id}/labels/:
+    get:
+      operationId: getCadastreLabels
+      tags:
+        - cadastres
+      parameters:
+        - name: id
+          in: path
+          description: Cadastre no
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiCadastreLabel'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /cadastres/{id}/notifications/:
+    get:
+      operationId: getCadastreNotifications
+      tags:
+        - cadastres
+      parameters:
+        - name: id
+          in: path
+          description: Cadastre no
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiCadastreNotification'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /cadastres/{id}/forestry-plan/:
+    get:
+      operationId: getCadastreForestryPlan
+      tags:
+        - cadastres
+      parameters:
+        - name: id
+          in: path
+          description: Cadastre no
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiCadastreForestryPlan'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /cadastres/{id}/areas/:
+    get:
+      operationId: getCadastreAreas
+      tags:
+        - cadastres
+      parameters:
+        - name: id
+          in: path
+          description: Cadastre no
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiCadastreAreas'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+
+  /owners:
+    get:
+      operationId: getOwners
+      tags:
+        - owners
+      parameters:
+        - name: id
+          in: query
+          description: Owner ID
+          required: false
+          schema:
+            type: string
+        - name: name
+          in: query
+          description: Owner name
+          required: false
+          schema:
+            type: string
+        - name: phone
+          in: query
+          description: Owner phone
+          required: false
+          schema:
+            type: string
+        - name: email
+          in: query
+          description: Owner email
+          required: false
+          schema:
+            type: string
+        - name: orderBy
+          in: query
+          description: Order by
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Owner statuses
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+        - name: cadastre
+          in: query
+          description: Cadastre no
+          required: false
+          schema:
+            type: string
+        - name: sortDirection
+          in: query
+          description: Sort Order
+          required: false
+          schema:
+            $ref: 'models.yaml#/components/schemas/ApiSortDirection'
+        - name: assignee
+          in: query
+          description: Assignee
+          required: false
+          schema:
+            type: string
+        - name: number
+          in: query
+          description: Page number
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: size
+          in: query
+          description: Maximum size of page
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiOwnersPage'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+    post:
+      operationId: addOwner
+      tags:
+        - owners
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiOwner'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiOwner'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /owners/{id}:
+    get:
+      operationId: getOwner
+      tags:
+        - owners
+      parameters:
+        - name: id
+          in: path
+          description: Owner ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiOwner'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+    put:
+      operationId: changeOwner
+      tags:
+        - owners
+      parameters:
+        - name: id
+          in: path
+          description: Owner ID
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiOwner'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiOwner'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /owners/{id}/status:
+    get:
+      operationId: getOwnerStatus
+      tags:
+        - owners
+      parameters:
+        - name: id
+          in: path
+          description: Owner ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiOwnerStatus'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+    put:
+      operationId: changeOwnerStatus
+      tags:
+        - owners
+      parameters:
+        - name: id
+          in: path
+          description: Owner ID
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiOwnerStatusChange'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiOwnerStatus'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+
+
+
+  /owners/{id}/cadastres:
+    put:
+      operationId: refreshCadastres
+      tags:
+        - owners
+      parameters:
+        - name: id
+          in: path
+          description: Owner ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /owners/{id}/cadastres/marked:
+    put:
+      operationId: markOwnerCadastres
+      tags:
+        - owners
+      parameters:
+        - name: id
+          in: path
+          description: Owner ID
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /owners/{id}/log:
+    post:
+      operationId: addLogEntryForOwner
+      tags:
+        - owners
+      parameters:
+        - name: id
+          in: path
+          description: Owner ID
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiNewLogEntry'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiLogEntry'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+    get:
+      operationId: findOwnersLogEntries
+      tags:
+        - owners
+      parameters:
+        - name: id
+          in: path
+          description: Owner ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiLogEntry'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /owners/{id}/assignee:
+    put:
+      operationId: reassignOwner
+      tags:
+        - owners
+      parameters:
+        - name: id
+          in: path
+          description: Owner ID
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiOwnerAssignee'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiOwnerAssignee'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /my-work:
+    get:
+      operationId: getMyWork
+      tags:
+        - myWork
+      parameters:
+        - name: id
+          in: query
+          description: Owner ID
+          required: false
+          schema:
+            type: string
+        - name: name
+          in: query
+          description: Owner name
+          required: false
+          schema:
+            type: string
+        - name: phone
+          in: query
+          description: Owner phone
+          required: false
+          schema:
+            type: string
+        - name: email
+          in: query
+          description: Owner email
+          required: false
+          schema:
+            type: string
+        - name: orderBy
+          in: query
+          description: Order by
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Owner statuses
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+        - name: cadastre
+          in: query
+          description: Cadastre no
+          required: false
+          schema:
+            type: string
+        - name: sortDirection
+          in: query
+          description: Sort Order
+          required: false
+          schema:
+            $ref: 'models.yaml#/components/schemas/ApiSortDirection'
+        - name: assignee
+          in: query
+          description: Assignee
+          required: false
+          schema:
+            type: string
+        - name: number
+          in: query
+          description: Page number
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: size
+          in: query
+          description: Maximum size of page
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiOwnersPage'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+
+  /my-work/owners/next:
+    get:
+      operationId: getNextOwnerForMe
+      tags:
+        - myWork
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiOwnerOverview'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+
+
+
+  /my-work/filters:
+    get:
+      operationId: getMyWorkSearchFilters
+      tags:
+        - myWork
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiMyWorkSearchFilters'
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /reminders:
+    get:
+      operationId: getMyReminders
+      tags:
+        - reminders
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiReminder'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error messag
+    post:
+      operationId: addReminder
+      tags:
+        - reminders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ApiNewReminder'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ApiReminder'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error messag
+
+
+  /reminders/{id}:
+    delete:
+      operationId: deleteReminder
+      tags:
+        - reminders
+      responses:
+        '200':
+          description: successful operation
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+
+  /persons:
+    get:
+      operationId: getPersons
+      tags:
+        - persons
+      parameters:
+        - name: source
+          in: query
+          description: Source
+          required: false
+          schema:
+            type: string
+        - name: name
+          in: query
+          description: Name
+          required: false
+          schema:
+            type: string
+        - name: phone
+          in: query
+          description: Phone
+          required: false
+          schema:
+            type: string
+        - name: address
+          in: query
+          description: Address
+          required: false
+          schema:
+            type: string
+        - name: code
+          in: query
+          description: Code
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'models.yaml#/components/schemas/ApiPerson'
+        '400':
+          description: Bad request
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '403':
+          description: Forbidden. Not enough privileges for this action.
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error message
+        '404':
+          description: Not found
+          content:
+            application/text:
+              schema:
+                type: string
+                description: Error messag

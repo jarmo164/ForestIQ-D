@@ -1,0 +1,233 @@
+<div class="row">
+  <div class="col-sm-4">
+    <div class="card">
+      <div class="card-header">
+        <span class="fa fa-search"></span> Filters
+      </div>
+      <div class="card-body">
+        <form (ngSubmit)="searchForWork(workSearchCriteria)" *ngIf="adminWorkdeskPreparationData.data">
+          <fieldset [disabled]="workSearchResults.loading">
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Owner type</label>
+              <angular2-multiselect [data]="adminWorkdeskPreparationData.data.ownerTypes"
+                                    [(ngModel)]="workSearchCriteria.ownerTypes"
+                                    [name]="'ownerTypes'"
+                                    [settings]="{classes: 'col-sm-8 multiselect', enableSearchFilter: false}">
+              </angular2-multiselect>
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Counties</label>
+              <angular2-multiselect [data]="adminWorkdeskPreparationData.data.counties"
+                                    [(ngModel)]="workSearchCriteria.counties"
+                                    [name]="'counties'"
+                                    [settings]="{classes: 'col-sm-8 multiselect', enableSearchFilter: true}">
+              </angular2-multiselect>
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Municipalities</label>
+              <angular2-multiselect [data]="adminWorkdeskPreparationData.data.municipalities"
+                                    [(ngModel)]="workSearchCriteria.municipalities"
+                                    [name]="'municipalities'"
+                                    [settings]="{classes: 'col-sm-8 multiselect', enableSearchFilter: true}">
+              </angular2-multiselect>
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Notifications since</label>
+              <input [owlDateTimeTrigger]="notications_since" [owlDateTime]="notications_since"
+                     [(ngModel)]="workSearchCriteria.hasNotificationsSince"
+                     class="form-control col-sm-8" name="searchModel_since">
+              <owl-date-time #notications_since></owl-date-time>
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Forest plan since</label>
+              <input [owlDateTimeTrigger]="fp_since" [owlDateTime]="fp_since"
+                     [(ngModel)]="workSearchCriteria.hasForrestPlanSince"
+                     class="form-control col-sm-8" name="fp_since">
+              <owl-date-time #fp_since></owl-date-time>
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Status updated since</label>
+              <input [owlDateTimeTrigger]="status_updated_since" [owlDateTime]="status_updated_since"
+                     [(ngModel)]="workSearchCriteria.statusUpdatedSince"
+                     class="form-control col-sm-8" name="searchModel_since">
+              <owl-date-time #status_updated_since></owl-date-time>
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Status updated to</label>
+              <input [owlDateTimeTrigger]="status_updated_to" [owlDateTime]="status_updated_to"
+                     [(ngModel)]="workSearchCriteria.statusUpdatedTo"
+                     class="form-control col-sm-8" name="searchModel_since">
+              <owl-date-time #status_updated_to></owl-date-time>
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Area</label>
+              <input type="number" class="form-control col-sm-3" name="minArea"
+                     placeholder="Min" [(ngModel)]="workSearchCriteria.minArea" min="0" step=".1">
+              <span class="col-sm-1">&nbsp;&ndash;</span>
+              <input type="number" class="form-control col-sm-3" name="maxArea"
+                     placeholder="Max" [(ngModel)]="workSearchCriteria.maxArea" min="0" step=".1">
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Total forest area</label>
+              <input type="number" class="form-control col-sm-3" name="minTotalForrestArea"
+                     placeholder="Min" [(ngModel)]="workSearchCriteria.minTotalForrestArea" min="0" step=".1">
+              <span class="col-sm-1">&nbsp;&ndash;</span>
+              <input type="number" class="form-control col-sm-3" name="maxTotalForrestArea"
+                     placeholder="Max" [(ngModel)]="workSearchCriteria.maxTotalForrestArea" min="0" step=".1">
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Forrest area</label>
+              <input type="number" class="form-control col-sm-3" name="minForrestArea"
+                     placeholder="Min" [(ngModel)]="workSearchCriteria.minForrestArea" min="0" step=".1">
+              <span class="col-sm-1">&nbsp;&ndash;</span>
+              <input type="number" class="form-control col-sm-3" name="maxForrestArea"
+                     placeholder="Max" [(ngModel)]="workSearchCriteria.maxForrestArea" min="0" step=".1">
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Arable area</label>
+              <input type="number" class="form-control col-sm-3" name="minArableArea"
+                     placeholder="Min" [(ngModel)]="workSearchCriteria.minArableArea" min="0" step=".1">
+              <span class="col-sm-1">&nbsp;&ndash;</span>
+              <input type="number" class="form-control col-sm-3" name="maxArableArea"
+                     placeholder="Max" [(ngModel)]="workSearchCriteria.maxArableArea" min="0" step=".1">
+            </div>
+
+
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Conservations:</label>
+              <select name="conservation-ares" class="form-control col-sm-8" [(ngModel)]="workSearchCriteria.conservationAreas">
+                <option [ngValue]="null">No</option>
+                <option [ngValue]="'YES'">Yes</option>
+                <option [ngValue]="'NOT_IMPORTANT'">Not important</option>
+              </select>
+            </div>
+
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Suspended:</label>
+              <angular2-multiselect [data]="adminWorkdeskPreparationData.data.statuses"
+                                    [(ngModel)]="workSearchCriteria.suspendedFor"
+                                    [name]="'suspended-for'"
+                                    [settings]="{classes: 'col-sm-8 multiselect', enableSearchFilter: false}">
+              </angular2-multiselect>
+            </div>
+
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Assignee:</label>
+              <angular2-multiselect [data]="adminWorkdeskPreparationData.data.assignees"
+                                    [(ngModel)]="workSearchCriteria.assignees"
+                                    [name]="'assignees'"
+                                    [settings]="{classes: 'col-sm-8 multiselect', enableSearchFilter: false}">
+              </angular2-multiselect>
+            </div>
+
+
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">With phone</label>
+              <span class="col-sm-6 form-check-wrapper">
+                  <input type="checkbox" class="form-control form-checkbox" name="onlyWithPhoneNumbers"
+                         [(ngModel)]="workSearchCriteria.onlyWithPhoneNumbers">
+                </span>
+            </div>
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Without phone</label>
+              <span class="col-sm-6 form-check-wrapper">
+                  <input type="checkbox" class="form-control form-checkbox" name="onlyWithoutPhoneNumbers"
+                         [(ngModel)]="workSearchCriteria.onlyWithoutPhoneNumbers">
+                </span>
+            </div>
+
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Without status only</label>
+              <span class="col-sm-6 form-check-wrapper">
+                  <input type="checkbox" class="form-control form-checkbox" name="onlyWithNoStatus"
+                         [(ngModel)]="workSearchCriteria.onlyWithNoStatus">
+                </span>
+            </div>
+
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Without forest plan only</label>
+              <span class="col-sm-6 form-check-wrapper">
+                  <input type="checkbox" class="form-control form-checkbox" name="onlyWithoutForestPlans"
+                         [(ngModel)]="workSearchCriteria.onlyWithoutForestPlans">
+                </span>
+            </div>
+
+            <div class="form-group row">
+              <label class="col-sm-4 col-form-label">Max results</label>
+              <input type="number" class="form-control col-sm-3" name="maxResults"
+                     placeholder="Max results" [(ngModel)]="workSearchCriteria.maxResults" min="0">
+            </div>
+            <div class="row">
+              <div class="col-sm-6">
+                <button type="submit" class="btn btn-primary"><span class="fa fa-search"></span> Search
+                </button>
+              </div>
+            </div>
+          </fieldset>
+        </form>
+
+        <div *ngIf="adminWorkdeskPreparationData.error" class="alert alert-danger">
+          {{adminWorkdeskPreparationData.error}}
+        </div>
+        <div *ngIf="adminWorkdeskPreparationData.loading" class="big-loader"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-sm-8" *ngIf="workSearchResults.any()">
+    <div class="card">
+      <div class="card-header">
+        <span class="fa fa-align-justify"></span> Results
+      </div>
+      <div class="card-body">
+        <div *ngIf="workSearchResults.loading" class="big-loader centered"></div>
+        <div *ngIf="workSearchResults.error" class="alert alert-danger">{{workSearchResults.error}}</div>
+
+        <div class="results" *ngIf="workSearchResults.data">
+          <p><i>Found {{workSearchResults.data.length}} owner(s):</i></p>
+          <form (ngSubmit)="assignWork()">
+            <fieldset [disabled]="workAssign.loading">
+              <table class="table table-striped">
+                <tr>
+                  <th><input type="checkbox" [(ngModel)]="allResultsChecked" name="allResultsChecked" (click)="toggleAllResults()"></th>
+                  <th>ID <span style="cursor: pointer" (click)="setOrderer('id', 'desc')">&#8595;</span>&nbsp;&nbsp;<span style="cursor: pointer" (click)="setOrderer('id', 'asc')">&#8593;</span></th>
+                  <th>Name  <span style="cursor: pointer" (click)="setOrderer('name', 'desc')">&#8595;</span>&nbsp;&nbsp;<span style="cursor: pointer" (click)="setOrderer('name', 'asc')">&#8593;</span></th>
+                  <th>Phone</th>
+                  <th>Status <span style="cursor: pointer" (click)="setOrderer('status', 'desc')">&#8595;</span>&nbsp;&nbsp;<span style="cursor: pointer" (click)="setOrderer('status', 'asc')">&#8593;</span></th>
+                  <th>Status set at <span style="cursor: pointer" (click)="setOrderer('statusSetAt', 'desc')">&#8595;</span>&nbsp;&nbsp;<span style="cursor: pointer" (click)="setOrderer('statusSetAt', 'asc')">&#8593;</span></th>
+                  <th>Assignee <span style="cursor: pointer" (click)="setOrderer('assignee.name', 'desc')">&#8595;</span>&nbsp;&nbsp;<span style="cursor: pointer" (click)="setOrderer('assignee.name', 'asc')">&#8593;</span></th>
+                </tr>
+                <tr *ngFor="let owner of orderedResults()">
+                  <td><input type="checkbox" [(ngModel)]="owner.selected" name="owner_{{owner.id}}_selected">
+                  </td>
+                  <td>
+                    <a target="_blank" routerLink="/owners/{{owner.id}}">{{owner.id}}</a>
+                  </td>
+                  <td>{{owner.name}}</td>
+                  <td>{{owner.phone}}</td>
+                  <td><app-owner-status-bubble [status]="{id: owner.status, colorHex: null}"></app-owner-status-bubble></td>
+                  <td>{{owner.statusSetAt | date: 'HH:mm dd.MM.yyyy'}}</td>
+                  <td>{{owner.assignee?.name}}</td>
+                </tr>
+              </table>
+
+              <div class="col-sm-12">
+                <div class="row">
+                  <button type="submit" class="btn btn-success col-sm-6">Assign selected owners to:</button>
+                  <div class="col-sm-1">&nbsp;</div>
+                  <select type="number" class="col-sm-5 form-control" [(ngModel)]="workAssignee"
+                          name="workAssignee">
+                    <option [ngValue]="null"></option>
+                    <option *ngFor="let c of adminWorkdeskPreparationData.data.callers" [ngValue]="c.id">
+                      {{c.name}}
+                    </option>
+                  </select>
+                </div>
+              </div>
+            </fieldset>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

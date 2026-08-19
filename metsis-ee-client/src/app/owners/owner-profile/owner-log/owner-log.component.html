@@ -1,0 +1,34 @@
+<div class="owner-log">
+  <div *ngIf="ownerLogMessages.error" class="alert alert-danger">{{ownerLogMessages.error}}</div>
+  <div *ngIf="ownerLogMessages.loading" class="big-loader"></div>
+  <div *ngIf="ownerLogMessages.data">
+    <form class="add-entry">
+      <fieldset [disabled]="addOwnerLogMessage.loading">
+        <table>
+          <tr>
+            <td class="logtext"><textarea name="addOwnerLogEntryMessage" class="form-control" [(ngModel)]="newOwnerLogMessage"></textarea>
+            </td>
+            <td class="logbutton">
+              <button (click)="addNewLogEntry()" type="submit" class="btn btn-info">
+                <span class="fa fa-save"></span> Save
+              </button>
+            </td>
+          </tr>
+        </table>
+      </fieldset>
+    </form>
+    <div class="card" *ngFor="let logMessage of ownerLogMessages.data">
+      <div class="card-header">
+        <div class="row">
+          <div class="col-sm-6">
+            <span class="creator {{getUserBgColor(logMessage.creator)}}">{{logMessage.creator}}</span>
+          </div>
+          <div class="col-sm-6 timestamp">{{logMessage.timestamp | date: 'dd.MM.yyyy HH:mm'}}</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <pre class="log-message">{{logMessage.message}}</pre>
+      </div>
+    </div>
+  </div>
+</div>

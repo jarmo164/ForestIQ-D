@@ -1,0 +1,78 @@
+<div class="simple-content-container">
+  <div class="row">
+
+    <div class="col-sm-4">
+      <div class="card">
+        <div class="card-header">
+          <span class="fa fa-search"></span> Owners search
+        </div>
+        <div class="card-body">
+          <form (ngSubmit)="searchOwners(ownersSearchCriteria)">
+            <fieldset [disabled]="ownersSearch.loading">
+              <div class="form-group row">
+                <label for="id" class="col-sm-3 col-form-label">ID</label>
+                <input type="text" class="form-control col-sm-9" id="id" name="id"
+                       placeholder="Owner ID" [(ngModel)]="ownersSearchCriteria.id">
+              </div>
+              <div class="form-group row">
+                <label for="name" class="col-sm-3 col-form-label">Name</label>
+                <input type="text" class="form-control col-sm-9" id="name" name="name"
+                       placeholder="Owner name (may be partial)" [(ngModel)]="ownersSearchCriteria.name">
+              </div>
+              <div class="form-group row">
+                <label for="phone" class="col-sm-3 col-form-label">Phone</label>
+                <input type="text" class="form-control col-sm-9" id="phone" name="phone"
+                       placeholder="Owners phone numer (may be partial)" [(ngModel)]="ownersSearchCriteria.phone">
+              </div>
+              <div class="form-group row">
+                <label for="email" class="col-sm-3 col-form-label">E-Mail</label>
+                <input type="text" class="form-control col-sm-9" id="email" name="email"
+                       placeholder="Owners e-mail (may be partial)" [(ngModel)]="ownersSearchCriteria.email">
+              </div>
+              <div class="form-group row">
+                <label for="cadastre" class="col-sm-3 col-form-label">Cadastre</label>
+                <input type="text" class="form-control col-sm-9" id="cadastre" name="cadastreNo"
+                       placeholder="Cadastre" [(ngModel)]="ownersSearchCriteria.cadastreNo">
+              </div>
+              <div class="row">
+                <div class="col-sm-6">
+                  <button type="submit" class="btn btn-primary"><span class="fa fa-search"></span> Search</button>
+                </div>
+              </div>
+            </fieldset>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-sm-8" *ngIf="ownersSearch.any()">
+      <div class="card">
+        <div class="card-header">
+          <span class="fa fa-align-justify"></span> Results
+        </div>
+        <div class="card-body">
+          <div *ngIf="ownersSearch.loading" class="big-loader centered"></div>
+          <div *ngIf="ownersSearch.error" class="alert alert-danger">{{ownersSearch.error}}</div>
+
+          <div class="results" *ngIf="ownersSearch.data">
+            <p *ngIf="showAddOwner"><i>Owner with code {{showAddOwner}} not found. <a
+              [routerLink]="['/owners', showAddOwner]">Click here to add it</a></i></p>
+            <p><i>Found {{ownersSearch.data.length}} owner(s) (maximum number of results is 1000):</i></p>
+            <table class="table table-striped">
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Phone</th>
+              </tr>
+              <tr *ngFor="let owner of ownersSearch.data">
+                <td><a routerLink="/owners/{{owner.id}}">{{owner.id}}</a></td>
+                <td>{{owner.name}}</td>
+                <td>{{owner.phone}}</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

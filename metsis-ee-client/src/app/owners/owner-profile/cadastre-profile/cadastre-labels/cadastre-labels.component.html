@@ -1,0 +1,17 @@
+<div *ngIf="cadastreLabels.error" class="alert-danger">{{cadastreLabels.error}}</div>
+<div *ngIf="cadastreLabels.loading" class="tiny-loader"></div>
+<div *ngIf="cadastreLabels.data">
+  <div class="label-bubble" *ngFor="let label of cadastreLabels.data.setLabels">
+    <div class="label-bubble-content">{{label}}</div>
+    <div class="label-bubble-icon" (click)="removeLabel(label)"><span class="fa fa-trash"></span></div>
+  </div>
+  <div class="label-bubble label-bubble-add" *ngIf="cadastreLabels.data.notSetLabels.length > 0">
+    <div class="label-bubble-content">
+      <select [(ngModel)]="newLabel">
+        <option [ngValue]="null"></option>
+        <option *ngFor="let label of cadastreLabels.data.notSetLabels" [ngValue]="label">{{label}}</option>
+      </select>
+    </div>
+    <div class="label-bubble-icon" (click)="addLabel()"><span class="fa fa-check"></span></div>
+  </div>
+</div>

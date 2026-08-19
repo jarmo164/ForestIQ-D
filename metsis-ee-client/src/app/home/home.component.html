@@ -1,0 +1,114 @@
+<div class="container py-5" *ngIf="!authService.isLoggedIn();else welcomeMessage">
+  <div class="row">
+    <div class="col-md-12">
+      <h2 class="text-center text-white mb-4">&nbsp;</h2>
+      <div class="row">
+        <div class="col-md-6 mx-auto">
+          <div class="card rounded-0">
+            <div class="card-header">
+              <h3 class="mb-0">Login</h3>
+            </div>
+            <div class="card-body">
+              <div *ngIf="pwAuth.data;else pwLoginCard">
+                <div *ngIf="pwAuth.data.isTotpRegistration();else totpLoginCard">
+                  <div class="row">
+                    <table>
+                      <tr>
+                        <td rowspan="2">
+                          <img class="border" [src]="totpQrCodeUrl()" alt="TOTP QR code"/>
+                          <br>
+                          <pre>Secret: {{pwAuth.data.totpSecret}}</pre>
+                        </td>
+                        <td>
+                          <ol class="small">
+                            <li>Get the Google Authenticator or some other two factor authentication app to your smartphone
+                            </li>
+                            <li>Scan the QR code on the left (with the downloaded app)</li>
+                            <li>Insert temporary code which the app gives you below</li>
+                          </ol>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <form class="form" autocomplete="off" (ngSubmit)="submitTotpRegister(totpAuthModel)">
+                            <fieldset [disabled]="totpAuth.loading">
+                              <div class="form-group">
+                                <input type="number" class="form-control form-control-lg rounded-0" name="totp1" id="totp1" placeholder="TOTP Code"
+                                       [(ngModel)]="totpAuthModel.totpCode">
+                              </div>
+                              <div class="form-group">
+                                <button type="submit" class="btn btn-success btn-lg">Login</button>
+                              </div>
+                            </fieldset>
+                          </form>
+                        </td>
+                      </tr>
+                    </table>
+                  </div>
+                </div>
+                <ng-template #totpLoginCard>
+                  <form class="form" autocomplete="off" (ngSubmit)="submitTotpLogin(totpAuthModel)">
+                    <fieldset [disabled]="totpAuth.loading">
+                      <div class="form-group">
+                        <input type="number" class="form-control form-control-lg rounded-0" name="totp2" id="totp2" placeholder="TOTP Code"
+                               [(ngModel)]="totpAuthModel.totpCode">
+                      </div>
+                      <div class="form-group">
+                        <button type="submit" class="btn btn-success btn-lg">Login</button>
+                      </div>
+                    </fieldset>
+                  </form>
+                </ng-template>
+              </div>
+              <ng-template #pwLoginCard>
+                <form class="form" autocomplete="off" (ngSubmit)="submitPasswordauth(passwordAuthModel)">
+                  <fieldset [disabled]="pwAuth.loading">
+                    <div class="form-group">
+                      <label for="uname1">Username</label>
+                      <input type="text" class="form-control form-control-lg rounded-0" name="uname1" id="uname1"
+                             [(ngModel)]="passwordAuthModel.userId" autofocus>
+                    </div>
+                    <div class="form-group">
+                      <label>Password</label>
+                      <input type="password" class="form-control form-control-lg rounded-0" name="pwd1" id="pwd1"
+                             [(ngModel)]="passwordAuthModel.password">
+                    </div>
+                    <div class="form-group">
+                      <button type="submit" class="btn btn-success btn-lg">Login</button>
+                    </div>
+                    <div class="form-group" *ngIf="pwAuth.error">
+                      <div class="alert alert-danger">
+                        {{pwAuth.error}}
+                      </div>
+                    </div>
+                  </fieldset>
+                </form>
+              </ng-template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<ng-template #welcomeMessage>
+  <div class="simple-content-container">
+    <div class="row">
+      <div class="col-6">
+        <app-incoming-messages
+          [numberOfMessages]="10"
+          [fullView]="false"
+        ></app-incoming-messages>
+      </div>
+      <div class="col-6">
+        <div class="row" *ngIf="authService.userHasPrivilege('ADMIN')">
+          <div class="col-12"><app-user-statistics [simple]="true" [autoRefreshOn]="false"></app-user-statistics></div>
+        </div>
+        <div class="row">
+          <div class="col-12"><app-reminders [simple]="true"></app-reminders></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</ng-template>

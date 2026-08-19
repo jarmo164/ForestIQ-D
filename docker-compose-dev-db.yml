@@ -1,0 +1,11 @@
+version: '3.1'
+
+services:
+  db:
+    image: metsis-postgres:latest
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: metsis
+      POSTGRES_USER: metsis
+      POSTGRES_PASSWORD: metsis
