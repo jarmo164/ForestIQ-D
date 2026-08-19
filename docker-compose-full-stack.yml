@@ -1,5 +1,3 @@
-version: '3'
-
 services:
   db:
     image: metsis-postgres:latest
@@ -7,10 +5,18 @@ services:
       POSTGRES_DB: metsis
       POSTGRES_USER: metsis
       POSTGRES_PASSWORD: metsis
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metsis -d metsis"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     networks:
       - apidb
   api:
     image: metsis-ee-api:latest
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       - METSIS_PORT=9100
       - METSIS_SYSTEM_OWNER=laekvere

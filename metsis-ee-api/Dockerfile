@@ -5,7 +5,7 @@ ENV TZ="Europe/Tallinn"
 RUN date
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8'
 RUN echo "http://nl.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories
-RUN apk update && apk --no-cache add openjdk14
+RUN apk update && apk --no-cache add openjdk17-jre
 
 ADD build/libs/metsis-ee-api-1.0.0-all.jar /api.jar
 
