@@ -1,59 +1,73 @@
-# MetsIS - Workdesk for forest buyers.
+# ForestIQ
 
-## Prerequisites for development
+ForestIQ on metsaostjate töölaud. Selle haru server on ümber ehitatud **Python 3.12, Django, Django REST Frameworki ja PostgreSQL-i** peale. Olemasolev Angulari klient säilib ning suhtleb Django teenusega samade `api/` ja `api/services/` URL-ide kaudu.
 
-* JDK 13+
-* NodeJS v13.12.0+
-* NPM 6.14.4+
-* Docker version 19.03.8, build afacb8b +
-* docker-compose version 1.25.4, build 8d51620a +
+## Uus arhitektuur
 
-### Setting up development database
+| Kiht | Tehnoloogia | Vastutus |
+|---|---|---|
+| Kasutajaliides | Angular | Omanike, katastri, töölaudade ja halduse kasutajaliides |
+| API | Django + Django REST Framework | REST liides, domeeniloogika, õigused ja JWT autentimine |
+| Andmebaas | PostgreSQL 16 | Omanikud, katastriüksused, töölogid, sõnumid, lepingud ja muu püsiv domeeniinfo |
+| Käitus | Docker Compose + Gunicorn | Korratav lokaalne või serveripõhine käivitus |
 
-MetsIS uses PostgreSQL as its database. This repository contains a Dockerfile with minimum viable configuration to get a running database in development.
-To build this to a usable image, run the following command: `cd $PROJECT_ROOT/dockerfiles/postgres-dev && sh build.sh`
+Django rakendused on jagatud selgete domeenipiiridega: `accounts` haldab identiteeti ja õigusi, `forestry` metsaomanike ning katastri domeeni, `operations` meeldetuletusi, sõnumeid ja lepinguid ning `api` säilitab REST-liidese ühilduvuse.
 
-Now you have an empty Postgres Database image with correct roles and privileges preset.
+## Lokaalne käivitus
 
-To start the database run in `$PROJECT_ROOT`: `docker-compose up -d`
+Kopeeri keskkonnamuutujad ning vali arenduseks pikk juhuslik saladus.
 
-To check the status of the database run: `docker ps`. If there is a line with string `metsis-postgres:latest`, then all should be OK. If not, consider running docker-compose again.
+```sh
+cp .env.example .env
+# muuda vähemalt DJANGO_SECRET_KEY ja POSTGRES_PASSWORD
+```
 
-### Setting up backend
+Käivita andmebaas ja Django API.
 
-To build the backend run in `$PROJECT_ROOT`: `./gradlew clean build`
+```sh
+docker compose -f docker-compose-full-stack.yml up --build db api
+```
 
-To run the backend through you IDE:
- 
-1. Locate the class AppRunner and run it. 
-2. It will fail and complain you need to feed the properties file to it.
-3. In IntelliJ, open in project tree: `metsis-ee-api/src/test/resources`.
-4. Right click on the file `test-full-conf.properties` and from the dropdown, select `Copy Path`.
-5. In upper right corner, left from the play button, click on the selectbox with `AppRunner` in it.
-6. In the dropdown click `Edit Configurations...`
-7. Paste what you copied to `Program arguments` input. It should be the full path to `test-full-conf.properties`.
-8. Save the changes and run the application again.
+API seisukorda saab kontrollida aadressilt `http://localhost:8000/api/services/status`. Täisstacki käivitamiseks lisa `ui` teenus.
 
-By now, backend should have started up.
+```sh
+docker compose -f docker-compose-full-stack.yml up --build
+```
 
-### Setting up frontend
+Arenduskeskkonnas loob käivitus `autocreated` administraatori. Kasutajanimi ja parool on mõlemad `autocreated`; see konto tuleb enne mis tahes pärisandmete kasutamist asendada või eemaldada.
 
-1. In command line, move to folder `metsis-ee-client`
-2. Run `npm install`
-3. Run `npm run:start`
+## Andmebaasi migratsioon vanast MetsIS-ist
 
-UI should be running by now.
+Enne ümberlülitust tee lähte- ja sihtandmebaasist varukoopiad. Uue skeemi loovad Django migratsioonid. Vana PostgreSQL andmebaasi sisu saab kopeerida idempotentse käsuga, mis kasutab ainult lugemisühendust `LEGACY_DATABASE_URL` kaudu.
 
-### Now what?
+```sh
+cd django_backend
+python manage.py migrate
+export LEGACY_DATABASE_URL='postgresql://readonly_user:password@legacy-host:5432/metsis'
+python manage.py import_legacy_metsis --confirm
+```
 
-Assuming you completed all previous steps successfully, you should have a running application on http://localhost:4200.
+Käsk säilitab stabiilsed kasutaja-, omaniku-, katastri- ja lepingute identifikaatorid ning vana BCrypt-parooliräsi. Soovitatav tootmises kasutuselevõtu järjekord on järgmine.
 
-There should also be one user in it with username `autocreated` and password `autocreated`.
-Use it to log in and create new users, modify user privileges and so on. 
-Keep in mind that `autocreated` user itself initially only has admin privileges which means he can only see admin stuff (not forestry related stuff).
+1. Käivita uus PostgreSQL ning tee sinna `migrate`.
+2. Impordi kontrollitud koopiast andmed käsuga `import_legacy_metsis --confirm`.
+3. Võrdle enne ümberlülitust tabelite ridu ja tee sisselogimise, õiguste ning omaniku-katastri kontrolltestid.
+4. Suuna puhverserver Django API konteinerile ning jälgi `api/services/status` vastust.
 
-**NB!** Initially there are absolutely no owners or cadastres in the database. You either have to insert them manually or import some kind of from some live environment. 
-To manually insert an owner, make sure you have `OWNERS` privilege and move to URL `http://localhost:8080/owners/owners-ssn-or-reg-code-you-would-like-to-add`. 
-There you can add the owner to database.
+## Turve
 
-Happy developing!
+Django API kasutab Bearer JWT autentimist. Parooliga sisselogimise eeltoken, TOTP kontroll ning tavapärase ja värskendustokeni vastuse väljad on kujundatud olemasoleva Angulari kliendi jaoks tagasiühilduvaks. Õigused `ADMIN`, `OWNER_PROFILE`, `ASSIGNED_OWNERS`, `PHONES` ja `EVALUATION` on andmebaasis eraldiseisvad ning `ASSIGNED_OWNERS` piirab omanikuandmed kasutaja enda töödega.
+
+Ära kasuta `.env.example` väärtusi tootmises. Määra unikaalne `DJANGO_SECRET_KEY`, tugev PostgreSQL parool, `DJANGO_DEBUG=false`, korrektne `DJANGO_ALLOWED_HOSTS` ning päris TOTP saladused.
+
+## Kontrollimine
+
+Django kontroll ja testid töötavad ilma kohaliku PostgreSQL serverita SQLite-põhise testandmebaasiga; tegelik rakenduse andmebaas on siiski PostgreSQL.
+
+```sh
+cd django_backend
+USE_SQLITE_FOR_TESTS=1 python manage.py check
+USE_SQLITE_FOR_TESTS=1 python manage.py test api -v 2
+```
+
+Lisateavet ümberehituse domeenijaotuse, ühilduvuse ja väliste registriühenduste kohta on failis [`docs/DJANGO_MIGRATION.md`](docs/DJANGO_MIGRATION.md).

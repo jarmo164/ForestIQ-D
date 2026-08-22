@@ -1,11 +1,19 @@
-version: '3.1'
-
 services:
   db:
-    image: metsis-postgres:latest
+    image: postgres:16-alpine
     ports:
       - "${DB_PORT:-5432}:5432"
     environment:
-      POSTGRES_DB: metsis
-      POSTGRES_USER: metsis
-      POSTGRES_PASSWORD: metsis
+      POSTGRES_DB: ${POSTGRES_DB:-forestiq}
+      POSTGRES_USER: ${POSTGRES_USER:-forestiq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-forestiq}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - forestiq_postgres_dev:/var/lib/postgresql/data
+
+volumes:
+  forestiq_postgres_dev:

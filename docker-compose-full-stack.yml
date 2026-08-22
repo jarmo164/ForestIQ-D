@@ -1,43 +1,58 @@
 services:
   db:
-    image: metsis-postgres:latest
+    image: postgres:16-alpine
     environment:
-      POSTGRES_DB: metsis
-      POSTGRES_USER: metsis
-      POSTGRES_PASSWORD: metsis
+      POSTGRES_DB: ${POSTGRES_DB:-forestiq}
+      POSTGRES_USER: ${POSTGRES_USER:-forestiq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-forestiq}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U metsis -d metsis"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 12
+    volumes:
+      - forestiq_postgres:/var/lib/postgresql/data
     networks:
       - apidb
+
   api:
-    image: metsis-ee-api:latest
+    build:
+      context: .
+      dockerfile: django_backend/Dockerfile
     depends_on:
       db:
         condition: service_healthy
     environment:
-      - METSIS_PORT=9100
-      - METSIS_SYSTEM_OWNER=laekvere
-      - METSIS_DEVMODE=true
-      - FINEFRAME_AUTH_USUAL_TOKEN_TTL_MIN=200
-      - FINEFRAME_AUTH_REFRESH_TOKEN_TTL_MIN=60
-      - FINEFRAME_AUTH_TOTP_TOKEN_TTL_MIN=3
-      - FINEFRAME_DB_URL=jdbc:postgresql://db:5432/metsis
-      - FINEFRAME_DB_USER=app
-      - FINEFRAME_DB_PASSWORD=app
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      POSTGRES_DB: ${POSTGRES_DB:-forestiq}
+      POSTGRES_USER: ${POSTGRES_USER:-forestiq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-forestiq}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      FORESTIQ_DEVMODE: ${FORESTIQ_DEVMODE:-false}
+      TIME_ZONE: Europe/Tallinn
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+      python manage.py seed_demo_data &&
+      gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --access-logfile - --error-logfile -"
     networks:
       - apidb
       - uiapi
 
   ui:
     image: metsis-ee-ui:latest
+    depends_on:
+      - api
     ports:
       - "443:443"
       - "80:80"
     networks:
       - uiapi
+
+volumes:
+  forestiq_postgres:
 
 networks:
   uiapi:

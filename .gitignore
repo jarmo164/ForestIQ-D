@@ -9,10 +9,6 @@
 build
 dist
 out
-metsis-ee-api/.gradle/
-metsis-ee-api/build/
-metsis-ee-api/out/
-metsis-ee-api/velocity.log
 velocity.log
 metsis-ee-distribution/
 metsis-ee-distribution.tar
@@ -40,9 +36,9 @@ Eesti_KATASTER_CSV.csv
 *.key
 *.p12
 *.jks
-!metsis-ee-api/src/test/resources/test-priv.key
-!metsis-ee-api/src/test/resources/test-pub.key
 
 __pycache__/
 *.py[cod]
+django_backend/db.sqlite3
+django_backend/staticfiles/
 forest-plan-discovery-work-folder
