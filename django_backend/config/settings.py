@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
+    "django_q",
     "accounts",
     "forestry",
     "operations",
@@ -125,6 +126,48 @@ SIMPLE_JWT = {
 
 TOTP_TOKEN_LIFETIME_SECONDS = int(os.getenv("TOTP_TOKEN_LIFETIME_SECONDS", "180"))
 FORESTIQ_DEVMODE = env_bool("FORESTIQ_DEVMODE", DEBUG)
+
+# Django Q2 uses PostgreSQL through Django's database connection. The ORM broker
+# avoids an additional queue service and keeps task history in the same backup scope.
+Q_CLUSTER = {
+    "name": "forestiq-sync",
+    "workers": int(os.getenv("DJANGO_Q_WORKERS", "2")),
+    "recycle": int(os.getenv("DJANGO_Q_RECYCLE", "500")),
+    "timeout": int(os.getenv("DJANGO_Q_TIMEOUT_SECONDS", "300")),
+    "retry": int(os.getenv("DJANGO_Q_RETRY_SECONDS", "360")),
+    "queue_limit": int(os.getenv("DJANGO_Q_QUEUE_LIMIT", "100")),
+    "bulk": int(os.getenv("DJANGO_Q_BULK", "5")),
+    "orm": "default",
+    "save_limit": int(os.getenv("DJANGO_Q_SAVE_LIMIT", "500")),
+}
+FORESTIQ_Q_SYNC_INLINE = env_bool("FORESTIQ_Q_SYNC_INLINE", False)
+FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS = int(os.getenv("FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS", "30"))
+FORESTIQ_SYNC_USER_AGENT = os.getenv("FORESTIQ_SYNC_USER_AGENT", "ForestIQ data synchronizer/1.0")
+
+FORESTIQ_CADASTRE_WFS_URL = os.getenv(
+    "FORESTIQ_CADASTRE_WFS_URL",
+    "https://gsavalik.envir.ee/geoserver/kataster/wfs",
+)
+FORESTIQ_CADASTRE_WFS_LAYER = os.getenv("FORESTIQ_CADASTRE_WFS_LAYER", "kataster:ky_kehtiv")
+FORESTIQ_METSAREGISTER_WFS_URL = os.getenv(
+    "FORESTIQ_METSAREGISTER_WFS_URL",
+    "https://gsavalik.envir.ee/geoserver/metsaregister/ows",
+)
+FORESTIQ_METSAREGISTER_WFS_LAYERS = [
+    value.strip()
+    for value in os.getenv("FORESTIQ_METSAREGISTER_WFS_LAYERS", "metsaregister:eraldis").split(",")
+    if value.strip()
+]
+FORESTIQ_SOOS_WFS_URL = os.getenv("FORESTIQ_SOOS_WFS_URL", "")
+FORESTIQ_SOOS_WFS_LAYER = os.getenv("FORESTIQ_SOOS_WFS_LAYER", "")
+FORESTIQ_SOOS_WFS_CADASTRE_FIELD = os.getenv("FORESTIQ_SOOS_WFS_CADASTRE_FIELD", "katastri_nr")
+
+# Authenticated sources are opt-in only. Leave their URLs empty until a service
+# contract and a dedicated least-privilege credential have been configured.
+FORESTEK_API_URL = os.getenv("FORESTEK_API_URL", "").rstrip("/")
+FORESTEK_API_TOKEN = os.getenv("FORESTEK_API_TOKEN", "")
+PARIMUS_API_URL = os.getenv("PARIMUS_API_URL", "").rstrip("/")
+PARIMUS_API_TOKEN = os.getenv("PARIMUS_API_TOKEN", "")
 
 LANGUAGE_CODE = "et-ee"
 TIME_ZONE = os.getenv("TIME_ZONE", "Europe/Tallinn")

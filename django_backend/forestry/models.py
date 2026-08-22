@@ -220,3 +220,63 @@ class LastOwnersCadastresUpdate(models.Model):
     class Meta:
         db_table = "last_owners_cadastres_update"
         ordering = ("-event_time",)
+
+
+class DataSyncRun(models.Model):
+    """Auditable lifecycle of one externally sourced data refresh."""
+
+    class Status(models.TextChoices):
+        QUEUED = "QUEUED", "Queued"
+        RUNNING = "RUNNING", "Running"
+        SUCCEEDED = "SUCCEEDED", "Succeeded"
+        FAILED = "FAILED", "Failed"
+
+    id = models.BigAutoField(primary_key=True)
+    cadastre = models.ForeignKey(
+        Cadastre,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="sync_runs",
+        db_column="cadastre_id",
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="requested_sync_runs",
+        db_column="requested_by",
+    )
+    task_id = models.CharField(max_length=100, blank=True)
+    source = models.CharField(max_length=100, default="all")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    result = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "data_sync_runs"
+        ordering = ("-id",)
+        indexes = [models.Index(fields=("cadastre", "status"), name="sync_run_cadastre_status_idx")]
+
+
+class InheritanceSignal(models.Model):
+    """Read-only notice projection received from the authorised Pärimus API."""
+
+    source_notice_number = models.CharField(max_length=64)
+    owner = models.ForeignKey(Owner, null=True, blank=True, on_delete=models.SET_NULL, related_name="inheritance_signals")
+    cadastre = models.ForeignKey(Cadastre, null=True, blank=True, on_delete=models.SET_NULL, related_name="inheritance_signals")
+    announcement_date = models.DateField(null=True, blank=True)
+    certification_deadline = models.DateField(null=True, blank=True)
+    deceased_name = models.CharField(max_length=255, blank=True)
+    source_url = models.URLField(max_length=500, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    fetched_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "inheritance_signals"
+        ordering = ("-announcement_date", "-id")
+        constraints = [models.UniqueConstraint(fields=("source_notice_number", "cadastre"), name="unique_inheritance_notice_cadastre")]
+        indexes = [models.Index(fields=("owner", "announcement_date"), name="inheritance_owner_date_idx")]

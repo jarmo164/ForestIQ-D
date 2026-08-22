@@ -24,6 +24,7 @@ from forestry.models import (
     CadastreNotification,
     CadastreSubPart,
     ForestRegistryFeature,
+    DataSyncRun,
     Owner,
     OwnerFollowing,
     OwnerLog,
@@ -45,10 +46,42 @@ from .serializers import (
     reminder_data,
     user_data,
 )
+from forestry.tasks import enqueue_cadastre_sync
 
 
 def _detail(message: str, http_status: int = status.HTTP_400_BAD_REQUEST) -> Response:
     return Response({"detail": message}, status=http_status)
+
+
+def _sync_run_data(run: DataSyncRun) -> dict:
+    return {
+        "id": run.id,
+        "cadastre": run.cadastre_id,
+        "taskId": run.task_id,
+        "source": run.source,
+        "status": run.status,
+        "startedAt": run.started_at,
+        "finishedAt": run.finished_at,
+        "result": run.result,
+        "error": run.error_message,
+    }
+
+
+@api_view(["GET"])
+@permission_classes([IsAdmin])
+def sync_runs(request):
+    """Return the recent audit trail for administrator-initiated source refreshes."""
+    runs = DataSyncRun.objects.select_related("cadastre", "requested_by").all()[:100]
+    return Response({"results": [_sync_run_data(run) for run in runs]})
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def cadastre_sync(request, cadastre_id: str):
+    """Queue one cadastral unit's WFS and authorised source refresh through Django Q."""
+    cadastre = get_object_or_404(Cadastre, id=cadastre_id)
+    run = enqueue_cadastre_sync(cadastre.id, requested_by_id=request.user.id, source="api")
+    return Response(_sync_run_data(run), status=status.HTTP_202_ACCEPTED)
 
 
 def _parse_millis(value):

@@ -6,8 +6,8 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# Build the Django/PostgreSQL service and apply database migrations via Compose.
-docker compose -f docker-compose-full-stack.yml build api
-docker compose -f docker-compose-full-stack.yml up -d db api
+# Build the Django/PostgreSQL services and start the durable Django Q worker.
+docker compose -f docker-compose-full-stack.yml build api worker
+docker compose -f docker-compose-full-stack.yml up -d db api worker
 
-echo "ForestIQ Django API has been built and started. Verify /api/services/status before deploying the UI."
+echo "ForestIQ API and Django Q worker have been started. Verify /api/services/status and worker logs before deploying the UI."

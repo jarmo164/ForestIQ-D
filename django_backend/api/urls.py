@@ -14,6 +14,8 @@ urlpatterns = [
     path("services/admin/users/<str:user_id>", views.admin_user_detail),
     path("services/admin/userstatistics/prep-data", views.user_statistics_prep),
     path("services/admin/userstatistics/owner-status-change", views.user_statistics),
+    path("services/admin/sync-runs", views.sync_runs),
+    path("services/admin/cadastres/<str:cadastre_id>/sync", views.cadastre_sync),
     path("services/owner-statuses", views.owner_statuses),
     path("services/owner-statuses/<str:status_id>", views.owner_status_detail),
     path("services/admin-workdesk/prepare", views.admin_workdesk_prep),

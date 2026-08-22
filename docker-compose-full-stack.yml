@@ -41,6 +41,44 @@ services:
       - apidb
       - uiapi
 
+  worker:
+    build:
+      context: .
+      dockerfile: django_backend/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    environment:
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-forestiq}
+      POSTGRES_USER: ${POSTGRES_USER:-forestiq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-forestiq}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      DJANGO_Q_WORKERS: ${DJANGO_Q_WORKERS:-2}
+      DJANGO_Q_TIMEOUT_SECONDS: ${DJANGO_Q_TIMEOUT_SECONDS:-300}
+      DJANGO_Q_RETRY_SECONDS: ${DJANGO_Q_RETRY_SECONDS:-360}
+      FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS: ${FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS:-30}
+      FORESTIQ_SYNC_USER_AGENT: ${FORESTIQ_SYNC_USER_AGENT:-ForestIQ-data-synchronizer/1.0}
+      FORESTIQ_CADASTRE_WFS_URL: ${FORESTIQ_CADASTRE_WFS_URL:-https://gsavalik.envir.ee/geoserver/kataster/wfs}
+      FORESTIQ_CADASTRE_WFS_LAYER: ${FORESTIQ_CADASTRE_WFS_LAYER:-kataster:ky_kehtiv}
+      FORESTIQ_METSAREGISTER_WFS_URL: ${FORESTIQ_METSAREGISTER_WFS_URL:-https://gsavalik.envir.ee/geoserver/metsaregister/ows}
+      FORESTIQ_METSAREGISTER_WFS_LAYERS: ${FORESTIQ_METSAREGISTER_WFS_LAYERS:-metsaregister:eraldis}
+      FORESTIQ_SOOS_WFS_URL: ${FORESTIQ_SOOS_WFS_URL:-}
+      FORESTIQ_SOOS_WFS_LAYER: ${FORESTIQ_SOOS_WFS_LAYER:-}
+      FORESTIQ_SOOS_WFS_CADASTRE_FIELD: ${FORESTIQ_SOOS_WFS_CADASTRE_FIELD:-katastri_nr}
+      FORESTEK_API_URL: ${FORESTEK_API_URL:-}
+      FORESTEK_API_TOKEN: ${FORESTEK_API_TOKEN:-}
+      PARIMUS_API_URL: ${PARIMUS_API_URL:-}
+      PARIMUS_API_TOKEN: ${PARIMUS_API_TOKEN:-}
+      TIME_ZONE: Europe/Tallinn
+    command: python manage.py qcluster
+    networks:
+      - apidb
+
   ui:
     build:
       context: .
