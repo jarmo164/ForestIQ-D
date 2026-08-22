@@ -42,11 +42,12 @@ services:
       - uiapi
 
   ui:
-    image: metsis-ee-ui:latest
+    build:
+      context: .
+      dockerfile: forestiq-ui/Dockerfile
     depends_on:
       - api
     ports:
-      - "443:443"
       - "80:80"
     networks:
       - uiapi

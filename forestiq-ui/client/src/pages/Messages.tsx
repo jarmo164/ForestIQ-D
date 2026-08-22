@@ -1,0 +1,7 @@
+/** ForestIQ Landscape Desk design: direct messages form a focused two-pane operational inbox. */
+import { useEffect, useState } from "react";
+import { MailOpen, MessageSquareText, Send } from "lucide-react";
+import { AppShell } from "@/components/AppShell";
+import { api } from "@/lib/api";
+import type { Message } from "@/lib/types";
+export default function Messages() { const [messages, setMessages] = useState<Message[]>([]); const [error, setError] = useState(""); useEffect(() => { api.get<Message[]>("/services/messages/received?page=0&size=50").then(setMessages).catch((err) => setError(err.message)); }, []); return <AppShell title="Sõnumid" eyebrow="FORESTIQ / POSTKAST"><section className="message-layout"><aside><div className="inbox-label"><MailOpen size={17} /> Saabunud</div>{messages.map((message) => <button className="message-preview" key={message.id}><strong>{message.sender?.name || message.sender?.id || "Süsteem"}</strong><span>{message.message}</span><small>{new Date(message.createdAt).toLocaleDateString("et-EE")}</small></button>)}{!messages.length && <div className="empty-state">Saabunud sõnumeid ei ole.</div>}</aside><article className="message-empty"><MessageSquareText size={36} /><h2>Vali sõnum</h2><p>Saabunud ja saadetud teated aitavad hoida omanikutööd meeskonnas ühtse pildina.</p><button className="secondary-action"><Send size={16} /> Koosta sõnum</button>{error && <div className="connection-warning">{error}</div>}</article></section></AppShell>; }

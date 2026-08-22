@@ -1,0 +1,7 @@
+/** ForestIQ Landscape Desk design: deadline work is shown as a calm chronological field ledger. */
+import { useEffect, useState } from "react";
+import { BellRing, CalendarClock, Plus } from "lucide-react";
+import { AppShell } from "@/components/AppShell";
+import { api } from "@/lib/api";
+import type { Reminder } from "@/lib/types";
+export default function Reminders() { const [reminders, setReminders] = useState<Reminder[]>([]); const [error, setError] = useState(""); useEffect(() => { api.get<Reminder[]>("/services/reminders").then(setReminders).catch((err) => setError(err.message)); }, []); return <AppShell title="Meeldetuletused" eyebrow="FORESTIQ / TÄHTAJAD"><section className="section-lead"><div><p>Planeeri kokkulepped, järelkõned ja olulised tähtaegsed tegevused.</p><strong><BellRing size={17} /> {reminders.length} aktiivset kirjet</strong></div><button className="primary-action compact"><Plus size={16} /> Uus meeldetuletus</button></section>{error && <div className="connection-warning">{error}</div>}<section className="timeline-panel">{reminders.map((reminder) => <article className="timeline-item" key={reminder.id}><div className="timeline-date"><CalendarClock size={17} /><strong>{new Date(reminder.dueTime).toLocaleDateString("et-EE", { day: "numeric", month: "long" })}</strong></div><div><h3>{reminder.text}</h3><p>{reminder.owner?.name || "Omanik pole valitud"}</p></div></article>)}{!reminders.length && <div className="empty-state">Aktiivseid meeldetuletusi ei ole.</div>}</section></AppShell>; }
