@@ -4,7 +4,8 @@ WORKDIR /app
 RUN corepack enable
 
 COPY forestiq-ui/package.json forestiq-ui/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY forestiq-ui/patches ./patches
+RUN corepack prepare pnpm@10.15.1 --activate && pnpm install --frozen-lockfile
 
 COPY forestiq-ui/ ./
 RUN pnpm build

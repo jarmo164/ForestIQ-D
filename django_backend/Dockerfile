@@ -13,7 +13,8 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY django_backend /app
 
-RUN chown -R forestiq:forestiq /app
+RUN python manage.py collectstatic --noinput \
+    && chown -R forestiq:forestiq /app
 USER forestiq
 
 EXPOSE 8000

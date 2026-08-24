@@ -5,5 +5,6 @@ psycopg[binary]>=3.2,<3.3
 bcrypt>=4.2,<5.0
 pyotp>=2.9,<3.0
 gunicorn>=23.0,<24.0
+whitenoise>=6.8,<7.0
 django-q2>=1.7,<2.0
 requests>=2.32,<3.0
