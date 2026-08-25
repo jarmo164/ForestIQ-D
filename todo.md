@@ -45,3 +45,7 @@
 - [x] Lisada õiguspõhine katastri detailandmete koond-API kaardilt valimise töövoo jaoks.
 - [x] Rakendada kaardikeskne detailaken omanike, tegevuste, teatiste, metsaregistri ja kliendistaatuse vaadetega.
 - [x] Lisada testid, dokumentatsioon ning pushida detailakna täiendused harusse `rewrite/django`.
+- [x] Kaardistada suurte katastrikihtide GeoJSON-päringute ja MapLibre’i renderdusahela kitsaskohad.
+- [x] Lisada katastri-, eraldise- ja metsaregistrikihile vaatealapõhised ning piiratud GeoJSON-päringud.
+- [x] Lisada MapLibre’i liikumise järel debounced kihiuuendus ja suumipõhine renderdusstrateegia.
+- [ ] Lisada jõudluse regressioonitestid, dokumentatsioon ning pushida optimeeringud harusse `rewrite/django`.

@@ -95,20 +95,13 @@ def cadastre_sync(request, cadastre_id: str):
 def cadastre_map_features(request):
     """Return validated cadastral geometries as WGS84 GeoJSON for MapLibre."""
     cadastres = Cadastre.objects.exclude(boundary__isnull=True)
-    raw_bbox = request.query_params.get("bbox", "").strip()
-    if raw_bbox:
-        try:
-            west, south, east, north = (float(value) for value in raw_bbox.split(","))
-            if west >= east or south >= north:
-                raise ValueError
-            viewport = Polygon.from_bbox((west, south, east, north))
-            viewport.srid = 4326
-            viewport.transform(3301)
-            cadastres = cadastres.filter(boundary__intersects=viewport)
-        except ValueError:
-            return _detail("bbox must contain west,south,east,north in EPSG:4326")
+    viewport, error = _map_viewport(request)
+    if error:
+        return error
+    if viewport:
+        cadastres = cadastres.filter(boundary__intersects=viewport)
     features = []
-    for cadastre in cadastres.order_by("id")[:1000]:
+    for cadastre in cadastres.order_by("id")[:_map_limit(request, settings.FORESTIQ_MAP_CADASTRE_LIMIT)]:
         geometry = cadastre.boundary.clone()
         geometry.transform(4326)
         features.append({"type": "Feature", "id": cadastre.id, "geometry": json.loads(geometry.json), "properties": {"id": cadastre.id, "name": cadastre.name, "county": cadastre.county, "area": str(cadastre.area or "")}})
@@ -123,32 +116,68 @@ def map_layer_features(request, layer: str):
     layer = layer.lower()
     if layer not in {"subparts", "new-subparts", "registry", "notifications"}:
         return _detail("Unknown map layer.", status.HTTP_404_NOT_FOUND)
+    viewport, error = _map_viewport(request)
+    if error:
+        return error
     features = []
     if layer in {"subparts", "new-subparts"}:
         records = CadastreSubPart.objects.exclude(boundary__isnull=True).select_related("cadastre").order_by("cadastre_id", "sub_part_code")
+        if viewport:
+            records = records.filter(boundary__intersects=viewport)
         if layer == "new-subparts":
             since = timezone.now() - timedelta(hours=settings.FORESTIQ_MAP_NEW_SUBPART_HOURS)
             records = records.filter(discovered_at__gte=since)
-        for record in records[:5000]:
+        for record in records[:_map_limit(request, settings.FORESTIQ_MAP_FEATURE_LIMIT)]:
             geometry = record.boundary.clone()
             geometry.transform(4326)
             features.append({"type": "Feature", "id": f"{record.cadastre_id}:{record.sub_part_code}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.cadastre_id}:{record.sub_part_code}", "cadastreId": record.cadastre_id, "subpartCode": record.sub_part_code, "treeType": record.tree_type_code, "area": str(record.area or ""), "discoveredAt": record.discovered_at.isoformat() if record.discovered_at else ""}})
     elif layer == "registry":
-        records = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).select_related("cadastre").order_by("cadastre_id", "source_layer", "source_id")[:5000]
-        for record in records:
+        records = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).select_related("cadastre").order_by("cadastre_id", "source_layer", "source_id")
+        if viewport:
+            records = records.filter(spatial_geometry__intersects=viewport)
+        for record in records[:_map_limit(request, settings.FORESTIQ_MAP_FEATURE_LIMIT)]:
             geometry = record.spatial_geometry.clone()
             geometry.transform(4326)
             features.append({"type": "Feature", "id": f"{record.source_layer}:{record.source_id}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.source_layer}:{record.source_id}", "cadastreId": record.cadastre_id, "subpartCode": record.subpart_code, "title": record.title, "workCode": record.work_code, "decision": record.decision, "area": str(record.area or "")}})
     else:
-        records = CadastreNotification.objects.exclude(cadastre_subpart_code__isnull=True).select_related("cadastre").order_by("-registration_date", "-id")[:5000]
-        for record in records:
-            subpart = CadastreSubPart.objects.filter(cadastre_id=record.cadastre_id, sub_part_code=record.cadastre_subpart_code).exclude(boundary__isnull=True).first()
+        records = CadastreNotification.objects.exclude(cadastre_subpart_code__isnull=True).select_related("cadastre").order_by("-registration_date", "-id")
+        subparts = CadastreSubPart.objects.exclude(boundary__isnull=True)
+        if viewport:
+            subparts = subparts.filter(boundary__intersects=viewport)
+            records = records.filter(cadastre_id__in=subparts.values("cadastre_id"))
+        subpart_lookup = {(item.cadastre_id, item.sub_part_code): item for item in subparts}
+        for record in records[:_map_limit(request, settings.FORESTIQ_MAP_FEATURE_LIMIT)]:
+            subpart = subpart_lookup.get((record.cadastre_id, record.cadastre_subpart_code))
             if not subpart:
                 continue
             geometry = subpart.boundary.centroid
             geometry.transform(4326)
             features.append({"type": "Feature", "id": str(record.id), "geometry": json.loads(geometry.json), "properties": {"id": str(record.id), "cadastreId": record.cadastre_id, "subpartCode": record.cadastre_subpart_code, "notificationNumber": record.notification_number, "workCode": record.work_code, "state": record.state, "registrationDate": record.registration_date.isoformat() if record.registration_date else "", "treeType": subpart.tree_type_code, "subpartArea": str(subpart.area or ""), "discoveredAt": subpart.discovered_at.isoformat() if subpart.discovered_at else ""}})
     return Response({"type": "FeatureCollection", "features": features})
+
+
+def _map_viewport(request):
+    raw_bbox = request.query_params.get("bbox", "").strip()
+    if not raw_bbox:
+        return None, None
+    try:
+        west, south, east, north = (float(value) for value in raw_bbox.split(","))
+        if west >= east or south >= north or west < -180 or east > 180 or south < -90 or north > 90:
+            raise ValueError
+        viewport = Polygon.from_bbox((west, south, east, north))
+        viewport.srid = 4326
+        viewport.transform(3301)
+        return viewport, None
+    except ValueError:
+        return None, _detail("bbox must contain west,south,east,north in EPSG:4326")
+
+
+def _map_limit(request, default: int) -> int:
+    try:
+        requested = int(request.query_params.get("limit", default))
+    except (TypeError, ValueError):
+        requested = default
+    return max(1, min(requested, settings.FORESTIQ_MAP_MAX_FEATURE_LIMIT))
 
 
 def _parse_millis(value):

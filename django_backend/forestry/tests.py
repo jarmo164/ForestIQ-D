@@ -296,3 +296,13 @@ class MapFeatureTests(TestCase):
         self.assertEqual(response.data["activities"][0]["kind"], "DEAL")
         self.assertEqual(response.data["notifications"][0]["notificationNumber"], 7002)
         self.assertEqual(response.data["registryFeatures"][0]["title"], "Eraldis 12")
+
+    def test_map_layers_accept_viewport_and_enforce_bounded_feature_limit(self):
+        response = self.client.get("/api/services/map/cadastres?bbox=24,58,26,60&limit=1")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertLessEqual(len(response.data["features"]), 1)
+        response = self.client.get("/api/services/map/layers/subparts?bbox=24,58,26,60&limit=1")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertLessEqual(len(response.data["features"]), 1)
+        invalid = self.client.get("/api/services/map/cadastres?bbox=invalid")
+        self.assertEqual(invalid.status_code, 400)

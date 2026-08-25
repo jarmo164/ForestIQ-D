@@ -129,6 +129,10 @@ Kaart sisaldab ka eraldi **uute eraldiste** kihti (`GET /api/services/map/layers
 
 Katastriüksuse klõpsamine avab kaardikeskse tervikvaate. Klient laadib selleks õiguspõhise koondvastuse `GET /api/services/cadastres/<katastritunnus>/workspace`. Detailaken hõlmab vara põhiandmeid, ligipääsetavaid omanikke ja nende kontaktandmeid, kliendisuhte seisu (aktiivsed ning võidetud tehingud), omanike tegevusajalugu ja meeldetuletusi, teatisi ning metsaregistri objekte. Kaasomaniku andmed, millele kasutajal puudub ligipääs, jäetakse vastusest välja.
 
+### Suurte kaardikihtide jõudlus
+
+MapLibre ei lae enam kõiki katastri- ja polügooniobjekte korraga. Pärast kaardi liikumise lõppu uuendatakse kihte ühe debounced päringutsükliga ning API saab ainult nähtava kaardiala `bbox`-i. Katastriüksused ning uued eraldised ilmuvad alates suumist 8, teatised suumist 9 ning polügoonitihedad eraldiste ja metsaregistri kihid suumist 10. Iga serverivastus on piiratud konfigureeritava `limit`-iga; serveri vaikimisi piirid on `FORESTIQ_MAP_CADASTRE_LIMIT=750`, `FORESTIQ_MAP_FEATURE_LIMIT=1500` ja absoluutne ülempiir `FORESTIQ_MAP_MAX_FEATURE_LIMIT=3000`.
+
 ## Andmebaasi migratsioon vanast MetsIS-ist
 
 Enne ümberlülitust tee lähte- ja sihtandmebaasist varukoopiad. Uue skeemi loovad Django migratsioonid. Vana PostgreSQL andmebaasi sisu saab kopeerida idempotentse käsuga, mis kasutab ainult lugemisühendust `LEGACY_DATABASE_URL` kaudu.
