@@ -17,6 +17,7 @@ urlpatterns = [
     path("services/admin/sync-runs", views.sync_runs),
     path("services/admin/cadastres/<str:cadastre_id>/sync", views.cadastre_sync),
     path("services/map/cadastres", views.cadastre_map_features),
+    path("services/map/layers/<str:layer>", views.map_layer_features),
     path("services/deals/owners/<str:owner_id>/brief", parity.deal_brief),
     path("services/deals/owners/<str:owner_id>", parity.deals_by_owner),
     path("services/deals/evaluation-queue", parity.deal_evaluation_queue),

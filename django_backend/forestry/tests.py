@@ -9,7 +9,7 @@ from django.contrib.gis.geos import MultiPolygon, Polygon
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, Owner
+from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, Owner
 from forestry.services import import_runner
 from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance
 
@@ -222,3 +222,15 @@ class MapFeatureTests(TestCase):
         self.assertEqual(feature["id"], self.cadastre.id)
         self.assertEqual(feature["geometry"]["type"], "MultiPolygon")
         self.assertLess(abs(feature["geometry"]["coordinates"][0][0][0][0]), 180)
+
+    def test_geodjango_map_layers_return_subparts_registry_and_notification_marker(self):
+        boundary = MultiPolygon(Polygon(((500000, 6500000), (500100, 6500000), (500000, 6500100), (500000, 6500000)), srid=3301), srid=3301)
+        CadastreSubPart.objects.create(cadastre=self.cadastre, sub_part_code=12, tree_type_code="KU", boundary=boundary)
+        ForestRegistryFeature.objects.create(source_layer="metsaregister:eraldis", source_id="layer-12", cadastre=self.cadastre, subpart_code=12, title="Eraldis 12", spatial_geometry=boundary)
+        CadastreNotification.objects.create(id=12001, notification_number=7001, cadastre=self.cadastre, cadastre_subpart_code=12, work_code="RAIE")
+        for layer, expected_type in [("subparts", "MultiPolygon"), ("registry", "MultiPolygon"), ("notifications", "Point")]:
+            response = self.client.get(f"/api/services/map/layers/{layer}")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(len(response.data["features"]), 1)
+            self.assertEqual(response.data["features"][0]["geometry"]["type"], expected_type)
+            self.assertEqual(response.data["features"][0]["properties"]["cadastreId"], self.cadastre.id)

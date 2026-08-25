@@ -112,6 +112,39 @@ def cadastre_map_features(request):
     return Response({"type": "FeatureCollection", "features": features})
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def map_layer_features(request, layer: str):
+    """Return validated GeoDjango layers as WGS84 GeoJSON for the MapLibre client."""
+
+    layer = layer.lower()
+    if layer not in {"subparts", "registry", "notifications"}:
+        return _detail("Unknown map layer.", status.HTTP_404_NOT_FOUND)
+    features = []
+    if layer == "subparts":
+        records = CadastreSubPart.objects.exclude(boundary__isnull=True).select_related("cadastre").order_by("cadastre_id", "sub_part_code")[:5000]
+        for record in records:
+            geometry = record.boundary.clone()
+            geometry.transform(4326)
+            features.append({"type": "Feature", "id": f"{record.cadastre_id}:{record.sub_part_code}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.cadastre_id}:{record.sub_part_code}", "cadastreId": record.cadastre_id, "subpartCode": record.sub_part_code, "treeType": record.tree_type_code, "area": str(record.area or "")}})
+    elif layer == "registry":
+        records = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).select_related("cadastre").order_by("cadastre_id", "source_layer", "source_id")[:5000]
+        for record in records:
+            geometry = record.spatial_geometry.clone()
+            geometry.transform(4326)
+            features.append({"type": "Feature", "id": f"{record.source_layer}:{record.source_id}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.source_layer}:{record.source_id}", "cadastreId": record.cadastre_id, "subpartCode": record.subpart_code, "title": record.title, "workCode": record.work_code, "decision": record.decision, "area": str(record.area or "")}})
+    else:
+        records = CadastreNotification.objects.exclude(cadastre_subpart_code__isnull=True).select_related("cadastre").order_by("-registration_date", "-id")[:5000]
+        for record in records:
+            subpart = CadastreSubPart.objects.filter(cadastre_id=record.cadastre_id, sub_part_code=record.cadastre_subpart_code).exclude(boundary__isnull=True).first()
+            if not subpart:
+                continue
+            geometry = subpart.boundary.centroid
+            geometry.transform(4326)
+            features.append({"type": "Feature", "id": str(record.id), "geometry": json.loads(geometry.json), "properties": {"id": str(record.id), "cadastreId": record.cadastre_id, "subpartCode": record.cadastre_subpart_code, "notificationNumber": record.notification_number, "workCode": record.work_code, "state": record.state, "registrationDate": record.registration_date.isoformat() if record.registration_date else ""}})
+    return Response({"type": "FeatureCollection", "features": features})
+
+
 def _parse_millis(value):
     if not value:
         return None

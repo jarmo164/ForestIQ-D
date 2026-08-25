@@ -29,3 +29,7 @@
 - [x] Eemaldada Foresteki perioodiline ning tavapärase registrivärskenduse automaatne käivitus.
 - [x] Jätta Forestek teadlikult ainult ühekordse, kinnitatava algimpordi käsuna ning testida reeglit.
 - [x] Uuendada käivitusjuhised ja pushida muudatus harusse `rewrite/django`.
+- [x] Kaardistada GeoDjango WFS/GeoJSON-i ruumiandmekihid ning olemasoleva MapLibre tööruumi andmevoog.
+- [x] Rakendada MapLibre’i kihid katastriüksuste, eraldiste, metsaregistri objektide ja teatiste kuvamiseks.
+- [x] Lisada kihipaneel, nähtavuse juhtimine, objektide valik ning laadimis- ja tõrkeseisundid.
+- [x] Lisada API- ja kliendikontrollid, dokumentatsioon ning pushida täiendused harusse `rewrite/django`.

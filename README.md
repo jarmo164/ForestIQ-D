@@ -106,6 +106,12 @@ python manage.py import_metsaregister_full --without-notifications
 
 Teatiste automaatseks järelpäringuks seadista lisaks metsaregistri URL-ile ja eraldiste kihile `FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER`. Vajadusel saab CQL-väljade nimed määrata muutujatega `FORESTIQ_METSAREGISTER_NOTIFICATION_CADASTRE_FIELD` ja `FORESTIQ_METSAREGISTER_NOTIFICATION_SUBPART_FIELD`; vaikimisi kasutatakse `katastri_nr` ja `eraldis_nr`. Käsk jätab kogu täisimpordi kohta ühe `DataSyncRun` auditikirje, mis sisaldab eraldiste, uute eraldiste ja imporditud teatiste arvu.
 
+### MapLibre ja GeoDjango kaardikihid
+
+Reacti kaarditööruum aadressil `/map` kasutab MapLibre’i ning laeb ruumiandmed ainult autoriseeritud Django REST-liidese kaudu. Katastriüksused tulevad otspunktist `GET /api/services/map/cadastres`; GeoDjango eraldised, metsaregistri objektid ja teatiste markerid tulevad vastavalt otspunktidest `GET /api/services/map/layers/subparts`, `registry` ja `notifications`. Kõik geomeetriad teisendatakse serveris EPSG:4326 GeoJSON-iks ning MapLibre ei pöördu otse välise WFS-teenuse poole.
+
+Kihipaneeliga saab katastriüksused, metsaeraldised, metsaregistri objektid ja teatised eraldi sisse või välja lülitada. Kaardilt valitud objekti atribuudid kuvatakse samas tööruumis. Teatis markerina paikneb seotud eraldise tsentroidil, sest teatisel endal ei ole eraldi geomeetriavälja.
+
 ## Andmebaasi migratsioon vanast MetsIS-ist
 
 Enne ümberlülitust tee lähte- ja sihtandmebaasist varukoopiad. Uue skeemi loovad Django migratsioonid. Vana PostgreSQL andmebaasi sisu saab kopeerida idempotentse käsuga, mis kasutab ainult lugemisühendust `LEGACY_DATABASE_URL` kaudu.
