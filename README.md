@@ -66,6 +66,25 @@ Maa- ja Ruumiameti katastri WFS ning metsaregistri WFS on seadistatud vaikimisi 
 
 Üksikut katastriüksust saab värskendada administraatori API kaudu (`POST /api/services/admin/cadastres/{id}/sync`). Foresteki omaniku-katastri seosed, SOOS-i WFS ja Pärimuse päringud on tahtlikult opt-in: need käivituvad alles siis, kui nende teenuse URL ja eraldi vähimate õigustega token on `.env` failis seadistatud. Täpne andmevoog, auditeerimine ja migratsioonisammud on failis [`docs/DJANGO_REWRITE_ARCHITECTURE.md`](docs/DJANGO_REWRITE_ARCHITECTURE.md).
 
+### Käsitsi impordiskriptid
+
+Käsud käivitavad importimise samas protsessis ning loovad iga tegelikult töödeldud katastriüksuse kohta `DataSyncRun` auditirea. Alusta alati kuivkäivitusega; see kontrollib konfiguratsiooni ja valitud ulatust, kuid **ei tee välispäringuid ega kirjuta andmebaasi**.
+
+```sh
+cd django_backend
+
+# Avalikud WFS-i allikad: katastriüksus, metsaregister ning seadistatud SOOS.
+python manage.py import_wfs_sources --cadastre 79501:001:0001 --source all --dry-run
+python manage.py import_wfs_sources --cadastre 79501:001:0001 --source cadastre
+python manage.py import_wfs_sources --all --source metsaregister --limit 50 --continue-on-error
+
+# Volitatud API-allikad: enne on vaja seadistada FORESTEK_API_URL/TOKEN või PARIMUS_API_URL/TOKEN.
+python manage.py import_external_api_sources --cadastre 79501:001:0001 --source forestek --dry-run
+python manage.py import_external_api_sources --all --source parimus --limit 25 --continue-on-error
+```
+
+`import_wfs_sources` toetab allikaid `cadastre`, `metsaregister`, `soos` ja `all`. Valiku `all` korral jäetakse seadistamata SOOS teadlikult vahele; eraldi `--source soos` nõuab selle URL-i ja kihi seadistust. `import_external_api_sources` toetab `forestek`, `parimus` ja `all`; ükski volitatud API-päring ei käivitu enne URL-i ning tokeni eelkontrolli läbimist. Tõrked talletatakse auditireal ning `--continue-on-error` lubab töödelda järgmisi üksusi.
+
 ## Andmebaasi migratsioon vanast MetsIS-ist
 
 Enne ümberlülitust tee lähte- ja sihtandmebaasist varukoopiad. Uue skeemi loovad Django migratsioonid. Vana PostgreSQL andmebaasi sisu saab kopeerida idempotentse käsuga, mis kasutab ainult lugemisühendust `LEGACY_DATABASE_URL` kaudu.

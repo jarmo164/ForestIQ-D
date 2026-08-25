@@ -2,12 +2,15 @@
 
 from unittest.mock import Mock, patch
 
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.contrib.gis.geos import MultiPolygon, Polygon
 from rest_framework.test import APIClient
 
 from accounts.models import User
 from forestry.models import Cadastre, DataSyncRun, Owner
+from forestry.services import import_runner
 from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance
 
 
@@ -111,6 +114,45 @@ class SyncEndpointTests(TestCase):
         client.force_authenticate(caller)
         response = client.post(f"/api/services/admin/cadastres/{self.cadastre.id}/sync")
         self.assertEqual(response.status_code, 403)
+
+
+class ImportCommandTests(TestCase):
+    def setUp(self):
+        self.cadastre = Cadastre.objects.create(id="79501:001:0005")
+
+    @override_settings(FORESTIQ_CADASTRE_WFS_URL="https://wfs.example.test", FORESTIQ_CADASTRE_WFS_LAYER="cadastre:parcel")
+    def test_wfs_command_persists_successful_audit_run(self):
+        sync = Mock(return_value=1)
+        source = import_runner.SourceDefinition("cadastre", sync, ("FORESTIQ_CADASTRE_WFS_URL", "FORESTIQ_CADASTRE_WFS_LAYER"))
+        with patch.dict(import_runner.WFS_SOURCES, {"cadastre": source}, clear=True):
+            call_command("import_wfs_sources", "--cadastre", self.cadastre.id, "--source", "cadastre")
+        sync.assert_called_once_with(self.cadastre.id)
+        run = DataSyncRun.objects.get(cadastre=self.cadastre)
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(run.result, {"cadastre": 1})
+        self.assertTrue(run.source.startswith("cli:wfs:"))
+
+    @override_settings(FORESTIQ_CADASTRE_WFS_URL="https://wfs.example.test", FORESTIQ_CADASTRE_WFS_LAYER="cadastre:parcel")
+    @patch("forestry.services.import_runner.sync_cadastre_wfs")
+    def test_wfs_dry_run_makes_no_requests_or_audit_records(self, sync):
+        call_command("import_wfs_sources", "--cadastre", self.cadastre.id, "--source", "cadastre", "--dry-run")
+        sync.assert_not_called()
+        self.assertFalse(DataSyncRun.objects.exists())
+
+    def test_api_command_requires_explicit_source_configuration(self):
+        with self.assertRaises(CommandError):
+            call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek", "--dry-run")
+
+    @override_settings(FORESTEK_API_URL="https://forestek.example.test", FORESTEK_API_TOKEN="test-token")
+    def test_api_command_persists_audited_result(self):
+        sync = Mock(return_value=2)
+        source = import_runner.SourceDefinition("forestek", sync, ("FORESTEK_API_URL", "FORESTEK_API_TOKEN"))
+        with patch.dict(import_runner.API_SOURCES, {"forestek": source}, clear=True):
+            call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek")
+        sync.assert_called_once_with(self.cadastre.id)
+        run = DataSyncRun.objects.get(cadastre=self.cadastre)
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(run.result, {"forestek": 2})
 
 
 class MapFeatureTests(TestCase):

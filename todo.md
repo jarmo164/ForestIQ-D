@@ -17,3 +17,7 @@
 - [x] Rakendada `main`-harust puuduvad kõrge prioriteediga domeenifunktsioonid, API-lepingud ja taustprotsessid Django kihis.
 - [x] Rakendada puuduvatele töövoogudele vastavad Reacti vaated ja navigeerimine.
 - [x] Lisada pariteeditestid, uuendada dokumentatsioon ning pushida täiendused harusse `rewrite/django`.
+- [x] Auditeerida uuesti `main`-haru kõik teenuse- ja kasutajaliidese töövood ning dokumenteerida allesjäänud teadlikud erinevused.
+- [x] Lisada ühtne WFS-i impordi halduskäsk Maa-ameti, metsaregistri ja SOOS-i allikatele koos sihtkatastri ning kuivkäivituse valikutega.
+- [x] Lisada opt-in API-allikate impordi halduskäsk Foresteki ja Pärimuse andmevoogudele koos konfiguratsiooni eelkontrolliga.
+- [ ] Lisada impordiskriptide testid, käivitusjuhised ning pushida kontrollitud täiendused harusse `rewrite/django`.
