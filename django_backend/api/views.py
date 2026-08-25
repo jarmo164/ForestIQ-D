@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from io import BytesIO
+import json
 from uuid import uuid4
 
 from django.db import transaction
 from django.db.models import Count, Q
+from django.contrib.gis.geos import Polygon
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -18,6 +20,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Privilege, PrivilegeCode, User
+from accounts.authorization import sync_user_groups
 from forestry.models import (
     Cadastre,
     CadastreLabel,
@@ -78,10 +81,35 @@ def sync_runs(request):
 @api_view(["POST"])
 @permission_classes([IsAdmin])
 def cadastre_sync(request, cadastre_id: str):
-    """Queue one cadastral unit's WFS and authorised source refresh through Django Q."""
+    """Queue one cadastral unit's source refresh through Celery."""
     cadastre = get_object_or_404(Cadastre, id=cadastre_id)
     run = enqueue_cadastre_sync(cadastre.id, requested_by_id=request.user.id, source="api")
     return Response(_sync_run_data(run), status=status.HTTP_202_ACCEPTED)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def cadastre_map_features(request):
+    """Return validated cadastral geometries as WGS84 GeoJSON for MapLibre."""
+    cadastres = Cadastre.objects.exclude(boundary__isnull=True)
+    raw_bbox = request.query_params.get("bbox", "").strip()
+    if raw_bbox:
+        try:
+            west, south, east, north = (float(value) for value in raw_bbox.split(","))
+            if west >= east or south >= north:
+                raise ValueError
+            viewport = Polygon.from_bbox((west, south, east, north))
+            viewport.srid = 4326
+            viewport.transform(3301)
+            cadastres = cadastres.filter(boundary__intersects=viewport)
+        except ValueError:
+            return _detail("bbox must contain west,south,east,north in EPSG:4326")
+    features = []
+    for cadastre in cadastres.order_by("id")[:1000]:
+        geometry = cadastre.boundary.clone()
+        geometry.transform(4326)
+        features.append({"type": "Feature", "id": cadastre.id, "geometry": json.loads(geometry.json), "properties": {"id": cadastre.id, "name": cadastre.name, "county": cadastre.county, "area": str(cadastre.area or "")}})
+    return Response({"type": "FeatureCollection", "features": features})
 
 
 def _parse_millis(value):
@@ -156,6 +184,7 @@ def admin_users(request):
     with transaction.atomic():
         user = User.objects.create_user(user_id, full_name, password)
         Privilege.objects.bulk_create([Privilege(user=user, code=code) for code in privileges if code in PrivilegeCode.values])
+        sync_user_groups(user)
     return Response(_user_payload(user), status=status.HTTP_201_CREATED)
 
 
@@ -642,9 +671,25 @@ def contract_detail(request, contract_id: str):
 @permission_classes([IsAdmin])
 def contract_pdf(request, contract_id: str):
     contract = get_object_or_404(Contract, id=contract_id)
+    if contract.document_file:
+        return FileResponse(contract.document_file.open("rb"), content_type="application/pdf", as_attachment=True, filename=f"contract-{contract_id}.pdf")
     if not contract.document:
         return _detail("No generated PDF is attached to this contract.", status.HTTP_404_NOT_FOUND)
     return FileResponse(BytesIO(bytes(contract.document)), content_type="application/pdf", as_attachment=True, filename=f"contract-{contract_id}.pdf")
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def contract_document_upload(request, contract_id: str):
+    """Store an uploaded contract under the configured local media directory."""
+    uploaded = request.FILES.get("file")
+    if uploaded is None:
+        return _detail("A file field is required.")
+    if uploaded.content_type not in {"application/pdf", "application/x-pdf"}:
+        return _detail("Only PDF contract files are accepted.", status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+    contract = get_object_or_404(Contract, id=contract_id)
+    contract.document_file.save(f"contract-{contract_id}.pdf", uploaded, save=True)
+    return Response({"id": contract.id, "document": contract.document_file.url}, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET"])

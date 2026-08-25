@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from django.conf import settings
+from django.contrib.gis.db import models as gis_models
 from django.db import models
 
 
@@ -80,6 +81,8 @@ class Cadastre(models.Model):
     postal = models.CharField(max_length=100, blank=True)
     polygon = models.JSONField(default=list, blank=True)
     centroid = models.JSONField(default=dict, blank=True)
+    boundary = gis_models.MultiPolygonField(srid=3301, null=True, blank=True)
+    centroid_geometry = gis_models.PointField(srid=3301, null=True, blank=True)
     area = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)
     arable_area = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)
     yard_area = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)
@@ -157,6 +160,7 @@ class CadastreSubPart(models.Model):
     tree_type_code = models.CharField(max_length=20, blank=True)
     area = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)
     polygon = models.JSONField(default=list, blank=True)
+    boundary = gis_models.MultiPolygonField(srid=3301, null=True, blank=True)
 
     class Meta:
         db_table = "cadastre_sub_parts"
@@ -198,6 +202,7 @@ class ForestRegistryFeature(models.Model):
     event_date = models.DateTimeField(null=True, blank=True)
     attributes = models.JSONField(default=dict, blank=True)
     geometry = models.JSONField(default=dict, blank=True)
+    spatial_geometry = gis_models.GeometryField(srid=3301, null=True, blank=True)
 
     class Meta:
         db_table = "forest_registry_features"

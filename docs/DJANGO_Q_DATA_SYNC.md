@@ -1,6 +1,6 @@
-# Django Q andmevärskendus
+# Celery andmevärskendus
 
-ForestIQ kasutab **Django Q2** ORM-järjekorda, mille tööde olek säilib samas PostgreSQL andmebaasis nagu rakenduse põhiandmed. Rakenduse API ja `worker` on eraldi Compose-teenused. API lisab töö järjekorda, worker käivitab selle ning iga käivitus jääb tabelisse `data_sync_runs` koos staatuse, tulemuste ja veateatega.
+ForestIQ kasutab **Celery + Redis** järjekorda. Redis kannab järjekorras olevat tööd; püsiv ja varundatav käivitusaudit säilib samas PostgreSQL/PostGIS andmebaasis nagu rakenduse põhiandmed. Rakenduse API, `worker` ja `beat` on eraldi Compose-teenused. API lisab töö järjekorda, worker käivitab selle ning iga käivitus jääb tabelisse `data_sync_runs` koos Celery töö-ID, staatuse, tulemuste ja veateatega.
 
 | Allikas | Vaikimisi kasutus | Seotud ForestIQ andmed | Autentimine |
 |---|---|---|---|
@@ -10,30 +10,29 @@ ForestIQ kasutab **Django Q2** ORM-järjekorda, mille tööde olek säilib samas
 | Forestek / Weasel | valikuline katastripõhine omanike päring | `Owner` ja `OwnerCadastre` seosed | teenusekonto Bearer-token |
 | Pärimus | valikuline täpne isikukoodipäring | auditiga `InheritanceSignal` teated | ForestIQ-le määratud Bearer-token |
 
-> Avaliku WFS-i andmed on ruumiandmete lähteandmed. ForestIQ ei kustuta automaatselt käsitsi lisatud omanik–katastri seoseid ega asenda kasutaja sisestatud kinnistu nime. Pärimus- ja Foresteki-päringud käivituvad ainult siis, kui nende URL ning token on selgesõnaliselt seadistatud.
+> Avaliku WFS-i andmed on ruumiandmete lähteandmed. ForestIQ ei kustuta automaatselt käsitsi lisatud omanik–katastri seoseid ega asenda kasutaja sisestatud kinnistu nime. GeoJSON geomeetria valideeritakse GEOS-i abil ja talletatakse PostGIS-is EPSG:3301 geomeetriana; varasem JSON-väli jääb API tagasühilduvuseks. Pärimus- ja Foresteki-päringud käivituvad ainult siis, kui nende URL ning token on selgesõnaliselt seadistatud.
 
 ## Esmakordne käivitus
 
-Kopeeri `.env.example` failiks `.env`, määra Django ja PostgreSQL saladused ning käivita `./release.sh`. Kui konteinerid töötavad, loo üks kord igapäevane järjekorratöö:
+Kopeeri `.env.example` failiks `.env`, määra Django ja PostgreSQL saladused ning käivita täisstack. Celery Beat lisab portfelli sünkroniseerimise automaatselt igal päeval Redis-järjekorda; selle intervalli vaikimisi väärtus on 86400 sekundit ja seda saab arenduses muuta `FORESTIQ_PORTFOLIO_SYNC_INTERVAL_SECONDS` abil.
 
 ```bash
-docker compose -f docker-compose-full-stack.yml exec api \
-  python manage.py configure_forestry_sync_schedule --hour 3
+docker compose -f docker-compose-full-stack.yml up --build db redis api worker beat
 ```
 
-Käsu vaikimisi kellaaeg on 03:00 kohaliku aja järgi. See töö lisab igale olemasolevale katastriüksusele eraldi tausttöö, mitte üht suurt monoliitset päringut. See lubab vea korral töö üksusena korrata ning säilitab tulemuse `data_sync_runs` tabelis.
+Beat lisab igale olemasolevale katastriüksusele eraldi tausttöö, mitte üht suurt monoliitset päringut. See lubab vea korral töö üksusena korrata ning säilitab tulemuse `data_sync_runs` tabelis.
 
-Ühe katastriüksuse kontrollitud käsitsi värskendamiseks kasutatakse järjekorda:
+Ühe katastriüksuse kontrollitud käsitsi värskendamiseks kasutatakse administraatori API-t:
 
 ```bash
-docker compose -f docker-compose-full-stack.yml exec api \
-  python manage.py sync_forestry_data --cadastre 10501:001:0001
+curl -X POST http://localhost:8000/api/services/admin/cadastres/10501:001:0001/sync \
+  -H "Authorization: Bearer <admin-access-token>"
 ```
 
-Arenduses või veaotsingul võib töö käivitada samas protsessis:
+Arenduses või testis võib töö käivitada samas protsessis:
 
 ```bash
-python manage.py sync_forestry_data --cadastre 10501:001:0001 --inline
+FORESTIQ_TASKS_INLINE=true python manage.py test forestry -v 2
 ```
 
 Administraator võib sama töö esitada ka `POST /api/services/admin/cadastres/{katastritunnus}/sync` kaudu. Viimased tööd on saadaval `GET /api/services/admin/sync-runs` otspunktis.

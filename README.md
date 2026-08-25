@@ -1,6 +1,6 @@
 # ForestIQ
 
-ForestIQ on metsaostjate töölaud. Selle haru server on ümber ehitatud **Python 3.12, Django, Django REST Frameworki ja PostgreSQL-i** peale ning kasutajaliides **React 19, TypeScripti ja Vite’i** peale. Uus kasutajaliides säilitab Django `api/` ja `api/services/` lepingud, JWT/TOTP sisselogimise ning metsaomanike töövood.
+ForestIQ on metsaostjate töölaud. Haru `rewrite` server on ümber ehitatud **Python 3.12, Django, Django REST Frameworki ning PostgreSQL/PostGIS-i** peale; kasutajaliides on **React 19, TypeScripti, Vite’i ja MapLibre’i** peal. Uus kasutajaliides säilitab Django `api/` ja `api/services/` lepingud, JWT/TOTP sisselogimise ning metsaomanike töövood.
 
 ## Uus arhitektuur
 
@@ -8,8 +8,9 @@ ForestIQ on metsaostjate töölaud. Selle haru server on ümber ehitatud **Pytho
 |---|---|---|
 | Kasutajaliides | React 19 + TypeScript + Vite | Metsaomanike, katastri, töölaudade, sõnumite, meeldetuletuste ja halduse operatiivne töölaud |
 | API | Django + Django REST Framework | REST liides, domeeniloogika, õigused ja JWT autentimine |
-| Andmebaas | PostgreSQL 16 | Omanikud, katastriüksused, töölogid, sõnumid, lepingud ja muu püsiv domeeniinfo |
-| Tausttööd | Django Q2 + PostgreSQL ORM broker | Auditiga WFS-i, metsaregistri ja volitatud välisallikate sünkroniseerimine |
+| Andmebaas | PostgreSQL 16 + PostGIS 3.4 | Omanikud, katastriüksused, ruumiandmed, töölogid, sõnumid, lepingud ja muu püsiv domeeniinfo |
+| Tausttööd | Celery + Redis + Celery Beat | Auditiga WFS-i, metsaregistri ja volitatud välisallikate sünkroniseerimine |
+| Kaart | GeoDjango + MapLibre | Geomeetria valideerimine, PostGIS-i ristumispäringud ja interaktiivsed GeoJSON-kihid |
 | Käitus | Docker Compose + Gunicorn + Nginx | Korratav kasutajaliidese, API, workeri ja andmebaasi ühtne käivitus |
 
 Django rakendused on jagatud selgete domeenipiiridega: `accounts` haldab identiteeti ja õigusi, `forestry` metsaomanike ning katastri domeeni, `operations` meeldetuletusi, sõnumeid ja lepinguid ning `api` säilitab REST-liidese ühilduvuse.
@@ -23,10 +24,10 @@ cp .env.example .env
 # muuda vähemalt DJANGO_SECRET_KEY ja POSTGRES_PASSWORD
 ```
 
-Käivita andmebaas, Django API ja tausttöö worker.
+Käivita PostGIS, Redis, Django API, Celery worker ja Celery Beat.
 
 ```sh
-docker compose -f docker-compose-full-stack.yml up --build db api worker
+docker compose -f docker-compose-full-stack.yml up --build db redis api worker beat
 ```
 
 API seisukorda saab kontrollida aadressilt `http://localhost:8000/api/services/status`. Täisstack käivitab Reacti töölauda pordil 80 ning Nginx suunab selle `/api/` päringud samal domeenil Django API-le.
@@ -47,14 +48,9 @@ Arenduskeskkonnas loob käivitus `autocreated` administraatori. Kasutajanimi ja 
 
 ## WFS ja registriandmete värskendamine
 
-Maa- ja Ruumiameti katastri WFS ning metsaregistri WFS on seadistatud vaikimisi avalikeks allikateks. Django Q worker värskendab need katastriüksuse kaupa ning säilitab iga käivituse auditi. Igapäevase värskenduse registreerimiseks käivita üks kord:
+Maa- ja Ruumiameti katastri WFS ning metsaregistri WFS on seadistatud vaikimisi avalikeks allikateks. Celery worker värskendab need katastriüksuse kaupa ning säilitab iga käivituse auditi mudelis `DataSyncRun`; Celery Beat paneb portfelli sünkroniseerimise iga 24 tunni järel automaatselt järjekorda. Arenduses saab intervalli muuta muutujaga `FORESTIQ_PORTFOLIO_SYNC_INTERVAL_SECONDS`.
 
-```sh
-docker compose -f docker-compose-full-stack.yml exec api \
-  python manage.py configure_forestry_sync_schedule --hour 3
-```
-
-Üksikut katastriüksust saab värskendada käsuga `python manage.py sync_forestry_data --cadastre 10501:001:0001`. Foresteki omaniku-katastri seosed, SOOS-i WFS ja Pärimuse päringud on tahtlikult opt-in: need käivituvad alles siis, kui nende teenuse URL ja eraldi vähimate õigustega token on `.env` failis seadistatud. Täpne seadistus, auditeerimise loogika ja admin-API on kirjeldatud failis [`docs/DJANGO_Q_DATA_SYNC.md`](docs/DJANGO_Q_DATA_SYNC.md).
+Üksikut katastriüksust saab värskendada administraatori API kaudu (`POST /api/services/admin/cadastres/{id}/sync`). Foresteki omaniku-katastri seosed, SOOS-i WFS ja Pärimuse päringud on tahtlikult opt-in: need käivituvad alles siis, kui nende teenuse URL ja eraldi vähimate õigustega token on `.env` failis seadistatud. Täpne andmevoog, auditeerimine ja migratsioonisammud on failis [`docs/DJANGO_REWRITE_ARCHITECTURE.md`](docs/DJANGO_REWRITE_ARCHITECTURE.md).
 
 ## Andmebaasi migratsioon vanast MetsIS-ist
 
@@ -76,18 +72,17 @@ Käsk säilitab stabiilsed kasutaja-, omaniku-, katastri- ja lepingute identifik
 
 ## Turve
 
-Django API kasutab Bearer JWT autentimist. Reacti töölaud kasutab parooliga sisselogimise eeltokenit, TOTP kontrolli ning tavapäraseid ja värskendustokeneid. Õigused `ADMIN`, `OWNER_PROFILE`, `ASSIGNED_OWNERS`, `PHONES` ja `EVALUATION` on andmebaasis eraldiseisvad ning `ASSIGNED_OWNERS` piirab omanikuandmed kasutaja enda töödega.
+Django API kasutab Bearer JWT autentimist. Reacti töölaud kasutab parooliga sisselogimise eeltokenit, TOTP kontrolli ning tavapäraseid ja värskendustokeneid. Õigused `ADMIN`, `OWNER_PROFILE`, `ASSIGNED_OWNERS`, `PHONES` ja `EVALUATION` on andmebaasis eraldiseisvad ning sünkroniseeritakse vastavatesse Django gruppidesse. Seega saavad tavapärased Django `Group` ja `Permission` kontrollid töötada paralleelselt olemasolevate ressursiõigustega; OIDC/Keycloak on dokumenteeritud järgmise etapina.
 
 Ära kasuta `.env.example` väärtusi tootmises. Määra unikaalne `DJANGO_SECRET_KEY`, tugev PostgreSQL parool, `DJANGO_DEBUG=false`, korrektne `DJANGO_ALLOWED_HOSTS` ning päris TOTP saladused.
 
 ## Kontrollimine
 
-Django kontroll ja testid töötavad ilma kohaliku PostgreSQL serverita SQLite-põhise testandmebaasiga; tegelik rakenduse andmebaas on siiski PostgreSQL.
+Django ruumiandmete migratsioon ning kaart eeldavad PostGIS-i, seega kontrolli integraatsiooni Compose’i PostGIS-teenusega.
 
 ```sh
-cd django_backend
-USE_SQLITE_FOR_TESTS=1 python manage.py check
-USE_SQLITE_FOR_TESTS=1 python manage.py test api forestry -v 2
+docker compose -f docker-compose-full-stack.yml exec api python manage.py check
+docker compose -f docker-compose-full-stack.yml exec api python manage.py test api forestry accounts -v 2
 ```
 
 Kasutajaliidese kontrollimiseks käivita:
@@ -98,4 +93,4 @@ pnpm check
 pnpm build
 ```
 
-Lisateavet ümberehituse domeenijaotuse, ühilduvuse ja väliste registriühenduste kohta on failis [`docs/DJANGO_MIGRATION.md`](docs/DJANGO_MIGRATION.md).
+Lisateavet ümberehituse domeenijaotuse, ühilduvuse, väliste registriühenduste ning käivituse kohta on failides [`docs/DJANGO_MIGRATION.md`](docs/DJANGO_MIGRATION.md) ja [`docs/DJANGO_REWRITE_ARCHITECTURE.md`](docs/DJANGO_REWRITE_ARCHITECTURE.md).

@@ -13,7 +13,7 @@ class Command(BaseCommand):
         group = parser.add_mutually_exclusive_group(required=True)
         group.add_argument("--cadastre", help="Cadastral identifier to refresh")
         group.add_argument("--all", action="store_true", help="Refresh every ForestIQ cadastral unit")
-        parser.add_argument("--inline", action="store_true", help="Run in this process instead of submitting to Django Q")
+        parser.add_argument("--inline", action="store_true", help="Run in this process instead of submitting to Celery")
 
     def handle(self, *args, **options):
         ids = [options["cadastre"]] if options["cadastre"] else list(Cadastre.objects.values_list("id", flat=True))

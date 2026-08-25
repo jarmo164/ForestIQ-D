@@ -23,9 +23,9 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.gis",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
-    "django_q",
     "accounts",
     "forestry",
     "operations",
@@ -65,7 +65,12 @@ ASGI_APPLICATION = "config.asgi.application"
 
 
 def database_from_environment() -> dict:
-    """Return PostgreSQL configuration, with an explicit SQLite escape hatch for unit tests."""
+    """Return PostGIS configuration, with explicit local test-only database modes."""
+    if env_bool("USE_SPATIALITE_FOR_TESTS", False):
+        return {
+            "ENGINE": "django.contrib.gis.db.backends.spatialite",
+            "NAME": BASE_DIR / "spatialite-test.sqlite3",
+        }
     if env_bool("USE_SQLITE_FOR_TESTS", False):
         return {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}
 
@@ -75,7 +80,7 @@ def database_from_environment() -> dict:
         if parsed.scheme not in {"postgres", "postgresql"}:
             raise ValueError("DATABASE_URL must use the postgres or postgresql scheme")
         return {
-            "ENGINE": "django.db.backends.postgresql",
+            "ENGINE": "django.contrib.gis.db.backends.postgis",
             "NAME": parsed.path.lstrip("/"),
             "USER": parsed.username,
             "PASSWORD": parsed.password,
@@ -85,7 +90,7 @@ def database_from_environment() -> dict:
         }
 
     return {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "django.contrib.gis.db.backends.postgis",
         "NAME": os.getenv("POSTGRES_DB", "forestiq"),
         "USER": os.getenv("POSTGRES_USER", "forestiq"),
         "PASSWORD": os.getenv("POSTGRES_PASSWORD", "forestiq"),
@@ -96,6 +101,7 @@ def database_from_environment() -> dict:
 
 
 DATABASES = {"default": database_from_environment()}
+SPATIALITE_LIBRARY_PATH = os.getenv("SPATIALITE_LIBRARY_PATH", "mod_spatialite")
 
 AUTH_USER_MODEL = "accounts.User"
 PASSWORD_HASHERS = [
@@ -128,20 +134,27 @@ SIMPLE_JWT = {
 TOTP_TOKEN_LIFETIME_SECONDS = int(os.getenv("TOTP_TOKEN_LIFETIME_SECONDS", "180"))
 FORESTIQ_DEVMODE = env_bool("FORESTIQ_DEVMODE", DEBUG)
 
-# Django Q2 uses PostgreSQL through Django's database connection. The ORM broker
-# avoids an additional queue service and keeps task history in the same backup scope.
-Q_CLUSTER = {
-    "name": "forestiq-sync",
-    "workers": int(os.getenv("DJANGO_Q_WORKERS", "2")),
-    "recycle": int(os.getenv("DJANGO_Q_RECYCLE", "500")),
-    "timeout": int(os.getenv("DJANGO_Q_TIMEOUT_SECONDS", "300")),
-    "retry": int(os.getenv("DJANGO_Q_RETRY_SECONDS", "360")),
-    "queue_limit": int(os.getenv("DJANGO_Q_QUEUE_LIMIT", "100")),
-    "bulk": int(os.getenv("DJANGO_Q_BULK", "5")),
-    "orm": "default",
-    "save_limit": int(os.getenv("DJANGO_Q_SAVE_LIMIT", "500")),
+# Redis carries only queued work; the authoritative audit state remains in
+# DataSyncRun, so jobs stay observable even after a broker restart.
+CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_TASK_DEFAULT_QUEUE = "forestiq"
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT_SECONDS", "300"))
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT_SECONDS", "270"))
+CELERY_TASK_ACKS_LATE = True
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BEAT_SCHEDULE = {
+    "forestiq-daily-portfolio-sync": {
+        "task": "forestry.tasks.enqueue_portfolio_sync",
+        "schedule": float(os.getenv("FORESTIQ_PORTFOLIO_SYNC_INTERVAL_SECONDS", "86400")),
+    },
+    "forestiq-daily-forestek-owner-cadastre-sync": {
+        "task": "forestry.tasks.enqueue_forestek_portfolio_sync",
+        "schedule": float(os.getenv("FORESTIQ_FORESTEK_SYNC_INTERVAL_SECONDS", "86400")),
+    },
 }
-FORESTIQ_Q_SYNC_INLINE = env_bool("FORESTIQ_Q_SYNC_INLINE", False)
+FORESTIQ_TASKS_INLINE = env_bool("FORESTIQ_TASKS_INLINE", False)
 FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS = int(os.getenv("FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS", "30"))
 FORESTIQ_SYNC_USER_AGENT = os.getenv("FORESTIQ_SYNC_USER_AGENT", "ForestIQ data synchronizer/1.0")
 
@@ -177,6 +190,8 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = Path(os.getenv("FORESTIQ_MEDIA_ROOT", BASE_DIR / "media"))
 STORAGES = {
     "default": {
         "BACKEND": "django.core.files.storage.FileSystemStorage",

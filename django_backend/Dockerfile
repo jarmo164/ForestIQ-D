@@ -8,6 +8,10 @@ WORKDIR /app
 
 RUN addgroup --system forestiq && adduser --system --ingroup forestiq forestiq
 
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    gdal-bin libgdal-dev libgeos-dev libproj-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 

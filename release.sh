@@ -6,8 +6,8 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# Build the Django/PostgreSQL services and start the durable Django Q worker.
-docker compose -f docker-compose-full-stack.yml build api worker
-docker compose -f docker-compose-full-stack.yml up -d db api worker
+# Build the Django/PostGIS services and start Redis, the Celery worker and Beat.
+docker compose -f docker-compose-full-stack.yml build api worker beat ui
+docker compose -f docker-compose-full-stack.yml up -d db redis api worker beat ui
 
-echo "ForestIQ API and Django Q worker have been started. Verify /api/services/status and worker logs before deploying the UI."
+echo "ForestIQ API, PostGIS, Redis, Celery worker, Beat and UI have been started. Verify /api/services/status and worker logs."

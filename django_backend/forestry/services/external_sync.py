@@ -11,6 +11,8 @@ from typing import Any
 
 import requests
 from django.conf import settings
+from django.contrib.gis.gdal import OGRGeometry
+from django.contrib.gis.geos import MultiPolygon
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
@@ -27,6 +29,28 @@ from forestry.models import (
 
 class ExternalSourceError(RuntimeError):
     """A source returned an invalid or unavailable response."""
+
+
+def geometry_from_geojson(geometry: dict[str, Any], *, polygon_only: bool = False):
+    """Parse, normalise and validate EPSG:3301 GeoJSON before persistence."""
+    if not isinstance(geometry, dict) or not geometry.get("type") or "coordinates" not in geometry:
+        raise ExternalSourceError("External source returned an incomplete geometry")
+    try:
+        parsed = OGRGeometry(json.dumps(geometry)).geos
+        parsed.srid = 3301
+    except (TypeError, ValueError) as exc:
+        raise ExternalSourceError("External source returned malformed GeoJSON") from exc
+    if polygon_only and parsed.geom_type == "Polygon":
+        parsed = MultiPolygon(parsed, srid=3301)
+    if polygon_only and parsed.geom_type != "MultiPolygon":
+        raise ExternalSourceError("Cadastre geometry must be a Polygon or MultiPolygon")
+    if parsed.empty:
+        raise ExternalSourceError("External source returned an empty geometry")
+    if not parsed.valid:
+        parsed = parsed.buffer(0)
+    if parsed.empty or not parsed.valid:
+        raise ExternalSourceError("External source returned an invalid geometry")
+    return parsed
 
 
 def _headers(*, token: str = "") -> dict[str, str]:
@@ -138,6 +162,8 @@ def sync_cadastre_wfs(cadastre_id: str) -> int:
         cadastre.type = str(properties.get("siht1") or cadastre.type or "")
         cadastre.polygon = geometry.get("coordinates", [])
         cadastre.centroid = _centroid(geometry)
+        cadastre.boundary = geometry_from_geojson(geometry, polygon_only=True)
+        cadastre.centroid_geometry = cadastre.boundary.centroid
         cadastre.area = _decimal(properties.get("pindala"))
         cadastre.arable_area = _decimal(properties.get("haritav"))
         cadastre.yard_area = _decimal(properties.get("ouemaa"))
@@ -189,6 +215,7 @@ def sync_metsaregister_wfs(cadastre_id: str) -> int:
                     "event_date": _datetime(properties.get("registreerimise_kp") or properties.get("invent_kp")),
                     "attributes": properties,
                     "geometry": geometry,
+                    "spatial_geometry": geometry_from_geojson(geometry),
                 },
             )
             if layer == "metsaregister:eraldis" and properties.get("eraldise_nr") is not None:
@@ -199,6 +226,7 @@ def sync_metsaregister_wfs(cadastre_id: str) -> int:
                         "tree_type_code": str(properties.get("peapuuliik_kood") or ""),
                         "area": _decimal(properties.get("pindala")),
                         "polygon": geometry.get("coordinates", []),
+                        "boundary": geometry_from_geojson(geometry, polygon_only=True),
                     },
                 )
             saved += 1
@@ -231,6 +259,7 @@ def sync_optional_soos_wfs(cadastre_id: str) -> int:
                 "title": str(properties.get("nimi") or properties.get("name") or layer),
                 "attributes": properties,
                 "geometry": feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {},
+                "spatial_geometry": geometry_from_geojson(feature.get("geometry"), polygon_only=False),
             },
         )
     ForestRegistryFeature.objects.filter(cadastre=cadastre, source_layer=source_layer).exclude(source_id__in=retained_ids).delete()

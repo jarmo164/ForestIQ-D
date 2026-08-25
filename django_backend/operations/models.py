@@ -93,6 +93,7 @@ class PersonDump(models.Model):
 class Contract(models.Model):
     id = models.CharField(primary_key=True, max_length=100)
     document = models.BinaryField(null=True, blank=True, db_column="contract")
+    document_file = models.FileField(upload_to="contracts/%Y/%m", null=True, blank=True)
     base_id = models.CharField(max_length=50, blank=True)
 
     class Meta:
