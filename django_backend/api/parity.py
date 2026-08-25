@@ -22,7 +22,7 @@ from rest_framework.response import Response
 
 from accounts.models import PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, InheritanceSignal, Owner, OwnerLog
-from forestry.tasks import enqueue_cadastre_sync, enqueue_forestek_portfolio_sync, enqueue_portfolio_sync
+from forestry.tasks import enqueue_cadastre_sync, enqueue_portfolio_sync
 from operations.models import (
     Contract,
     ContractHistory,
@@ -721,11 +721,7 @@ def sales_outcome(request, owner_id: str):
 @api_view(["POST"])
 @permission_classes([IsAdmin])
 def ownership_transition_sync(request):
-    if settings.FORESTIQ_TASKS_INLINE:
-        result = enqueue_forestek_portfolio_sync()
-        return Response({"status": "SUCCEEDED", "result": result})
-    task = enqueue_forestek_portfolio_sync.delay()
-    return Response({"status": "QUEUED", "taskId": task.id}, status=status.HTTP_202_ACCEPTED)
+    return _detail("Forestek ownership import is a one-time initial import and cannot be started from the recurring sync API.", status.HTTP_409_CONFLICT)
 
 
 @api_view(["GET"])
@@ -741,7 +737,7 @@ def _integration_rows() -> list[dict]:
     rows = []
     for key, label, configured in [("CADASTRE", "Cadastre and forest registry", True), ("FORESTEK", "Forestek ownership relations", bool(settings.FORESTEK_API_URL and settings.FORESTEK_API_TOKEN)), ("PARIMUS", "Pärimus official notices", bool(settings.PARIMUS_API_URL and settings.PARIMUS_API_TOKEN))]:
         latest = DataSyncRun.objects.filter(source__icontains=key.lower()).order_by("-id").first()
-        rows.append({"key": key, "label": label, "configured": configured, "lastRun": {"id": latest.id, "status": latest.status, "finishedAt": json_value(latest.finished_at), "error": latest.error_message or None} if latest else None})
+        rows.append({"key": key, "label": label, "configured": configured, "mode": "ONE_TIME" if key == "FORESTEK" else "RECURRING", "lastRun": {"id": latest.id, "status": latest.status, "finishedAt": json_value(latest.finished_at), "error": latest.error_message or None} if latest else None})
     return rows
 
 
@@ -762,11 +758,7 @@ def integration_start(request, key: str):
         records = DataSyncRun.objects.filter(source__icontains=key.lower()).order_by("-id")[:limit]
         return Response([{"id": item.id, "cadastreId": item.cadastre_id, "source": item.source, "status": item.status, "taskId": item.task_id, "startedAt": json_value(item.started_at), "finishedAt": json_value(item.finished_at), "result": item.result, "error": item.error_message or None} for item in records])
     if key == "FORESTEK":
-        if settings.FORESTIQ_TASKS_INLINE:
-            result = enqueue_forestek_portfolio_sync()
-            return Response({"key": key, "status": "SUCCEEDED", "result": result})
-        task = enqueue_forestek_portfolio_sync.delay()
-        return Response({"key": key, "status": "QUEUED", "taskId": task.id}, status=status.HTTP_202_ACCEPTED)
+        return _detail("Forestek is a one-time initial import. Run the controlled management command only before its first successful import.", status.HTTP_409_CONFLICT)
     cadastre_id = request.data.get("cadastreId") or request.data.get("parameters", {}).get("cadastreId")
     if cadastre_id:
         run = enqueue_cadastre_sync(str(cadastre_id), requested_by_id=request.user.id, source=key.lower())
@@ -870,17 +862,13 @@ def registry_rik_cadastre_count(request):
 @permission_classes([IsAdmin])
 def portfolio_status(request):
     latest = DataSyncRun.objects.filter(source__icontains="forestek").order_by("-id").first()
-    return Response({"configured": bool(settings.FORESTEK_API_URL and settings.FORESTEK_API_TOKEN), "cadastreCount": Cadastre.objects.count(), "latestRun": {"id": latest.id, "status": latest.status, "finishedAt": json_value(latest.finished_at), "error": latest.error_message or None} if latest else None})
+    return Response({"configured": bool(settings.FORESTEK_API_URL and settings.FORESTEK_API_TOKEN), "mode": "ONE_TIME_INITIAL_IMPORT", "initialImportCompleted": bool(latest and latest.status == DataSyncRun.Status.SUCCEEDED), "cadastreCount": Cadastre.objects.count(), "latestRun": {"id": latest.id, "status": latest.status, "finishedAt": json_value(latest.finished_at), "error": latest.error_message or None} if latest else None})
 
 
 @api_view(["POST"])
 @permission_classes([IsAdmin])
 def portfolio_sync(request):
-    if settings.FORESTIQ_TASKS_INLINE:
-        result = enqueue_forestek_portfolio_sync()
-        return Response({"status": "SUCCEEDED", "result": result})
-    task = enqueue_forestek_portfolio_sync.delay()
-    return Response({"status": "QUEUED", "taskId": task.id}, status=status.HTTP_202_ACCEPTED)
+    return _detail("Forestek portfolio sync is disabled after the one-time initial import.", status.HTTP_409_CONFLICT)
 
 
 def _deal_contract_draft(deal: Deal) -> dict:

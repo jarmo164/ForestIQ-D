@@ -97,7 +97,6 @@ class SyncEndpointTests(TestCase):
 
     @override_settings(FORESTIQ_TASKS_INLINE=True)
     @patch("forestry.tasks.sync_parimus_inheritance", return_value=0)
-    @patch("forestry.tasks.sync_forestek_owner_relations", return_value=0)
     @patch("forestry.tasks.sync_optional_soos_wfs", return_value=0)
     @patch("forestry.tasks.sync_metsaregister_wfs", return_value=0)
     @patch("forestry.tasks.sync_cadastre_wfs", return_value=0)
@@ -153,6 +152,12 @@ class ImportCommandTests(TestCase):
         run = DataSyncRun.objects.get(cadastre=self.cadastre)
         self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
         self.assertEqual(run.result, {"forestek": 2})
+
+    @override_settings(FORESTEK_API_URL="https://forestek.example.test", FORESTEK_API_TOKEN="test-token")
+    def test_forestek_command_refuses_a_second_successful_initial_import(self):
+        DataSyncRun.objects.create(cadastre=self.cadastre, source="cli:api:forestek", status=DataSyncRun.Status.SUCCEEDED)
+        with self.assertRaises(CommandError):
+            call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek", "--dry-run")
 
 
 class MetsaregisterFullImportTests(TestCase):

@@ -1,4 +1,4 @@
-"""Celery task entry points for auditable ForestIQ data refreshes."""
+"""Celery task entry points for auditable recurring ForestIQ registry refreshes."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from django.utils import timezone
 from forestry.models import Cadastre, DataSyncRun
 from forestry.services.external_sync import (
     sync_cadastre_wfs,
-    sync_forestek_owner_relations,
     sync_metsaregister_wfs,
     sync_optional_soos_wfs,
     sync_parimus_inheritance,
@@ -40,6 +39,8 @@ def _succeed(run: DataSyncRun, result: dict[str, object]) -> dict[str, object]:
 
 @shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=3)
 def run_cadastre_sync(self, run_id: int) -> dict[str, object]:
+    """Refresh recurring public registry data; Forestek is deliberately excluded."""
+
     run = DataSyncRun.objects.select_related("cadastre").get(id=run_id)
     if run.cadastre is None:
         raise ValueError("The requested cadastre no longer exists")
@@ -49,7 +50,6 @@ def run_cadastre_sync(self, run_id: int) -> dict[str, object]:
             "cadastre_wfs": sync_cadastre_wfs(run.cadastre_id),
             "metsaregister_wfs": sync_metsaregister_wfs(run.cadastre_id),
             "soos_wfs": sync_optional_soos_wfs(run.cadastre_id),
-            "forestek_owner_relations": sync_forestek_owner_relations(run.cadastre_id),
             "parimus_inheritance": sync_parimus_inheritance(run.cadastre_id),
         }
     except Exception as exc:
@@ -74,44 +74,5 @@ def enqueue_portfolio_sync() -> dict[str, int]:
     queued = 0
     for cadastre_id in Cadastre.objects.order_by("id").values_list("id", flat=True):
         enqueue_cadastre_sync(cadastre_id, source="daily")
-        queued += 1
-    return {"queued": queued}
-
-
-@shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=3)
-def run_forestek_owner_relations_sync(self, run_id: int) -> dict[str, object]:
-    run = DataSyncRun.objects.select_related("cadastre").get(id=run_id)
-    if run.cadastre is None:
-        raise ValueError("The requested cadastre no longer exists")
-    _start(run)
-    try:
-        if not settings.FORESTEK_API_URL or not settings.FORESTEK_API_TOKEN:
-            result = {"forestek_owner_relations": 0, "skipped": "FORESTEK_API_URL/TOKEN not configured"}
-        else:
-            result = {"forestek_owner_relations": sync_forestek_owner_relations(run.cadastre_id)}
-    except Exception as exc:
-        _fail(run, exc)
-        raise
-    return _succeed(run, result)
-
-
-def enqueue_forestek_owner_relations_sync(cadastre_id: str, *, requested_by_id: str | None = None) -> DataSyncRun:
-    run = DataSyncRun.objects.create(cadastre_id=cadastre_id, requested_by_id=requested_by_id, source="forestek_owner_relations")
-    if settings.FORESTIQ_TASKS_INLINE:
-        run_forestek_owner_relations_sync(run.id)
-        return DataSyncRun.objects.get(id=run.id)
-    result = run_forestek_owner_relations_sync.delay(run.id)
-    run.task_id = result.id
-    run.save(update_fields=("task_id",))
-    return run
-
-
-@shared_task
-def enqueue_forestek_portfolio_sync() -> dict[str, int | str]:
-    if not settings.FORESTEK_API_URL or not settings.FORESTEK_API_TOKEN:
-        return {"queued": 0, "skipped": "FORESTEK_API_URL/TOKEN not configured"}
-    queued = 0
-    for cadastre_id in Cadastre.objects.order_by("id").values_list("id", flat=True):
-        enqueue_forestek_owner_relations_sync(cadastre_id)
         queued += 1
     return {"queued": queued}

@@ -85,6 +85,8 @@ python manage.py import_external_api_sources --all --source parimus --limit 25 -
 
 `import_wfs_sources` toetab allikaid `cadastre`, `metsaregister`, `soos` ja `all`. Valiku `all` korral jäetakse seadistamata SOOS teadlikult vahele; eraldi `--source soos` nõuab selle URL-i ja kihi seadistust. `import_external_api_sources` toetab `forestek`, `parimus` ja `all`; ükski volitatud API-päring ei käivitu enne URL-i ning tokeni eelkontrolli läbimist. Tõrked talletatakse auditireal ning `--continue-on-error` lubab töödelda järgmisi üksusi.
 
+**Forestek on ühekordne algimport.** Käivita `import_external_api_sources --all --source forestek` ainult pärast Foresteki URL-i ja tokeni seadistamist ning enne esimese eduka Foresteki impordi tekkimist. Pärast esimest edukat importi keeldub käsk kordusest. Forestek on eemaldatud Celery Beat’i ajakavast, tavapärasest katastri-/metsaregistri värskendusest ja integratsioonide käivitus-API-st; jätkuvad andmeuuendused tulevad metsaregistri WFS-i eraldiste ning teatiste voost.
+
 ### Metsaregistri esmane täisimport ja uued teatised
 
 Kui metsaregister on põhiandmeallikas, käivita esmalt täisimport. Käsk loeb `FORESTIQ_METSAREGISTER_FULL_WFS_LAYER` kihist kõik eraldised lehekülgede kaupa. Iga eraldis salvestatakse `CadastreSubPart`-ina; ainult juhul, kui kombinatsiooni **katastriüksus + eraldise number** veel andmebaasis ei ole, tehakse teatiste kihile sihitud CQL-päring. Juba olemasolevate eraldiste teatisi ei laadita selle käsuga uuesti.

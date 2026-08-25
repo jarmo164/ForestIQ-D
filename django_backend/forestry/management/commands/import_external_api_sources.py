@@ -2,6 +2,7 @@
 
 from django.core.management.base import BaseCommand, CommandError
 
+from forestry.models import DataSyncRun
 from forestry.services.import_runner import API_SOURCES, configured_sources, run_cadastre_import, selected_cadastres
 
 
@@ -24,8 +25,13 @@ class Command(BaseCommand):
         except ValueError as exc:
             raise CommandError(str(exc)) from exc
         source_names = ", ".join(source.key for source in sources)
+        forestek_selected = any(source.key == "forestek" for source in sources)
+        forestek_completed = DataSyncRun.objects.filter(source__icontains="forestek", status=DataSyncRun.Status.SUCCEEDED).exists()
+        if forestek_selected and forestek_completed:
+            raise CommandError("Forestek initial import has already completed and is intentionally one-time only.")
         if options["dry_run"]:
-            self.stdout.write(f"Dry run: would import authorised API sources [{source_names}] for {len(cadastres)} cadastral unit(s): {', '.join(item.id for item in cadastres)}")
+            mode = "; Forestek is an unrepeatable initial import" if forestek_selected else ""
+            self.stdout.write(f"Dry run: would import authorised API sources [{source_names}] for {len(cadastres)} cadastral unit(s): {', '.join(item.id for item in cadastres)}{mode}")
             return
         failed = 0
         for cadastre in cadastres:

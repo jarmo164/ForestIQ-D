@@ -25,3 +25,7 @@
 - [x] Rakendada täielik metsaregistri eraldiste import koos uute eraldiste auditeeritud tuvastamisega.
 - [x] Tõmmata ainult äsja tuvastatud eraldiste teatised ning vältida juba olemasolevate teatiste kordusimporti.
 - [x] Lisada täisimpordi halduskäsk, testid, kuivkäivitus ja käivitusjuhised ning pushida täiendused harusse `rewrite/django`.
+- [x] Kaardistada Foresteki perioodilised, automaatsed ja käsitsi käivitatavad imporditeed.
+- [x] Eemaldada Foresteki perioodiline ning tavapärase registrivärskenduse automaatne käivitus.
+- [x] Jätta Forestek teadlikult ainult ühekordse, kinnitatava algimpordi käsuna ning testida reeglit.
+- [ ] Uuendada käivitusjuhised ja pushida muudatus harusse `rewrite/django`.
