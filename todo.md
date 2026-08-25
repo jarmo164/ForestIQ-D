@@ -28,4 +28,4 @@
 - [x] Kaardistada Foresteki perioodilised, automaatsed ja käsitsi käivitatavad imporditeed.
 - [x] Eemaldada Foresteki perioodiline ning tavapärase registrivärskenduse automaatne käivitus.
 - [x] Jätta Forestek teadlikult ainult ühekordse, kinnitatava algimpordi käsuna ning testida reeglit.
-- [ ] Uuendada käivitusjuhised ja pushida muudatus harusse `rewrite/django`.
+- [x] Uuendada käivitusjuhised ja pushida muudatus harusse `rewrite/django`.
