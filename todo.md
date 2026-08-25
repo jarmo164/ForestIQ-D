@@ -44,4 +44,4 @@
 - [x] Kaardistada katastri detailandmete, omanike, tegevusajaloo, teatiste ja kliendisuhete olemasolevad API-vasted.
 - [x] Lisada õiguspõhine katastri detailandmete koond-API kaardilt valimise töövoo jaoks.
 - [x] Rakendada kaardikeskne detailaken omanike, tegevuste, teatiste, metsaregistri ja kliendistaatuse vaadetega.
-- [ ] Lisada testid, dokumentatsioon ning pushida detailakna täiendused harusse `rewrite/django`.
+- [x] Lisada testid, dokumentatsioon ning pushida detailakna täiendused harusse `rewrite/django`.
