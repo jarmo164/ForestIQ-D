@@ -16,4 +16,4 @@
 - [x] Inventeerida `main`-haru kõik funktsioonimoodulid, API-d, töövood ja andmevood ning võrrelda neid Django ümberkirjutusega.
 - [x] Rakendada `main`-harust puuduvad kõrge prioriteediga domeenifunktsioonid, API-lepingud ja taustprotsessid Django kihis.
 - [x] Rakendada puuduvatele töövoogudele vastavad Reacti vaated ja navigeerimine.
-- [ ] Lisada pariteeditestid, uuendada dokumentatsioon ning pushida täiendused harusse `rewrite/django`.
+- [x] Lisada pariteeditestid, uuendada dokumentatsioon ning pushida täiendused harusse `rewrite/django`.
