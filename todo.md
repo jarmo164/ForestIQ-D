@@ -48,4 +48,4 @@
 - [x] Kaardistada suurte katastrikihtide GeoJSON-päringute ja MapLibre’i renderdusahela kitsaskohad.
 - [x] Lisada katastri-, eraldise- ja metsaregistrikihile vaatealapõhised ning piiratud GeoJSON-päringud.
 - [x] Lisada MapLibre’i liikumise järel debounced kihiuuendus ja suumipõhine renderdusstrateegia.
-- [ ] Lisada jõudluse regressioonitestid, dokumentatsioon ning pushida optimeeringud harusse `rewrite/django`.
+- [x] Lisada jõudluse regressioonitestid, dokumentatsioon ning pushida optimeeringud harusse `rewrite/django`.
