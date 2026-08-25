@@ -13,3 +13,7 @@
 - [x] Kasutada Django kasutajaid, gruppe ja õigusi esmase autoriseerimise alusena ning dokumenteerida OIDC/Keycloak-i järgmine etapp.
 - [x] Tagada lokaalsete lepingudokumentide salvestus ja API kaudu kontrollitud ligipääs.
 - [x] Uuendada lokaalset käivitusdokumentatsiooni, konteinerteenuseid, teste ja migratsioone.
+- [x] Inventeerida `main`-haru kõik funktsioonimoodulid, API-d, töövood ja andmevood ning võrrelda neid Django ümberkirjutusega.
+- [x] Rakendada `main`-harust puuduvad kõrge prioriteediga domeenifunktsioonid, API-lepingud ja taustprotsessid Django kihis.
+- [x] Rakendada puuduvatele töövoogudele vastavad Reacti vaated ja navigeerimine.
+- [ ] Lisada pariteeditestid, uuendada dokumentatsioon ning pushida täiendused harusse `rewrite/django`.

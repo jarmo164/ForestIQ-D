@@ -15,6 +15,20 @@ ForestIQ on metsaostjate töölaud. Haru `rewrite` server on ümber ehitatud **P
 
 Django rakendused on jagatud selgete domeenipiiridega: `accounts` haldab identiteeti ja õigusi, `forestry` metsaomanike ning katastri domeeni, `operations` meeldetuletusi, sõnumeid ja lepinguid ning `api` säilitab REST-liidese ühilduvuse.
 
+## Main-haru funktsioonide pariteet
+
+Django ümberkirjutus sisaldab nüüd lisaks omaniku-, katastri- ja kaartetöövoole kommertstehinguid, hindamist, pakkumiste revisjone, võidu/kaotuse olekuid ning võidetud tehingust lepingu drafti loomist. Pärimisjuhtum sisaldab ametliku teate kontrolli, juhtumi staatust, määramist, pärijate andmeid ja auditeeritud sündmusi. Kõik toimingud rakendavad olemasolevat ForestIQ õigust ning jätavad omaniku või juhtumi tööajalukku kirje.
+
+| Töövoog | Reacti vaade | Olulised Django API-teed |
+|---|---|---|
+| Tehing ja hindamine | Omanikukaart ning `/deals` | `/services/deals/*`, `/services/contracts/deals/{id}/draft` |
+| Pärimisjuhtum | Omanikukaart ning `/inheritance` | `/services/inheritance/*` |
+| Omanike import | `/owners/import` | `/services/owners/imports/inspect`, `preview`, `commit` |
+| Müügitöö | `/sales` | `/services/sales-workspace/*` |
+| Integratsioonid ja värskus | `/integrations` | `/services/admin/integrations/*`, `/services/registry/*` |
+
+Omanike import toetab UTF-8 CSV- ja XLSX-faile. Fail kontrollitakse enne salvestamist, nõuab eelvaate SHA-256 kinnitust ning jätab vigaste ridade loendi auditeeritud impordipartiisse. Välisteenuste tööriistad jäävad opt-in põhimõttele: tegelik Foresteki või Pärimuse päring käivitub alles siis, kui vajalik URL ja vähimate õigustega token on keskkonnas seadistatud. Täielik moodulite võrdlus on failis [`docs/MAIN_FUNCTIONAL_PARITY.md`](docs/MAIN_FUNCTIONAL_PARITY.md).
+
 ## Lokaalne käivitus
 
 Kopeeri keskkonnamuutujad ning vali arenduseks pikk juhuslik saladus.

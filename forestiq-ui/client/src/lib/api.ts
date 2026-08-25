@@ -1,8 +1,64 @@
 /** ForestIQ Landscape Desk design: API layer keeps Django REST work flows explicit and inspectable. */
 import type { AppUser } from "./types";
+
 const BASE_URL = (import.meta.env.VITE_API_BASE || "/api").replace(/\/$/, "");
-export class ApiError extends Error { status: number; constructor(message: string, status: number) { super(message); this.status = status; } }
-export function decodeToken(token: string): AppUser | null { try { const body = token.split(".")[1]; const decoded = atob(body.replace(/-/g, "+").replace(/_/g, "/")); const json = JSON.parse(decodeURIComponent(Array.from(decoded).map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`).join(""))); return { id: json.userId, name: json.userName, privileges: json.privileges || [] }; } catch { return null; } }
-function headers(withJson = false): HeadersInit { const token = localStorage.getItem("forestiq_access_token"); return { ...(withJson ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) }; }
-async function parse<T>(response: Response): Promise<T> { if (!response.ok) { const data = await response.json().catch(() => null); if (response.status === 401) window.dispatchEvent(new Event("forestiq:unauthorized")); throw new ApiError(data?.detail || `Päring ebaõnnestus (${response.status})`, response.status); } if (response.status === 204) return undefined as T; return response.json() as Promise<T>; }
-export const api = { get: <T>(path: string) => fetch(`${BASE_URL}${path}`, { headers: headers() }).then(parse<T>), post: <T>(path: string, body: unknown) => fetch(`${BASE_URL}${path}`, { method: "POST", headers: headers(true), body: JSON.stringify(body) }).then(parse<T>), delete: <T>(path: string) => fetch(`${BASE_URL}${path}`, { method: "DELETE", headers: headers() }).then(parse<T>), async passwordLogin(userId: string, password: string) { return parse<{ token: string }>(await fetch(`${BASE_URL}/password-login`, { method: "POST", headers: { Authorization: `Basic ${btoa(`${userId}:${password}`)}` } })); }, async verifyTotp(preAuthToken: string, code: string) { const tokens = await parse<{ actualToken: { token: string }; refreshToken: { token: string } }>(await fetch(`${BASE_URL}/services/totp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${preAuthToken}` }, body: JSON.stringify({ code }) })); localStorage.setItem("forestiq_access_token", tokens.actualToken.token); localStorage.setItem("forestiq_refresh_token", tokens.refreshToken.token); return decodeToken(tokens.actualToken.token); }, logout() { localStorage.removeItem("forestiq_access_token"); localStorage.removeItem("forestiq_refresh_token"); } };
+
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export function decodeToken(token: string): AppUser | null {
+  try {
+    const body = token.split(".")[1];
+    const decoded = atob(body.replace(/-/g, "+").replace(/_/g, "/"));
+    const json = JSON.parse(decodeURIComponent(Array.from(decoded).map((character) => `%${character.charCodeAt(0).toString(16).padStart(2, "0")}`).join("")));
+    return { id: json.userId, name: json.userName, privileges: json.privileges || [] };
+  } catch {
+    return null;
+  }
+}
+
+function headers(withJson = false): HeadersInit {
+  const token = localStorage.getItem("forestiq_access_token");
+  return { ...(withJson ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
+async function parse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    if (response.status === 401) window.dispatchEvent(new Event("forestiq:unauthorized"));
+    throw new ApiError(data?.detail || `Päring ebaõnnestus (${response.status})`, response.status);
+  }
+  if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
+}
+
+function jsonRequest<T>(method: "POST" | "PUT" | "PATCH", path: string, body: unknown) {
+  return fetch(`${BASE_URL}${path}`, { method, headers: headers(true), body: JSON.stringify(body) }).then(parse<T>);
+}
+
+export const api = {
+  get: <T>(path: string) => fetch(`${BASE_URL}${path}`, { headers: headers() }).then(parse<T>),
+  post: <T>(path: string, body: unknown) => jsonRequest<T>("POST", path, body),
+  put: <T>(path: string, body: unknown) => jsonRequest<T>("PUT", path, body),
+  patch: <T>(path: string, body: unknown) => jsonRequest<T>("PATCH", path, body),
+  upload: <T>(path: string, body: FormData, method: "POST" | "PUT" = "POST") => fetch(`${BASE_URL}${path}`, { method, headers: headers(), body }).then(parse<T>),
+  delete: <T>(path: string) => fetch(`${BASE_URL}${path}`, { method: "DELETE", headers: headers() }).then(parse<T>),
+  async passwordLogin(userId: string, password: string) {
+    return parse<{ token: string }>(await fetch(`${BASE_URL}/password-login`, { method: "POST", headers: { Authorization: `Basic ${btoa(`${userId}:${password}`)}` } }));
+  },
+  async verifyTotp(preAuthToken: string, code: string) {
+    const tokens = await parse<{ actualToken: { token: string }; refreshToken: { token: string } }>(await fetch(`${BASE_URL}/services/totp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${preAuthToken}` }, body: JSON.stringify({ code }) }));
+    localStorage.setItem("forestiq_access_token", tokens.actualToken.token);
+    localStorage.setItem("forestiq_refresh_token", tokens.refreshToken.token);
+    return decodeToken(tokens.actualToken.token);
+  },
+  logout() {
+    localStorage.removeItem("forestiq_access_token");
+    localStorage.removeItem("forestiq_refresh_token");
+  },
+};
