@@ -91,6 +91,7 @@ urlpatterns = [
     path("services/owner/<str:owner_id>/assignee", views.owner_assignee),
     path("services/owner/<str:owner_id>/followings", views.owner_followings),
     path("services/owner/<str:owner_id>/followings/<str:user_id>", views.owner_following_detail),
+    path("services/cadastres/<str:cadastre_id>/workspace", views.cadastre_workspace),
     path("services/cadastres/<str:cadastre_id>", views.cadastre_detail),
     path("services/cadastres/<str:cadastre_id>/evaluation", views.cadastre_evaluation),
     path("services/cadastres/<str:cadastre_id>/labels", views.cadastre_label),

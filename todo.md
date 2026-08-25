@@ -41,3 +41,7 @@
 - [x] Lisada MapLibre’i uute eraldiste ja teatiste eraldi visuaalsed kihid.
 - [x] Lisada klikitavad popup-aknad eraldise, metsaregistri objekti ja teatise detailandmetega.
 - [x] Lisada testid, dokumentatsioon ning pushida täiendused harusse `rewrite/django`.
+- [x] Kaardistada katastri detailandmete, omanike, tegevusajaloo, teatiste ja kliendisuhete olemasolevad API-vasted.
+- [x] Lisada õiguspõhine katastri detailandmete koond-API kaardilt valimise töövoo jaoks.
+- [x] Rakendada kaardikeskne detailaken omanike, tegevuste, teatiste, metsaregistri ja kliendistaatuse vaadetega.
+- [ ] Lisada testid, dokumentatsioon ning pushida detailakna täiendused harusse `rewrite/django`.

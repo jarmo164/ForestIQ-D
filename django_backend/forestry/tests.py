@@ -11,7 +11,8 @@ from django.contrib.gis.geos import MultiPolygon, Polygon
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, Owner
+from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, Owner, OwnerLog
+from operations.models import Deal, DealStage
 from forestry.services import import_runner
 from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance
 from forestry.services.metsaregister_full_import import FullImportReport, import_metsaregister_delta
@@ -276,3 +277,22 @@ class MapFeatureTests(TestCase):
         self.assertEqual(notification["treeType"], "KU")
         self.assertIn("discoveredAt", notification)
         self.assertIn("discoveredAt", subpart)
+
+    def test_cadastre_workspace_aggregates_accessible_owner_customer_and_registry_data(self):
+        owner = Owner.objects.create(id="38101010002", name="Kaardi klient", phone="5550100", email="client@example.test", status="CUSTOMER")
+        self.cadastre.owners.add(owner)
+        OwnerLog.objects.create(owner=owner, creator=self.user, message="Esimene kontakt kaardilt")
+        deal = Deal.objects.create(owner=owner, sale_subject="FOREST", stage=DealStage.WON)
+        deal.parcels.add(self.cadastre)
+        CadastreNotification.objects.create(id=12002, notification_number=7002, cadastre=self.cadastre, cadastre_subpart_code=12, work_code="RAIE")
+        ForestRegistryFeature.objects.create(source_layer="metsaregister:eraldis", source_id="workspace-12", cadastre=self.cadastre, subpart_code=12, title="Eraldis 12")
+
+        response = self.client.get(f"/api/services/cadastres/{self.cadastre.id}/workspace")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["cadastre"]["id"], self.cadastre.id)
+        self.assertEqual(response.data["owners"][0]["name"], owner.name)
+        self.assertTrue(response.data["owners"][0]["customerRelationship"]["isCustomer"])
+        self.assertEqual(response.data["activities"][0]["kind"], "DEAL")
+        self.assertEqual(response.data["notifications"][0]["notificationNumber"], 7002)
+        self.assertEqual(response.data["registryFeatures"][0]["title"], "Eraldis 12")

@@ -35,7 +35,7 @@ from forestry.models import (
     OwnerStatus,
     OwnerStatusChange,
 )
-from operations.models import ApplicationMessage, Contract, ContractHistory, DirectMessage, PersonDump, Reminder
+from operations.models import ApplicationMessage, Contract, ContractHistory, Deal, DealStage, DirectMessage, PersonDump, Reminder
 
 from .permissions import CanEvaluate, CanManageOwners, CanUseAssignedOwners, CanUsePhones, IsAdmin, can_access_owner
 from .serializers import (
@@ -43,6 +43,8 @@ from .serializers import (
     json_value,
     message_data,
     notification_data,
+    owner_data,
+    owner_log_data,
     owner_data,
     owner_log_data,
     owner_status_data,
@@ -391,6 +393,31 @@ def cadastre_detail(request, cadastre_id: str):
     if not any(can_access_owner(request.user, owner) for owner in owners):
         return _detail("You do not have access to this cadastre.", status.HTTP_403_FORBIDDEN)
     return Response(cadastre_data(cadastre))
+
+
+@api_view(["GET"])
+@permission_classes([CanUseAssignedOwners])
+def cadastre_workspace(request, cadastre_id: str):
+    """Return an access-controlled, map-first workspace payload for one cadastral unit."""
+
+    cadastre = get_object_or_404(Cadastre.objects.prefetch_related("owners", "labels", "sub_parts", "notifications", "registry_features"), id=cadastre_id)
+    owners = [owner for owner in cadastre.owners.select_related("assignee").all() if can_access_owner(request.user, owner)]
+    if not owners:
+        return _detail("You do not have access to this cadastre.", status.HTTP_403_FORBIDDEN)
+    activities = []
+    owner_payloads = []
+    for owner in owners:
+        logs = [owner_log_data(item) | {"ownerId": owner.id, "ownerName": owner.name, "kind": "OWNER_LOG"} for item in owner.logs.select_related("creator").all()[:40]]
+        activities.extend(logs)
+        reminders = [{"id": str(item.id), "kind": "REMINDER", "ownerId": owner.id, "ownerName": owner.name, "text": item.text, "at": json_value(item.due_time), "createdAt": json_value(item.created_time)} for item in owner.reminders.filter(cadastre__in=("", cadastre.id)).order_by("-due_time")[:20]]
+        activities.extend(reminders)
+        deals = Deal.objects.filter(owner=owner, parcels=cadastre).distinct().order_by("-updated_at")
+        deal_data = [{"id": str(item.id), "stage": item.stage, "saleSubject": item.sale_subject, "priceExpectation": json_value(item.price_expectation), "recommendedPurchasePrice": json_value(item.recommended_purchase_price), "updatedAt": json_value(item.updated_at), "closedAt": json_value(item.closed_at)} for item in deals[:20]]
+        activities.extend([{"id": item["id"], "kind": "DEAL", "ownerId": owner.id, "ownerName": owner.name, "text": f"Tehing {item['stage']}", "at": item["updatedAt"]} for item in deal_data])
+        owner_payloads.append(owner_data(owner) | {"activityLog": logs, "reminders": reminders, "deals": deal_data, "customerRelationship": {"ownerStatus": owner.status or None, "isCustomer": deals.filter(stage=DealStage.WON).exists(), "activeDealCount": deals.exclude(stage__in=[DealStage.WON, DealStage.LOST, DealStage.CANCELLED]).count(), "wonDealCount": deals.filter(stage=DealStage.WON).count()}})
+    activities.sort(key=lambda item: item.get("at") or item.get("createdAt") or 0, reverse=True)
+    registry = [{"id": item.id, "title": item.title, "sourceLayer": item.source_layer, "subpartCode": item.subpart_code, "workCode": item.work_code, "decision": item.decision, "area": json_value(item.area), "volume": json_value(item.volume), "eventDate": json_value(item.event_date), "attributes": item.attributes} for item in cadastre.registry_features.all()[:100]]
+    return Response({"cadastre": cadastre_data(cadastre), "owners": owner_payloads, "activities": activities[:100], "notifications": [notification_data(item) for item in cadastre.notifications.all()[:100]], "registryFeatures": registry, "customerSummary": {"ownerCount": len(owners), "customerOwnerCount": sum(1 for item in owner_payloads if item["customerRelationship"]["isCustomer"]), "activeDealCount": sum(item["customerRelationship"]["activeDealCount"] for item in owner_payloads)}})
 
 
 @api_view(["GET", "POST"])

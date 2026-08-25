@@ -127,6 +127,8 @@ Kihipaneeliga saab katastriüksused, metsaeraldised, metsaregistri objektid ja t
 
 Kaart sisaldab ka eraldi **uute eraldiste** kihti (`GET /api/services/map/layers/new-subparts`). See näitab vaikimisi viimase seitsme päeva jooksul CQL-deltakontrolli või täisimpordiga avastatud eraldisi; ajaakent juhib `FORESTIQ_MAP_NEW_SUBPART_HOURS`. Uuel eraldisel, metsaregistri objektil või teatise markeril klõpsamine avab MapLibre popupi. Teatise popup ühendab teatise numbri, töö liigi ja staatuse seotud eraldise katastritunnuse, puuliigi, pindala ning avastamisajaga.
 
+Katastriüksuse klõpsamine avab kaardikeskse tervikvaate. Klient laadib selleks õiguspõhise koondvastuse `GET /api/services/cadastres/<katastritunnus>/workspace`. Detailaken hõlmab vara põhiandmeid, ligipääsetavaid omanikke ja nende kontaktandmeid, kliendisuhte seisu (aktiivsed ning võidetud tehingud), omanike tegevusajalugu ja meeldetuletusi, teatisi ning metsaregistri objekte. Kaasomaniku andmed, millele kasutajal puudub ligipääs, jäetakse vastusest välja.
+
 ## Andmebaasi migratsioon vanast MetsIS-ist
 
 Enne ümberlülitust tee lähte- ja sihtandmebaasist varukoopiad. Uue skeemi loovad Django migratsioonid. Vana PostgreSQL andmebaasi sisu saab kopeerida idempotentse käsuga, mis kasutab ainult lugemisühendust `LEGACY_DATABASE_URL` kaudu.
