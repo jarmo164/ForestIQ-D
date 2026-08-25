@@ -265,9 +265,14 @@ class MapFeatureTests(TestCase):
         CadastreSubPart.objects.create(cadastre=self.cadastre, sub_part_code=12, tree_type_code="KU", boundary=boundary)
         ForestRegistryFeature.objects.create(source_layer="metsaregister:eraldis", source_id="layer-12", cadastre=self.cadastre, subpart_code=12, title="Eraldis 12", spatial_geometry=boundary)
         CadastreNotification.objects.create(id=12001, notification_number=7001, cadastre=self.cadastre, cadastre_subpart_code=12, work_code="RAIE")
-        for layer, expected_type in [("subparts", "MultiPolygon"), ("registry", "MultiPolygon"), ("notifications", "Point")]:
+        for layer, expected_type in [("subparts", "MultiPolygon"), ("new-subparts", "MultiPolygon"), ("registry", "MultiPolygon"), ("notifications", "Point")]:
             response = self.client.get(f"/api/services/map/layers/{layer}")
             self.assertEqual(response.status_code, 200, response.data)
             self.assertEqual(len(response.data["features"]), 1)
             self.assertEqual(response.data["features"][0]["geometry"]["type"], expected_type)
             self.assertEqual(response.data["features"][0]["properties"]["cadastreId"], self.cadastre.id)
+        notification = self.client.get("/api/services/map/layers/notifications").data["features"][0]["properties"]
+        subpart = self.client.get("/api/services/map/layers/new-subparts").data["features"][0]["properties"]
+        self.assertEqual(notification["treeType"], "KU")
+        self.assertIn("discoveredAt", notification)
+        self.assertIn("discoveredAt", subpart)

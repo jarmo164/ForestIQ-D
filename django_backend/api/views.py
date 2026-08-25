@@ -7,6 +7,7 @@ from io import BytesIO
 import json
 from uuid import uuid4
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Q
 from django.contrib.gis.geos import Polygon
@@ -118,15 +119,18 @@ def map_layer_features(request, layer: str):
     """Return validated GeoDjango layers as WGS84 GeoJSON for the MapLibre client."""
 
     layer = layer.lower()
-    if layer not in {"subparts", "registry", "notifications"}:
+    if layer not in {"subparts", "new-subparts", "registry", "notifications"}:
         return _detail("Unknown map layer.", status.HTTP_404_NOT_FOUND)
     features = []
-    if layer == "subparts":
-        records = CadastreSubPart.objects.exclude(boundary__isnull=True).select_related("cadastre").order_by("cadastre_id", "sub_part_code")[:5000]
-        for record in records:
+    if layer in {"subparts", "new-subparts"}:
+        records = CadastreSubPart.objects.exclude(boundary__isnull=True).select_related("cadastre").order_by("cadastre_id", "sub_part_code")
+        if layer == "new-subparts":
+            since = timezone.now() - timedelta(hours=settings.FORESTIQ_MAP_NEW_SUBPART_HOURS)
+            records = records.filter(discovered_at__gte=since)
+        for record in records[:5000]:
             geometry = record.boundary.clone()
             geometry.transform(4326)
-            features.append({"type": "Feature", "id": f"{record.cadastre_id}:{record.sub_part_code}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.cadastre_id}:{record.sub_part_code}", "cadastreId": record.cadastre_id, "subpartCode": record.sub_part_code, "treeType": record.tree_type_code, "area": str(record.area or "")}})
+            features.append({"type": "Feature", "id": f"{record.cadastre_id}:{record.sub_part_code}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.cadastre_id}:{record.sub_part_code}", "cadastreId": record.cadastre_id, "subpartCode": record.sub_part_code, "treeType": record.tree_type_code, "area": str(record.area or ""), "discoveredAt": record.discovered_at.isoformat() if record.discovered_at else ""}})
     elif layer == "registry":
         records = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).select_related("cadastre").order_by("cadastre_id", "source_layer", "source_id")[:5000]
         for record in records:
@@ -141,7 +145,7 @@ def map_layer_features(request, layer: str):
                 continue
             geometry = subpart.boundary.centroid
             geometry.transform(4326)
-            features.append({"type": "Feature", "id": str(record.id), "geometry": json.loads(geometry.json), "properties": {"id": str(record.id), "cadastreId": record.cadastre_id, "subpartCode": record.cadastre_subpart_code, "notificationNumber": record.notification_number, "workCode": record.work_code, "state": record.state, "registrationDate": record.registration_date.isoformat() if record.registration_date else ""}})
+            features.append({"type": "Feature", "id": str(record.id), "geometry": json.loads(geometry.json), "properties": {"id": str(record.id), "cadastreId": record.cadastre_id, "subpartCode": record.cadastre_subpart_code, "notificationNumber": record.notification_number, "workCode": record.work_code, "state": record.state, "registrationDate": record.registration_date.isoformat() if record.registration_date else "", "treeType": subpart.tree_type_code, "subpartArea": str(subpart.area or ""), "discoveredAt": subpart.discovered_at.isoformat() if subpart.discovered_at else ""}})
     return Response({"type": "FeatureCollection", "features": features})
 
 

@@ -161,6 +161,7 @@ class CadastreSubPart(models.Model):
     area = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)
     polygon = models.JSONField(default=list, blank=True)
     boundary = gis_models.MultiPolygonField(srid=3301, null=True, blank=True)
+    discovered_at = models.DateTimeField(auto_now_add=True, null=True)
 
     class Meta:
         db_table = "cadastre_sub_parts"

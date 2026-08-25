@@ -125,6 +125,8 @@ Reacti kaarditööruum aadressil `/map` kasutab MapLibre’i ning laeb ruumiandm
 
 Kihipaneeliga saab katastriüksused, metsaeraldised, metsaregistri objektid ja teatised eraldi sisse või välja lülitada. Kaardilt valitud objekti atribuudid kuvatakse samas tööruumis. Teatis markerina paikneb seotud eraldise tsentroidil, sest teatisel endal ei ole eraldi geomeetriavälja.
 
+Kaart sisaldab ka eraldi **uute eraldiste** kihti (`GET /api/services/map/layers/new-subparts`). See näitab vaikimisi viimase seitsme päeva jooksul CQL-deltakontrolli või täisimpordiga avastatud eraldisi; ajaakent juhib `FORESTIQ_MAP_NEW_SUBPART_HOURS`. Uuel eraldisel, metsaregistri objektil või teatise markeril klõpsamine avab MapLibre popupi. Teatise popup ühendab teatise numbri, töö liigi ja staatuse seotud eraldise katastritunnuse, puuliigi, pindala ning avastamisajaga.
+
 ## Andmebaasi migratsioon vanast MetsIS-ist
 
 Enne ümberlülitust tee lähte- ja sihtandmebaasist varukoopiad. Uue skeemi loovad Django migratsioonid. Vana PostgreSQL andmebaasi sisu saab kopeerida idempotentse käsuga, mis kasutab ainult lugemisühendust `LEGACY_DATABASE_URL` kaudu.
