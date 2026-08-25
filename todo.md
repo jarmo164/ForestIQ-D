@@ -36,4 +36,4 @@
 - [x] Kaardistada olemasolev metsaregistri deltaimport, Celery tööde audit ja Beat’i ajastus.
 - [x] Rakendada idempotentne Celery CQL-deltakontroll, mis tuvastab ja impordib vaid uued eraldised ning nende teatised.
 - [x] Lisada konfigureeritav Celery Beat’i ajastus, käsitsi halduskäsk ja auditeeritud jooksu tulemus.
-- [ ] Lisada testid, käivitusjuhised ning pushida perioodilise CQL-deltakontrolli täiendused harusse `rewrite/django`.
+- [x] Lisada testid, käivitusjuhised ning pushida perioodilise CQL-deltakontrolli täiendused harusse `rewrite/django`.
