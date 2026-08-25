@@ -40,4 +40,4 @@
 - [x] Kaardistada GeoJSON-is uue eraldise ja teatiste eristamiseks vajalikud atribuudid.
 - [x] Lisada MapLibre’i uute eraldiste ja teatiste eraldi visuaalsed kihid.
 - [x] Lisada klikitavad popup-aknad eraldise, metsaregistri objekti ja teatise detailandmetega.
-- [ ] Lisada testid, dokumentatsioon ning pushida täiendused harusse `rewrite/django`.
+- [x] Lisada testid, dokumentatsioon ning pushida täiendused harusse `rewrite/django`.
