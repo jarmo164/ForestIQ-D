@@ -5,7 +5,7 @@
 - [x] Lisa Django Q, tööde auditmudelid ja sünkroniseerimise konfiguratsioon.
 - [x] Rakenda WFS-i andmelaadijad ning Foresteki ja Pärimuse seoste sünkroniseerimine.
 - [x] Rakenda perioodilised ülesanded, halduskäsud, testid ja käivitusjuhised.
-- [ ] Avalda kontrollitud muudatused rewrite-harus.
+- [x] Avalda kontrollitud muudatused rewrite-harus.
 - [x] Asendada Django Q2 tööjärjekord Celery ja Redisiga, säilitades metsanduse sünkroniseerimise andmevood ning auditirajad.
 - [x] Viia andmebaasi teenus PostgreSQL/PostGIS-i kujule ja kontrollida GeoDjango ruumiandmete migreerimist.
 - [x] Täiendada `main`-haru töövoogude pariteeti andmete värskuse, pärimise, lepingute ning müügitöövaadete API-alustega.
