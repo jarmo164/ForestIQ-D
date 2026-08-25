@@ -106,6 +106,19 @@ python manage.py import_metsaregister_full --without-notifications
 
 Teatiste automaatseks järelpäringuks seadista lisaks metsaregistri URL-ile ja eraldiste kihile `FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER`. Vajadusel saab CQL-väljade nimed määrata muutujatega `FORESTIQ_METSAREGISTER_NOTIFICATION_CADASTRE_FIELD` ja `FORESTIQ_METSAREGISTER_NOTIFICATION_SUBPART_FIELD`; vaikimisi kasutatakse `katastri_nr` ja `eraldis_nr`. Käsk jätab kogu täisimpordi kohta ühe `DataSyncRun` auditikirje, mis sisaldab eraldiste, uute eraldiste ja imporditud teatiste arvu.
 
+### Perioodiline metsaregistri CQL-deltakontroll
+
+Celery Beat käivitab tausttöö `forestry.tasks.run_metsaregister_delta_check` vaikimisi iga tunni järel. Töö kasutab WFS-i eraldiste kihil CQL-filtrit kujul `registreerimise_kp >= '<UTC-aeg>'`, kus alguspunkt on eelmise eduka kontrolli lõpetamisaeg koos väikese kattuvusakna (`FORESTIQ_METSAREGISTER_DELTA_OVERLAP_MINUTES`) võrra. Esimesel käivitamisel kasutatakse piiratud tagasivaateakent (`FORESTIQ_METSAREGISTER_DELTA_LOOKBACK_HOURS`). Kattuvus teeb töö idempotentseks: muutunud või juba nähtud eraldised uuendatakse, kuid teatiste CQL-päring tehakse ainult lokaalselt uutele eraldistele.
+
+```sh
+cd django_backend
+
+# Käivita sama kontroll üks kord käsitsi.
+python manage.py check_metsaregister_delta
+```
+
+Ajastust saab muuta keskkonnamuutujaga `FORESTIQ_METSAREGISTER_DELTA_INTERVAL_SECONDS`; CQL-is kasutatavat muutmisvälja määrab `FORESTIQ_METSAREGISTER_DELTA_FIELD`, mille vaikimisi väärtus on `registreerimise_kp`. Iga jooks salvestatakse eraldi `DataSyncRun` kirjeks allikaga `celery:metsaregister-cql-delta`, koos kasutatud algusaja, tuvastatud uute eraldiste ja imporditud teatiste arvuga.
+
 ### MapLibre ja GeoDjango kaardikihid
 
 Reacti kaarditööruum aadressil `/map` kasutab MapLibre’i ning laeb ruumiandmed ainult autoriseeritud Django REST-liidese kaudu. Katastriüksused tulevad otspunktist `GET /api/services/map/cadastres`; GeoDjango eraldised, metsaregistri objektid ja teatiste markerid tulevad vastavalt otspunktidest `GET /api/services/map/layers/subparts`, `registry` ja `notifications`. Kõik geomeetriad teisendatakse serveris EPSG:4326 GeoJSON-iks ning MapLibre ei pöördu otse välise WFS-teenuse poole.

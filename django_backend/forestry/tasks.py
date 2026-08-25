@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
@@ -13,6 +15,7 @@ from forestry.services.external_sync import (
     sync_optional_soos_wfs,
     sync_parimus_inheritance,
 )
+from forestry.services.metsaregister_full_import import import_metsaregister_delta
 
 
 def _start(run: DataSyncRun) -> None:
@@ -76,3 +79,20 @@ def enqueue_portfolio_sync() -> dict[str, int]:
         enqueue_cadastre_sync(cadastre_id, source="daily")
         queued += 1
     return {"queued": queued}
+
+
+@shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=3)
+def run_metsaregister_delta_check(self) -> dict[str, object]:
+    """Periodically query the Metsaregister delta CQL filter and audit newly persisted allocations."""
+
+    now = timezone.now()
+    previous = DataSyncRun.objects.filter(source="celery:metsaregister-cql-delta", status=DataSyncRun.Status.SUCCEEDED, finished_at__isnull=False).order_by("-finished_at").first()
+    since = (previous.finished_at - timedelta(minutes=settings.FORESTIQ_METSAREGISTER_DELTA_OVERLAP_MINUTES)) if previous else now - timedelta(hours=settings.FORESTIQ_METSAREGISTER_DELTA_LOOKBACK_HOURS)
+    run = DataSyncRun.objects.create(source="celery:metsaregister-cql-delta", status=DataSyncRun.Status.RUNNING, started_at=now)
+    try:
+        report = import_metsaregister_delta(since=since)
+        result = {**report.data(), "since": since.isoformat()}
+    except Exception as exc:
+        _fail(run, exc)
+        raise
+    return _succeed(run, result)

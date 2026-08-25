@@ -1,10 +1,12 @@
 """Tests for the externally sourced forestry data synchronisation layer."""
 
+from datetime import timedelta
 from unittest.mock import Mock, patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from django.contrib.gis.geos import MultiPolygon, Polygon
 from rest_framework.test import APIClient
 
@@ -12,6 +14,8 @@ from accounts.models import User
 from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, Owner
 from forestry.services import import_runner
 from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance
+from forestry.services.metsaregister_full_import import FullImportReport, import_metsaregister_delta
+from forestry.tasks import run_metsaregister_delta_check
 
 
 class CadastreWfsTests(TestCase):
@@ -202,6 +206,39 @@ class MetsaregisterFullImportTests(TestCase):
         call_command("import_metsaregister_full", "--dry-run")
         get.assert_not_called()
         self.assertFalse(DataSyncRun.objects.exists())
+
+    @override_settings(
+        FORESTIQ_METSAREGISTER_WFS_URL="https://metsaregister.example.test/ows",
+        FORESTIQ_METSAREGISTER_FULL_WFS_LAYER="metsaregister:eraldis",
+        FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER="",
+        FORESTIQ_METSAREGISTER_DELTA_FIELD="registreerimise_kp",
+        FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE=100,
+    )
+    @patch("forestry.services.metsaregister_full_import.requests.get")
+    def test_delta_import_uses_timestamp_cql_and_persists_only_new_subpart(self, get):
+        geometry = {"type": "Polygon", "coordinates": [[[500000, 6500000], [500100, 6500000], [500000, 6500100], [500000, 6500000]]]}
+        response = Mock()
+        response.json.return_value = {"features": [{"id": "new-13", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 13, "pindala": "1.0", "registreerimise_kp": "2026-08-26T12:00:00Z"}, "geometry": geometry}]}
+        get.return_value = response
+        since = timezone.now() - timedelta(hours=1)
+
+        report = import_metsaregister_delta(since=since, page_size=100)
+
+        self.assertEqual(report.new_subparts, 1)
+        self.assertTrue(CadastreSubPart.objects.filter(cadastre=self.cadastre, sub_part_code=13).exists())
+        params = get.call_args.kwargs["params"]
+        self.assertIn("registreerimise_kp >=", params["CQL_FILTER"])
+        self.assertNotIn("eraldis_nr=10", params["CQL_FILTER"])
+
+    @patch("forestry.tasks.import_metsaregister_delta", return_value=FullImportReport(features=1, new_subparts=1, notifications=2))
+    def test_celery_delta_task_creates_audited_run(self, import_delta):
+        result = run_metsaregister_delta_check.run()
+        run = DataSyncRun.objects.get(source="celery:metsaregister-cql-delta")
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(result["new_subparts"], 1)
+        self.assertEqual(result["notifications"], 2)
+        self.assertIn("since", result)
+        self.assertTrue(import_delta.called)
 
 
 class MapFeatureTests(TestCase):

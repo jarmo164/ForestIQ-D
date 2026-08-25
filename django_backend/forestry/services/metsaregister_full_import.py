@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone as datetime_timezone
 from decimal import Decimal, InvalidOperation
 import json
 from typing import Any, Iterator
@@ -69,10 +70,10 @@ def _feature_page(*, layer: str, start_index: int, page_size: int, cql_filter: s
     return [feature for feature in features if isinstance(feature, dict)]
 
 
-def _pages(*, layer: str, page_size: int) -> Iterator[list[dict[str, Any]]]:
+def _pages(*, layer: str, page_size: int, cql_filter: str | None = None) -> Iterator[list[dict[str, Any]]]:
     start_index = 0
     while True:
-        page = _feature_page(layer=layer, start_index=start_index, page_size=page_size)
+        page = _feature_page(layer=layer, start_index=start_index, page_size=page_size, cql_filter=cql_filter)
         if not page:
             return
         yield page
@@ -136,6 +137,29 @@ def _import_notifications_for_new_subpart(*, cadastre: Cadastre, subpart_code: i
     return sum(_upsert_notification(cadastre=cadastre, subpart_code=subpart_code, feature=feature) for feature in _feature_page(layer=layer, start_index=0, page_size=settings.FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE, cql_filter=cql))
 
 
+def _store_allocation(*, report: FullImportReport, layer: str, feature: dict[str, Any], fetch_notifications: bool) -> None:
+    report.features += 1
+    properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+    cadastre_id = str(properties.get("katastri_nr") or "").strip()
+    subpart_code = _int(properties.get("eraldis_nr"))
+    geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+    if not cadastre_id or subpart_code is None or not geometry:
+        report.skipped_features += 1
+        return
+    with transaction.atomic():
+        cadastre, created_cadastre = Cadastre.objects.get_or_create(id=cadastre_id)
+        report.cadastres += int(created_cadastre)
+        was_new = not CadastreSubPart.objects.filter(cadastre=cadastre, sub_part_code=subpart_code).exists()
+        CadastreSubPart.objects.update_or_create(cadastre=cadastre, sub_part_code=subpart_code, defaults={"tree_type_code": str(properties.get("peapuuliik_kood") or ""), "area": _number(properties.get("pindala")), "polygon": geometry.get("coordinates", []), "boundary": geometry_from_geojson(geometry, polygon_only=True)})
+        ForestRegistryFeature.objects.update_or_create(source_layer=layer, source_id=_source_id(feature), defaults={"cadastre": cadastre, "subpart_code": subpart_code, "title": f"Eraldis {subpart_code}", "work_code": str(properties.get("raie_liik") or ""), "decision": str(properties.get("otsus") or ""), "area": _number(properties.get("pindala")), "volume": _number(properties.get("tagavara_l_ha")), "attributes": properties, "geometry": geometry, "spatial_geometry": geometry_from_geojson(geometry)})
+        if was_new:
+            report.new_subparts += 1
+            if fetch_notifications:
+                report.notifications += _import_notifications_for_new_subpart(cadastre=cadastre, subpart_code=subpart_code)
+        else:
+            report.updated_subparts += 1
+
+
 def import_all_metsaregister(*, page_size: int | None = None, fetch_notifications: bool = True) -> FullImportReport:
     """Import every configured Metsaregister allocation; notifications are fetched only for new allocations."""
 
@@ -145,32 +169,22 @@ def import_all_metsaregister(*, page_size: int | None = None, fetch_notification
     report = FullImportReport()
     for page in _pages(layer=layer, page_size=page_size or settings.FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE):
         for feature in page:
-            report.features += 1
-            properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
-            cadastre_id = str(properties.get("katastri_nr") or "").strip()
-            subpart_code = _int(properties.get("eraldis_nr"))
-            geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
-            if not cadastre_id or subpart_code is None or not geometry:
-                report.skipped_features += 1
-                continue
-            with transaction.atomic():
-                cadastre, created_cadastre = Cadastre.objects.get_or_create(id=cadastre_id)
-                report.cadastres += int(created_cadastre)
-                was_new = not CadastreSubPart.objects.filter(cadastre=cadastre, sub_part_code=subpart_code).exists()
-                CadastreSubPart.objects.update_or_create(
-                    cadastre=cadastre,
-                    sub_part_code=subpart_code,
-                    defaults={"tree_type_code": str(properties.get("peapuuliik_kood") or ""), "area": _number(properties.get("pindala")), "polygon": geometry.get("coordinates", []), "boundary": geometry_from_geojson(geometry, polygon_only=True)},
-                )
-                ForestRegistryFeature.objects.update_or_create(
-                    source_layer=layer,
-                    source_id=_source_id(feature),
-                    defaults={"cadastre": cadastre, "subpart_code": subpart_code, "title": f"Eraldis {subpart_code}", "work_code": str(properties.get("raie_liik") or ""), "decision": str(properties.get("otsus") or ""), "area": _number(properties.get("pindala")), "volume": _number(properties.get("tagavara_l_ha")), "attributes": properties, "geometry": geometry, "spatial_geometry": geometry_from_geojson(geometry)},
-                )
-                if was_new:
-                    report.new_subparts += 1
-                    if fetch_notifications:
-                        report.notifications += _import_notifications_for_new_subpart(cadastre=cadastre, subpart_code=subpart_code)
-                else:
-                    report.updated_subparts += 1
+            _store_allocation(report=report, layer=layer, feature=feature, fetch_notifications=fetch_notifications)
+    return report
+
+
+def import_metsaregister_delta(*, since: datetime, page_size: int | None = None, fetch_notifications: bool = True) -> FullImportReport:
+    """Use a server-side CQL timestamp filter and persist only newly discovered allocations."""
+
+    layer = settings.FORESTIQ_METSAREGISTER_FULL_WFS_LAYER
+    if not settings.FORESTIQ_METSAREGISTER_WFS_URL or not layer:
+        raise ExternalSourceError("Metsaregister WFS URL and delta layer must be configured")
+    if since.tzinfo is None:
+        raise ValueError("Delta timestamp must be timezone-aware")
+    timestamp = since.astimezone(datetime_timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    cql_filter = f"{_safe_field(settings.FORESTIQ_METSAREGISTER_DELTA_FIELD)} >= '{timestamp}'"
+    report = FullImportReport()
+    for page in _pages(layer=layer, page_size=page_size or settings.FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE, cql_filter=cql_filter):
+        for feature in page:
+            _store_allocation(report=report, layer=layer, feature=feature, fetch_notifications=fetch_notifications)
     return report
