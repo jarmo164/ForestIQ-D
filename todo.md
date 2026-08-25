@@ -24,4 +24,4 @@
 - [x] Kaardistada metsaregistri täisimpordi CQL-päring, eraldise identifikaator ja teatiste päringu seos.
 - [x] Rakendada täielik metsaregistri eraldiste import koos uute eraldiste auditeeritud tuvastamisega.
 - [x] Tõmmata ainult äsja tuvastatud eraldiste teatised ning vältida juba olemasolevate teatiste kordusimporti.
-- [ ] Lisada täisimpordi halduskäsk, testid, kuivkäivitus ja käivitusjuhised ning pushida täiendused harusse `rewrite/django`.
+- [x] Lisada täisimpordi halduskäsk, testid, kuivkäivitus ja käivitusjuhised ning pushida täiendused harusse `rewrite/django`.
