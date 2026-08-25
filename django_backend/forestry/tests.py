@@ -9,7 +9,7 @@ from django.contrib.gis.geos import MultiPolygon, Polygon
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from forestry.models import Cadastre, DataSyncRun, Owner
+from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, Owner
 from forestry.services import import_runner
 from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance
 
@@ -153,6 +153,50 @@ class ImportCommandTests(TestCase):
         run = DataSyncRun.objects.get(cadastre=self.cadastre)
         self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
         self.assertEqual(run.result, {"forestek": 2})
+
+
+class MetsaregisterFullImportTests(TestCase):
+    def setUp(self):
+        self.cadastre = Cadastre.objects.create(id="79501:001:0006")
+        CadastreSubPart.objects.create(cadastre=self.cadastre, sub_part_code=10)
+
+    @override_settings(
+        FORESTIQ_METSAREGISTER_WFS_URL="https://metsaregister.example.test/ows",
+        FORESTIQ_METSAREGISTER_FULL_WFS_LAYER="metsaregister:eraldis",
+        FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER="metsaregister:teatis",
+        FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE=100,
+    )
+    @patch("forestry.services.metsaregister_full_import.requests.get")
+    def test_full_import_fetches_notifications_only_for_new_subparts(self, get):
+        geometry = {"type": "Polygon", "coordinates": [[[500000, 6500000], [500100, 6500000], [500000, 6500100], [500000, 6500000]]]}
+        allocations = Mock()
+        allocations.json.return_value = {"features": [
+            {"id": "existing-10", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 10, "pindala": "1.2"}, "geometry": geometry},
+            {"id": "new-11", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 11, "pindala": "2.4"}, "geometry": geometry},
+        ]}
+        notifications = Mock()
+        notifications.json.return_value = {"features": [{"id": "9001", "properties": {"teatise_nr": "7001", "eraldis_nr": 11, "raie_liik": "RAIE", "pindala": "2.4"}, "geometry": geometry}]}
+        get.side_effect = [allocations, notifications]
+
+        call_command("import_metsaregister_full", "--page-size", "100")
+
+        self.assertTrue(CadastreSubPart.objects.filter(cadastre=self.cadastre, sub_part_code=11).exists())
+        self.assertEqual(CadastreNotification.objects.filter(cadastre=self.cadastre, cadastre_subpart_code=11).count(), 1)
+        self.assertEqual(get.call_count, 2)
+        notification_params = get.call_args_list[1].kwargs["params"]
+        self.assertIn("eraldis_nr=11", notification_params["CQL_FILTER"])
+        self.assertNotIn("eraldis_nr=10", notification_params["CQL_FILTER"])
+        run = DataSyncRun.objects.get(source="cli:metsaregister-full")
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(run.result["new_subparts"], 1)
+        self.assertEqual(run.result["notifications"], 1)
+
+    @override_settings(FORESTIQ_METSAREGISTER_FULL_WFS_LAYER="metsaregister:eraldis")
+    @patch("forestry.services.metsaregister_full_import.requests.get")
+    def test_full_import_dry_run_makes_no_wfs_request(self, get):
+        call_command("import_metsaregister_full", "--dry-run")
+        get.assert_not_called()
+        self.assertFalse(DataSyncRun.objects.exists())
 
 
 class MapFeatureTests(TestCase):

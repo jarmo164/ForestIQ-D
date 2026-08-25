@@ -85,6 +85,25 @@ python manage.py import_external_api_sources --all --source parimus --limit 25 -
 
 `import_wfs_sources` toetab allikaid `cadastre`, `metsaregister`, `soos` ja `all`. Valiku `all` korral jäetakse seadistamata SOOS teadlikult vahele; eraldi `--source soos` nõuab selle URL-i ja kihi seadistust. `import_external_api_sources` toetab `forestek`, `parimus` ja `all`; ükski volitatud API-päring ei käivitu enne URL-i ning tokeni eelkontrolli läbimist. Tõrked talletatakse auditireal ning `--continue-on-error` lubab töödelda järgmisi üksusi.
 
+### Metsaregistri esmane täisimport ja uued teatised
+
+Kui metsaregister on põhiandmeallikas, käivita esmalt täisimport. Käsk loeb `FORESTIQ_METSAREGISTER_FULL_WFS_LAYER` kihist kõik eraldised lehekülgede kaupa. Iga eraldis salvestatakse `CadastreSubPart`-ina; ainult juhul, kui kombinatsiooni **katastriüksus + eraldise number** veel andmebaasis ei ole, tehakse teatiste kihile sihitud CQL-päring. Juba olemasolevate eraldiste teatisi ei laadita selle käsuga uuesti.
+
+```sh
+cd django_backend
+
+# Kontrollib seadistuse ja kavandatud voo, kuid ei tee WFS-päringuid.
+python manage.py import_metsaregister_full --dry-run
+
+# Esmane täielik eraldiste import ning uute eraldiste teatised.
+python manage.py import_metsaregister_full --page-size 1000
+
+# Ainult eraldiste täisimport, kui teatiste kiht ei ole veel seadistatud.
+python manage.py import_metsaregister_full --without-notifications
+```
+
+Teatiste automaatseks järelpäringuks seadista lisaks metsaregistri URL-ile ja eraldiste kihile `FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER`. Vajadusel saab CQL-väljade nimed määrata muutujatega `FORESTIQ_METSAREGISTER_NOTIFICATION_CADASTRE_FIELD` ja `FORESTIQ_METSAREGISTER_NOTIFICATION_SUBPART_FIELD`; vaikimisi kasutatakse `katastri_nr` ja `eraldis_nr`. Käsk jätab kogu täisimpordi kohta ühe `DataSyncRun` auditikirje, mis sisaldab eraldiste, uute eraldiste ja imporditud teatiste arvu.
+
 ## Andmebaasi migratsioon vanast MetsIS-ist
 
 Enne ümberlülitust tee lähte- ja sihtandmebaasist varukoopiad. Uue skeemi loovad Django migratsioonid. Vana PostgreSQL andmebaasi sisu saab kopeerida idempotentse käsuga, mis kasutab ainult lugemisühendust `LEGACY_DATABASE_URL` kaudu.

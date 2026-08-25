@@ -21,3 +21,7 @@
 - [x] Lisada ühtne WFS-i impordi halduskäsk Maa-ameti, metsaregistri ja SOOS-i allikatele koos sihtkatastri ning kuivkäivituse valikutega.
 - [x] Lisada opt-in API-allikate impordi halduskäsk Foresteki ja Pärimuse andmevoogudele koos konfiguratsiooni eelkontrolliga.
 - [x] Lisada impordiskriptide testid, käivitusjuhised ning pushida kontrollitud täiendused harusse `rewrite/django`.
+- [x] Kaardistada metsaregistri täisimpordi CQL-päring, eraldise identifikaator ja teatiste päringu seos.
+- [x] Rakendada täielik metsaregistri eraldiste import koos uute eraldiste auditeeritud tuvastamisega.
+- [x] Tõmmata ainult äsja tuvastatud eraldiste teatised ning vältida juba olemasolevate teatiste kordusimporti.
+- [ ] Lisada täisimpordi halduskäsk, testid, kuivkäivitus ja käivitusjuhised ning pushida täiendused harusse `rewrite/django`.
