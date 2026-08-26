@@ -105,6 +105,7 @@ class Contract(OrganizationScopedModel):
     base_id = models.CharField(max_length=50, blank=True)
     source_deal = models.ForeignKey("Deal", null=True, blank=True, on_delete=models.SET_NULL, related_name="contracts")
     source_offer = models.ForeignKey("DealOffer", null=True, blank=True, on_delete=models.SET_NULL, related_name="contracts")
+    version = models.PositiveBigIntegerField(default=1)
     organization_parent_fields = ("source_deal", "source_offer")
 
     class Meta:
@@ -162,6 +163,7 @@ class Deal(OrganizationScopedModel):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="created_deals")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveBigIntegerField(default=1)
     organization_parent_fields = ("owner",)
 
     class Meta:
@@ -224,6 +226,7 @@ class InheritanceCase(OrganizationScopedModel):
     started_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveBigIntegerField(default=1)
     organization_parent_fields = ("owner",)
 
     class Meta:

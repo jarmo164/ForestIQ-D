@@ -203,6 +203,19 @@ KEYCLOAK_ORGANIZATION_CLAIM=organization_id
 
 Kohalik parooli- ja TOTP-vool jääb ainult arenduse ühilduvuseks. `FORESTIQ_DEVMODE=true` toimib üksnes koos `DJANGO_DEBUG=true`; tootmises (`DJANGO_DEBUG=false`) tagastavad kohalikud `password-login`, TOTP ja paroolivahetuse endpointid vastuse `403`, sõltumata keskkonnamuutujast.
 
+### Optimistlik lukustus kriitilistel agregaatidel (API-03)
+
+`Owner`, `Deal`, `Contract` ja `InheritanceCase` sisaldavad täisarvulist välja `version`, mille algväärtus on `1`. Iga detail- ja töövoovastus tagastab selle versiooni. Kriitiline kirjutus peab JSON-kehas saatma samaväärtusliku `version` välja; alternatiivina toetab API standardset `If-Match` päist. Puuduv või vigane versioon tagastab `428` koos koodiga `version_required`.
+
+Server rakendab muudatuse ühe tingimusliku andmebaasivärskendusena: muudatus õnnestub ainult siis, kui salvestatud versioon vastab kliendi eeldatud versioonile. Eduka kirjutuse järel versioon suureneb ühe võrra. Kui teine kasutaja on vahepeal sama agregaati muutnud, jääb vana kirjutus andmebaasist välja ning API tagastab `409` koos koodiga `version_conflict`, kliendi oodatud versiooni ja viimase teadaoleva versiooniga.
+
+| Agregaat | Kaitstud muutused | Kliendi ootus konflikti korral |
+| --- | --- | --- |
+| `Owner` | Detailandmed, staatus, vastutaja | Laadi omanik uuesti ning esita muudatus kasutaja kinnitusega. |
+| `Deal` | Hindamine, pakkumised, sulgemine ja lepingudrafti genereerimine | Värskenda töövoo olek ning ära jätka vananenud pakkumisega. |
+| `Contract` | Olemasoleva lepingu andmed, fail ja kustutamine | Laadi lepingu detail uuesti; failimuudatust ei rakendata vanale versioonile. |
+| `InheritanceCase` | Staatus, määramine, pärijad ja märkmed | Värskenda juhtum koos sündmuste ja pärijate viimase seisuga. |
+
 ## Turve
 
 Django API kasutab organisatsiooniga seotud sisemist Bearer JWT-d. Reacti töölaud kasutab tootmises Keycloak’i Authorization Code + PKCE voogu; kohalik parooli/TOTP voog on ainult arenduseks. Õigused `ADMIN`, `OWNER_PROFILE`, `ASSIGNED_OWNERS`, `PHONES` ja `EVALUATION` tulenevad aktiivse organisatsiooniliikmesuse rollidest ning pärandõigused sünkroniseeritakse endiselt vastavatesse Django gruppidesse. Seega töötavad tavapärased Django `Group` ja `Permission` kontrollid paralleelselt liikmesusepõhise ressursiõigusega, kuid tenantide vahelist pääsu ei saa globaalne grupp anda.

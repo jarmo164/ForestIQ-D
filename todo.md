@@ -83,3 +83,7 @@
 - [x] Lisada OIDC-koodivahetus, stabiilne `oidc_subject`, organisatsiooniliikmesuse rollid ning rollipõhine endpointi- ja objektitaseme andmeautoriseerimine.
 - [x] Lisada negatiivsed rolli-, andmeulatuse-, Keycloak’i claim’i- ja tootmise kohaliku sisselogimise keelamise testid ning dokumenteerida seadistus.
 - [x] Commitida ja pushida AUTH-03 täiendused ForestIQ-D `main`-harusse ning sulgeda GitHubi issue #14.
+- [x] Kaardistada API-03 jaoks Owneri, Deal’i, Contracti ja InheritanceCase’i kriitilised kirjutusvood ning versioonileping.
+- [x] Lisada agregaatide versiooniväljad, atomaarne võrdle-ja-uuenda toiming ning `428`/`409` konfliktivastused.
+- [x] Uuendada kliendi kriitilised töövookutsed versioonitunnusega ning lisada samaaegseid vananenud snapshot’e simuleeriv regressioonmaatriks.
+- [x] Dokumenteerida versioonileping, käitada kogu kvaliteedivärav ning sulgeda GitHubi issue #18 pärast avaldamist.

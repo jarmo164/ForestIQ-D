@@ -109,7 +109,7 @@ class AdminWorkflowTests(TestCase):
 
     def test_admin_can_create_and_assign_owner_status(self):
         owner = Owner.objects.create(id="49001010001", name="Forest owner")
-        response = self.client.post(f"/api/services/owners/{owner.id}/change-status", {"code": "ASSIGNED"}, format="json")
+        response = self.client.post(f"/api/services/owners/{owner.id}/change-status", {"code": "ASSIGNED", "version": owner.version}, format="json")
         self.assertEqual(response.status_code, 200)
         owner.refresh_from_db()
         self.assertEqual(owner.status, "ASSIGNED")
@@ -132,19 +132,20 @@ class MainParityWorkflowTests(TestCase):
         )
         self.assertEqual(created.status_code, 201, created.data)
         deal_id = created.data["id"]
-        evaluation = self.client.post(f"/api/services/deals/{deal_id}/evaluations", {"status": "APPROVED", "proposedOfferPrice": "10500"}, format="json")
+        evaluation = self.client.post(f"/api/services/deals/{deal_id}/evaluations", {"status": "APPROVED", "proposedOfferPrice": "10500", "version": created.data["version"]}, format="json")
         self.assertEqual(evaluation.status_code, 200, evaluation.data)
-        offer = self.client.post(f"/api/services/deals/{deal_id}/commercial/offers", {"amount": "10500", "terms": "Cash settlement"}, format="json")
+        offer = self.client.post(f"/api/services/deals/{deal_id}/commercial/offers", {"amount": "10500", "terms": "Cash settlement", "version": evaluation.data["version"]}, format="json")
         self.assertEqual(offer.status_code, 201, offer.data)
         offer_id = offer.data["offer"]["id"]
-        self.assertEqual(self.client.post(f"/api/services/deals/{deal_id}/commercial/offers/send", {"offerId": offer_id}, format="json").status_code, 200)
-        won = self.client.post(f"/api/services/deals/{deal_id}/commercial/won", {"acceptedEntryId": offer_id, "note": "Accepted"}, format="json")
+        sent = self.client.post(f"/api/services/deals/{deal_id}/commercial/offers/send", {"offerId": offer_id, "version": offer.data["state"]["version"]}, format="json")
+        self.assertEqual(sent.status_code, 200, sent.data)
+        won = self.client.post(f"/api/services/deals/{deal_id}/commercial/won", {"acceptedEntryId": offer_id, "note": "Accepted", "version": sent.data["version"]}, format="json")
         self.assertEqual(won.status_code, 200, won.data)
         self.assertEqual(won.data["stage"], "WON")
         self.assertEqual(Deal.objects.get(id=deal_id).offers.get(id=offer_id).status, DealOffer.Status.ACCEPTED)
         draft = self.client.get(f"/api/services/contracts/deals/{deal_id}/draft")
         self.assertEqual(draft.status_code, 200, draft.data)
-        contract = self.client.post("/api/services/contracts/generate-from-deal", {"dealId": deal_id, "contractNumber": "C-2026-001", "buyer": "ForestIQ buyer"}, format="json")
+        contract = self.client.post("/api/services/contracts/generate-from-deal", {"dealId": deal_id, "version": won.data["version"], "contractNumber": "C-2026-001", "buyer": "ForestIQ buyer"}, format="json")
         self.assertEqual(contract.status_code, 201, contract.data)
         self.assertEqual(str(Contract.objects.get(id=contract.data["contractId"]).source_offer_id), offer_id)
 
@@ -156,9 +157,9 @@ class MainParityWorkflowTests(TestCase):
         )
         self.assertEqual(created.status_code, 201, created.data)
         case_id = created.data["id"]
-        heir = self.client.post(f"/api/services/inheritance/cases/{case_id}/heirs", {"displayName": "Test heir", "contactStatus": "TO_CONTACT"}, format="json")
+        heir = self.client.post(f"/api/services/inheritance/cases/{case_id}/heirs", {"displayName": "Test heir", "contactStatus": "TO_CONTACT", "version": created.data["version"]}, format="json")
         self.assertEqual(heir.status_code, 201, heir.data)
-        changed = self.client.patch(f"/api/services/inheritance/cases/{case_id}/status", {"status": "IN_PROGRESS", "comment": "Contact started"}, format="json")
+        changed = self.client.patch(f"/api/services/inheritance/cases/{case_id}/status", {"status": "IN_PROGRESS", "comment": "Contact started", "version": InheritanceCase.objects.get(id=case_id).version}, format="json")
         self.assertEqual(changed.status_code, 200, changed.data)
         self.assertEqual(changed.data["status"], "IN_PROGRESS")
         self.assertEqual(InheritanceCase.objects.get(id=case_id).heirs.count(), 1)
@@ -290,3 +291,94 @@ class OidcExchangeEndpointTests(TestCase):
         self.assertEqual(payload["auth_source"], "keycloak")
         self.assertIn(OrganizationRole.EVALUATOR, payload["roles"])
         self.assertIn(PrivilegeCode.EVALUATION, payload["privileges"])
+
+
+class OptimisticLockingTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser("lock-admin", "Lock administrator", "very-secure-password")
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.admin)['actualToken']['token']}")
+        OwnerStatus.objects.create(id="LOCKED", days_out_of_search=30, color_hex="7eaf86", protected=False)
+        self.owner = Owner.objects.create(id="77001010001", name="Concurrent owner", assignee=self.admin)
+
+    def test_owner_rejects_a_stale_snapshot_without_losing_first_write(self):
+        initial_version = self.owner.version
+        first = self.client.post(
+            f"/api/services/owners/{self.owner.id}/change-status",
+            {"code": "LOCKED", "version": initial_version},
+            format="json",
+        )
+        self.assertEqual(first.status_code, 200, first.data)
+        stale = self.client.post(
+            f"/api/services/owners/{self.owner.id}/change-status",
+            {"code": "LOCKED", "version": initial_version},
+            format="json",
+        )
+        self.assertEqual(stale.status_code, 409, stale.data)
+        self.assertEqual(stale.data["code"], "version_conflict")
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.status, "LOCKED")
+        self.assertEqual(self.owner.version, initial_version + 1)
+
+    def test_deal_rejects_a_stale_evaluation_submission(self):
+        deal = Deal.objects.create(owner=self.owner, sale_subject="FOREST", stage="EVALUATION", evaluator=self.admin)
+        initial_version = deal.version
+        first = self.client.post(
+            f"/api/services/deals/{deal.id}/evaluations",
+            {"status": "SUBMITTED", "version": initial_version},
+            format="json",
+        )
+        self.assertEqual(first.status_code, 200, first.data)
+        stale = self.client.post(
+            f"/api/services/deals/{deal.id}/evaluations",
+            {"status": "APPROVED", "proposedOfferPrice": "9000", "version": initial_version},
+            format="json",
+        )
+        self.assertEqual(stale.status_code, 409, stale.data)
+        deal.refresh_from_db()
+        self.assertEqual(deal.evaluation_status, "SUBMITTED")
+        self.assertEqual(deal.version, initial_version + 1)
+
+    def test_inheritance_case_rejects_a_stale_status_change(self):
+        inheritance_case = InheritanceCase.objects.create(owner=self.owner)
+        initial_version = inheritance_case.version
+        first = self.client.patch(
+            f"/api/services/inheritance/cases/{inheritance_case.id}/status",
+            {"status": "IN_PROGRESS", "version": initial_version},
+            format="json",
+        )
+        self.assertEqual(first.status_code, 200, first.data)
+        stale = self.client.patch(
+            f"/api/services/inheritance/cases/{inheritance_case.id}/status",
+            {"status": "CLOSED", "version": initial_version},
+            format="json",
+        )
+        self.assertEqual(stale.status_code, 409, stale.data)
+        inheritance_case.refresh_from_db()
+        self.assertEqual(inheritance_case.status, "IN_PROGRESS")
+        self.assertEqual(inheritance_case.version, initial_version + 1)
+
+    def test_contract_rejects_a_stale_update_before_writing_history(self):
+        contract = Contract.objects.create(id="LOCK-CONTRACT-001")
+        payload = {
+            "id": contract.id,
+            "contractNumber": "LOCK-2026-001",
+            "sellers": [],
+            "buyer": {"name": "ForestIQ buyer"},
+            "details": {"cadastres": []},
+        }
+        first = self.client.post("/api/services/contracts", {**payload, "version": contract.version}, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        stale = self.client.post("/api/services/contracts", {**payload, "version": contract.version}, format="json")
+        self.assertEqual(stale.status_code, 409, stale.data)
+        contract.refresh_from_db()
+        self.assertEqual(contract.version, 2)
+
+    def test_version_is_required_for_critical_aggregate_changes(self):
+        response = self.client.post(
+            f"/api/services/owners/{self.owner.id}/change-status",
+            {"code": "LOCKED"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 428, response.data)
+        self.assertEqual(response.data["code"], "version_required")

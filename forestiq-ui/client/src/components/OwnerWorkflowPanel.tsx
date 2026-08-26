@@ -36,22 +36,22 @@ export function OwnerWorkflowPanel({ owner }: { owner: Owner }) {
     } catch (err) { setError(err instanceof Error ? err.message : "Tehingu loomine ebaõnnestus."); }
   };
 
-  const approveEvaluation = async (dealId: string) => {
+  const approveEvaluation = async (deal: Deal) => {
     try {
       const amount = Number(evaluationAmount);
       if (!Number.isFinite(amount) || amount <= 0) { setError("Sisesta hindamise positiivne pakkumishind."); return; }
-      await api.post(`/services/deals/${dealId}/evaluations`, { status: "APPROVED", proposedOfferPrice: amount, recommendedPurchasePrice: amount });
+      await api.post(`/services/deals/${deal.id}/evaluations`, { status: "APPROVED", proposedOfferPrice: amount, recommendedPurchasePrice: amount, version: deal.version });
       setEvaluationAmount("");
       void refresh();
     } catch (err) { setError(err instanceof Error ? err.message : "Hindamise kinnitamine ebaõnnestus."); }
   };
 
-  const sendOffer = async (dealId: string) => {
+  const sendOffer = async (deal: Deal) => {
     try {
       const amount = Number(offerAmount);
       if (!Number.isFinite(amount) || amount <= 0) { setError("Sisesta pakkumise positiivne summa."); return; }
-      const created = await api.post<{ offer: { id: string } }>(`/services/deals/${dealId}/commercial/offers`, { amount, terms: "ForestIQ tööruumist saadetud pakkumine." });
-      await api.post(`/services/deals/${dealId}/commercial/offers/send`, { offerId: created.offer.id });
+      const created = await api.post<{ offer: { id: string }; state: { version: number } }>(`/services/deals/${deal.id}/commercial/offers`, { amount, terms: "ForestIQ tööruumist saadetud pakkumine.", version: deal.version });
+      await api.post(`/services/deals/${deal.id}/commercial/offers/send`, { offerId: created.offer.id, version: created.state.version });
       setOfferAmount("");
       void refresh();
     } catch (err) { setError(err instanceof Error ? err.message : "Pakkumise saatmine ebaõnnestus."); }
@@ -60,8 +60,9 @@ export function OwnerWorkflowPanel({ owner }: { owner: Owner }) {
   const createContract = async (deal: Deal) => {
     try {
       const number = `FIQ-${new Date().getFullYear()}-${deal.id.slice(0, 8).toUpperCase()}`;
-      const created = await api.post<{ contractId: string }>("/services/contracts/generate-from-deal", { dealId: deal.id, contractNumber: number, buyer: "ForestIQ buyer" });
+      const created = await api.post<{ contractId: string }>("/services/contracts/generate-from-deal", { dealId: deal.id, version: deal.version, contractNumber: number, buyer: "ForestIQ buyer" });
       setError(`Lepingu ${created.contractId} draft on loodud. Lisa PDF lepingute registris.`);
+      void refresh();
     } catch (err) { setError(err instanceof Error ? err.message : "Lepingu drafti loomine ebaõnnestus."); }
   };
 
@@ -73,8 +74,8 @@ export function OwnerWorkflowPanel({ owner }: { owner: Owner }) {
     try { await api.post(`/services/inheritance/owners/${owner.id}`, { sourceNoticeNumber: "", notaryName: "" }); void refresh(); }
     catch (err) { setError(err instanceof Error ? err.message : "Pärimisjuhtumi loomine ebaõnnestus."); }
   };
-  const startCase = async (caseId: string) => {
-    try { await api.patch(`/services/inheritance/cases/${caseId}/status`, { status: "IN_PROGRESS", comment: "Juhtum võeti omanikuvaates töösse." }); void refresh(); }
+  const startCase = async (inheritanceCase: InheritanceCase) => {
+    try { await api.patch(`/services/inheritance/cases/${inheritanceCase.id}/status`, { status: "IN_PROGRESS", comment: "Juhtum võeti omanikuvaates töösse.", version: inheritanceCase.version }); void refresh(); }
     catch (err) { setError(err instanceof Error ? err.message : "Juhtumi uuendamine ebaõnnestus."); }
   };
 
@@ -87,8 +88,8 @@ export function OwnerWorkflowPanel({ owner }: { owner: Owner }) {
       <div className="mt-4 space-y-2">
         {deals.map((deal) => <div className="rounded-xl bg-muted p-3 text-sm" key={deal.id}>
           <strong>{deal.stage.replaceAll("_", " ")}</strong><p>{deal.saleSubject} · {deal.parcels.length} kinnistut · {deal.offers.length} pakkumist</p>
-          {deal.stage === "EVALUATION" && <div className="mt-3 flex gap-2"><input aria-label="Hindamise pakkumishind" className="min-w-0 rounded-md border bg-background px-2 py-1" inputMode="decimal" value={evaluationAmount} onChange={(event) => setEvaluationAmount(event.target.value)} placeholder="Hind EUR" /><button className="secondary-action" onClick={() => void approveEvaluation(deal.id)}>Kinnita hindamine</button></div>}
-          {deal.stage === "NEGOTIATION" && <div className="mt-3 flex gap-2"><input aria-label="Pakkumise summa" className="min-w-0 rounded-md border bg-background px-2 py-1" inputMode="decimal" value={offerAmount} onChange={(event) => setOfferAmount(event.target.value)} placeholder="EUR" /><button className="secondary-action" onClick={() => void sendOffer(deal.id)}>Saada pakkumine</button></div>}
+          {deal.stage === "EVALUATION" && <div className="mt-3 flex gap-2"><input aria-label="Hindamise pakkumishind" className="min-w-0 rounded-md border bg-background px-2 py-1" inputMode="decimal" value={evaluationAmount} onChange={(event) => setEvaluationAmount(event.target.value)} placeholder="Hind EUR" /><button className="secondary-action" onClick={() => void approveEvaluation(deal)}>Kinnita hindamine</button></div>}
+          {deal.stage === "NEGOTIATION" && <div className="mt-3 flex gap-2"><input aria-label="Pakkumise summa" className="min-w-0 rounded-md border bg-background px-2 py-1" inputMode="decimal" value={offerAmount} onChange={(event) => setOfferAmount(event.target.value)} placeholder="EUR" /><button className="secondary-action" onClick={() => void sendOffer(deal)}>Saada pakkumine</button></div>}
           {deal.stage === "WON" && <button className="secondary-action mt-3" onClick={() => void createContract(deal)}><FileText size={16} /> Koosta lepingu draft</button>}
         </div>)}
         {!deals.length && <p className="text-sm text-muted-foreground">Aktiivseid tehinguid ei ole.</p>}
@@ -98,7 +99,7 @@ export function OwnerWorkflowPanel({ owner }: { owner: Owner }) {
       <div className="panel-heading"><div><p className="eyebrow">PÄRIMINE</p><h3>Pärimisjuhtumid</h3></div><Gavel size={19} /></div>
       <p className="mb-4 text-sm text-muted-foreground">Kontrolli lubatud ametlikku teadet või ava käsitsi hallatav pärimisjuhtum.</p>
       <div className="flex flex-wrap gap-2"><button className="secondary-action" onClick={() => void checkNotice()}><RefreshCw size={16} /> Kontrolli teadet</button><button className="secondary-action" onClick={() => void createCase()}><Plus size={16} /> Loo juhtum</button></div>
-      <div className="mt-4 space-y-2">{cases.map((item) => <div className="rounded-xl bg-muted p-3 text-sm" key={item.id}><strong>{item.status.replaceAll("_", " ")}</strong><p>{item.sourceNoticeNumber || "Käsitsi avatud"} · {item.heirs.length} pärijat</p>{item.status === "NEW" && <button className="secondary-action mt-2" onClick={() => void startCase(item.id)}>Võta töösse</button>}</div>)}{!cases.length && <p className="text-sm text-muted-foreground">Pärimisjuhtumeid ei ole.</p>}</div>
+      <div className="mt-4 space-y-2">{cases.map((item) => <div className="rounded-xl bg-muted p-3 text-sm" key={item.id}><strong>{item.status.replaceAll("_", " ")}</strong><p>{item.sourceNoticeNumber || "Käsitsi avatud"} · {item.heirs.length} pärijat</p>{item.status === "NEW" && <button className="secondary-action mt-2" onClick={() => void startCase(item)}>Võta töösse</button>}</div>)}{!cases.length && <p className="text-sm text-muted-foreground">Pärimisjuhtumeid ei ole.</p>}</div>
     </article>
     <article className="panel p-5">
       <div className="panel-heading"><div><p className="eyebrow">OMANDIMUUTUS</p><h3>Auditeeritud sündmused</h3></div><ShieldCheck size={19} /></div>

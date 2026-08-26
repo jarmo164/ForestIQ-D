@@ -24,7 +24,7 @@ export default function OwnerDetail() {
     void api.get<OwnerStatus[]>("/services/owner-statuses").then(setStatuses).catch(() => undefined);
   }, [ownerId]);
 
-  const changeStatus = async (code: string) => { await api.post(`/services/owners/${ownerId}/change-status`, { code }); void refresh(); };
+  const changeStatus = async (code: string) => { if (!owner) return; await api.post(`/services/owners/${ownerId}/change-status`, { code, version: owner.version }); void refresh(); };
   const addLog = async () => { if (!note.trim()) return; await api.post(`/services/owners/${ownerId}/log`, { message: note }); setNote(""); };
 
   if (!owner) return <AppShell title="Omaniku töökaart"><div className="empty-state">Laadin omaniku andmeid… {error}</div></AppShell>;

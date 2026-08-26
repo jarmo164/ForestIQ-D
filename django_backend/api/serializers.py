@@ -29,6 +29,7 @@ def owner_summary(owner: Owner) -> dict:
     return {
         "id": owner.id,
         "name": owner.name,
+        "version": owner.version,
         "status": owner.status or None,
         "statusSetAt": json_value(owner.status_set_at),
         "assignee": user_data(owner.assignee),

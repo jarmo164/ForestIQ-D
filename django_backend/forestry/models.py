@@ -60,6 +60,7 @@ class Owner(OrganizationScopedModel):
         db_column="caller_id",
     )
     last_cadastre_list_refresh = models.DateTimeField(null=True, blank=True)
+    version = models.PositiveBigIntegerField(default=1)
 
     class Meta:
         db_table = "owners"

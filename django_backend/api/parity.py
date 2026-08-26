@@ -37,6 +37,7 @@ from operations.models import (
     Reminder,
 )
 
+from .concurrency import missing_version_response, requested_version, update_if_current, version_conflict_response
 from .permissions import CanEvaluate, CanManageOwners, IsAdmin, can_access_owner, has_membership_privilege
 from .organization import organization_user_or_404, organization_users, request_organization_id
 from .serializers import cadastre_summary, json_value, owner_summary, user_data
@@ -88,7 +89,7 @@ def _deal_data(deal: Deal) -> dict:
         for item in deal.offers.select_related("created_by").all()
     ]
     return {
-        "id": str(deal.id), "owner": owner_summary(deal.owner), "saleSubject": deal.sale_subject,
+        "id": str(deal.id), "version": deal.version, "owner": owner_summary(deal.owner), "saleSubject": deal.sale_subject,
         "stage": deal.stage, "parcels": [cadastre_summary(item) for item in deal.parcels.all()],
         "decisionMaker": deal.decision_maker or None, "saleTimeframe": deal.sale_timeframe or None,
         "priceExpectation": json_value(deal.price_expectation), "qualificationNotes": deal.qualification_notes or None,
@@ -114,6 +115,17 @@ def _ensure_deal_access(request, deal: Deal):
     if not can_access_owner(request, deal.owner):
         return _detail("You do not have access to this deal.", status.HTTP_403_FORBIDDEN)
     return None
+
+
+def _update_deal_or_conflict(request, deal: Deal, **changes):
+    expected_version = requested_version(request)
+    if expected_version is None:
+        return None, missing_version_response()
+    updated_deal = update_if_current(deal, expected_version, **changes)
+    if updated_deal is None:
+        deal.refresh_from_db(fields=["version"])
+        return None, version_conflict_response(deal, expected_version)
+    return updated_deal, None
 
 
 @api_view(["GET"])
@@ -184,15 +196,14 @@ def deal_evaluation_claim(request, deal_id: str):
     if request.method == "POST":
         if deal.evaluator_id and deal.evaluator_id != request.user.id and not has_membership_privilege(request, PrivilegeCode.ADMIN):
             return _detail("The evaluation is already assigned.", status.HTTP_409_CONFLICT)
-        deal.evaluator = request.user
-        deal.stage = DealStage.EVALUATION
-        deal.save(update_fields=["evaluator", "stage", "updated_at"])
+        updated_deal, conflict = _update_deal_or_conflict(request, deal, evaluator=request.user, stage=DealStage.EVALUATION)
     elif deal.evaluator_id == request.user.id or has_membership_privilege(request, PrivilegeCode.ADMIN):
-        deal.evaluator = None
-        deal.save(update_fields=["evaluator", "updated_at"])
+        updated_deal, conflict = _update_deal_or_conflict(request, deal, evaluator=None)
     else:
         return _detail("Only the assigned evaluator can release the case.", status.HTTP_403_FORBIDDEN)
-    return Response(_deal_data(_get_deal(deal_id)))
+    if conflict:
+        return conflict
+    return Response(_deal_data(_get_deal(str(updated_deal.id))))
 
 
 @api_view(["PUT"])
@@ -200,10 +211,11 @@ def deal_evaluation_claim(request, deal_id: str):
 def deal_evaluation_assignment(request, deal_id: str):
     deal = _get_deal(deal_id)
     evaluator_id = request.data.get("evaluatorId") or request.data.get("evaluatorSubject")
-    deal.evaluator = organization_user_or_404(request, evaluator_id, active_only=True) if evaluator_id else None
-    deal.stage = DealStage.EVALUATION
-    deal.save(update_fields=["evaluator", "stage", "updated_at"])
-    return Response(_deal_data(_get_deal(deal_id)))
+    evaluator = organization_user_or_404(request, evaluator_id, active_only=True) if evaluator_id else None
+    updated_deal, conflict = _update_deal_or_conflict(request, deal, evaluator=evaluator, stage=DealStage.EVALUATION)
+    if conflict:
+        return conflict
+    return Response(_deal_data(_get_deal(str(updated_deal.id))))
 
 
 @api_view(["POST"])
@@ -227,23 +239,26 @@ def deal_evaluation_submit(request, deal_id: str):
         offer_valid_until = _date(request.data.get("offerValidUntil"), "offerValidUntil")
     except ValueError as exc:
         return _detail(str(exc))
-    deal.evaluator = deal.evaluator or request.user
-    deal.evaluation_status = evaluation_status
-    deal.stage = DealStage.NEGOTIATION if evaluation_status == "APPROVED" else DealStage.EVALUATION
-    deal.offer_valid_until = offer_valid_until
-    deal.evaluation_assumptions = str(request.data.get("assumptions", ""))
-    deal.evaluation_risks = str(request.data.get("risks", ""))
-    deal.returned_reason = str(request.data.get("returnedReason", ""))
-    for field, value in numbers.items():
-        setattr(deal, field, value)
-    deal.save()
-    OwnerLog.objects.create(owner=deal.owner, creator=request.user, message=f"Evaluation for deal {deal.id}: {evaluation_status}.")
-    return Response(_deal_data(_get_deal(deal_id)))
+    changes = {
+        "evaluator": deal.evaluator or request.user,
+        "evaluation_status": evaluation_status,
+        "stage": DealStage.NEGOTIATION if evaluation_status == "APPROVED" else DealStage.EVALUATION,
+        "offer_valid_until": offer_valid_until,
+        "evaluation_assumptions": str(request.data.get("assumptions", "")),
+        "evaluation_risks": str(request.data.get("risks", "")),
+        "returned_reason": str(request.data.get("returnedReason", "")),
+        **numbers,
+    }
+    updated_deal, conflict = _update_deal_or_conflict(request, deal, **changes)
+    if conflict:
+        return conflict
+    OwnerLog.objects.create(owner=updated_deal.owner, creator=request.user, message=f"Evaluation for deal {updated_deal.id}: {evaluation_status}.")
+    return Response(_deal_data(_get_deal(str(updated_deal.id))))
 
 
 def _commercial(deal: Deal) -> dict:
     data = _deal_data(deal)
-    return {"dealId": data["id"], "stage": data["stage"], "nextAction": "Close or update the latest offer.", "closedAt": data["closedAt"], "offers": data["offers"]}
+    return {"dealId": data["id"], "version": data["version"], "stage": data["stage"], "nextAction": "Close or update the latest offer.", "closedAt": data["closedAt"], "offers": data["offers"]}
 
 
 def _new_offer(deal: Deal, request, *, kind: str, amount: Decimal, valid_until: date | None = None, terms: str = "", note: str = "") -> DealOffer:
@@ -269,10 +284,17 @@ def deal_offer_create(request, deal_id: str):
     if deal.stage in {DealStage.WON, DealStage.LOST, DealStage.CANCELLED}:
         return _detail("A closed deal cannot receive new offers.", status.HTTP_409_CONFLICT)
     try:
-        offer = _new_offer(deal, request, kind=DealOffer.Kind.OFFER, amount=_number(request.data.get("amount"), "amount", required=True), valid_until=_date(request.data.get("validUntil"), "validUntil"), terms=str(request.data.get("terms", "")))
+        amount = _number(request.data.get("amount"), "amount", required=True)
+        valid_until = _date(request.data.get("validUntil"), "validUntil")
     except ValueError as exc:
         return _detail(str(exc))
-    return Response({"offer": _commercial(_get_deal(deal_id))["offers"][-1], "state": _commercial(_get_deal(deal_id))}, status=status.HTTP_201_CREATED)
+    with transaction.atomic():
+        updated_deal, conflict = _update_deal_or_conflict(request, deal)
+        if conflict:
+            return conflict
+        _new_offer(updated_deal, request, kind=DealOffer.Kind.OFFER, amount=amount, valid_until=valid_until, terms=str(request.data.get("terms", "")))
+    state = _commercial(_get_deal(str(updated_deal.id)))
+    return Response({"offer": state["offers"][-1], "state": state}, status=status.HTTP_201_CREATED)
 
 
 @api_view(["POST"])
@@ -285,12 +307,14 @@ def deal_offer_send(request, deal_id: str):
     offer = get_object_or_404(DealOffer, id=request.data.get("offerId"), deal=deal)
     if offer.status != DealOffer.Status.DRAFT:
         return _detail("Only draft offers can be sent.", status.HTTP_409_CONFLICT)
-    offer.status, offer.sent_at = DealOffer.Status.SENT, timezone.now()
-    offer.save(update_fields=["status", "sent_at"])
-    deal.stage = DealStage.NEGOTIATION
-    deal.save(update_fields=["stage", "updated_at"])
-    OwnerLog.objects.create(owner=deal.owner, creator=request.user, message=f"Sent offer revision {offer.revision} for deal {deal.id}.")
-    return Response(_commercial(_get_deal(deal_id)))
+    with transaction.atomic():
+        updated_deal, conflict = _update_deal_or_conflict(request, deal, stage=DealStage.NEGOTIATION)
+        if conflict:
+            return conflict
+        offer.status, offer.sent_at = DealOffer.Status.SENT, timezone.now()
+        offer.save(update_fields=["status", "sent_at"])
+        OwnerLog.objects.create(owner=updated_deal.owner, creator=request.user, message=f"Sent offer revision {offer.revision} for deal {updated_deal.id}.")
+    return Response(_commercial(_get_deal(str(updated_deal.id))))
 
 
 @api_view(["POST"])
@@ -301,24 +325,29 @@ def deal_counteroffer(request, deal_id: str):
     if denied:
         return denied
     try:
-        _new_offer(deal, request, kind=DealOffer.Kind.COUNTEROFFER, amount=_number(request.data.get("amount"), "amount", required=True), note=str(request.data.get("note", "")))
+        amount = _number(request.data.get("amount"), "amount", required=True)
     except ValueError as exc:
         return _detail(str(exc))
-    deal.stage = DealStage.NEGOTIATION
-    deal.save(update_fields=["stage", "updated_at"])
-    return Response(_commercial(_get_deal(deal_id)), status=status.HTTP_201_CREATED)
+    with transaction.atomic():
+        updated_deal, conflict = _update_deal_or_conflict(request, deal, stage=DealStage.NEGOTIATION)
+        if conflict:
+            return conflict
+        _new_offer(updated_deal, request, kind=DealOffer.Kind.COUNTEROFFER, amount=amount, note=str(request.data.get("note", "")))
+    return Response(_commercial(_get_deal(str(updated_deal.id))), status=status.HTTP_201_CREATED)
 
 
 def _close_deal(deal: Deal, *, stage: str, request, message: str, loss_reason: str = "", accepted_offer: DealOffer | None = None) -> Response:
     now = timezone.now()
-    deal.stage, deal.closed_at, deal.loss_reason = stage, now, loss_reason
-    deal.save(update_fields=["stage", "closed_at", "loss_reason", "updated_at"])
-    if accepted_offer:
-        accepted_offer.status, accepted_offer.accepted_at = DealOffer.Status.ACCEPTED, now
-        accepted_offer.save(update_fields=["status", "accepted_at"])
-        DealOffer.objects.filter(deal=deal).exclude(id=accepted_offer.id).filter(status__in=[DealOffer.Status.DRAFT, DealOffer.Status.SENT]).update(status=DealOffer.Status.REJECTED, rejected_at=now)
-    OwnerLog.objects.create(owner=deal.owner, creator=request.user, message=message[:4000])
-    return Response(_commercial(_get_deal(str(deal.id))))
+    with transaction.atomic():
+        updated_deal, conflict = _update_deal_or_conflict(request, deal, stage=stage, closed_at=now, loss_reason=loss_reason)
+        if conflict:
+            return conflict
+        if accepted_offer:
+            accepted_offer.status, accepted_offer.accepted_at = DealOffer.Status.ACCEPTED, now
+            accepted_offer.save(update_fields=["status", "accepted_at"])
+            DealOffer.objects.filter(deal=updated_deal).exclude(id=accepted_offer.id).filter(status__in=[DealOffer.Status.DRAFT, DealOffer.Status.SENT]).update(status=DealOffer.Status.REJECTED, rejected_at=now)
+        OwnerLog.objects.create(owner=updated_deal.owner, creator=request.user, message=message[:4000])
+    return Response(_commercial(_get_deal(str(updated_deal.id))))
 
 
 @api_view(["POST"])
@@ -367,7 +396,7 @@ def _heir_data(heir: InheritanceHeir) -> dict:
 
 
 def _case_data(case: InheritanceCase) -> dict:
-    return {"id": str(case.id), "owner": owner_summary(case.owner), "sourceNoticeNumber": case.source_notice_number or None, "sourceUrl": case.source_url or None, "announcementDate": case.announcement_date.isoformat() if case.announcement_date else None, "deathDate": case.death_date.isoformat() if case.death_date else None, "certificationDeadline": case.certification_deadline.isoformat() if case.certification_deadline else None, "notaryName": case.notary_name or None, "notaryPhone": case.notary_phone or None, "status": case.status, "assignedTo": user_data(case.assigned_to), "startedAt": json_value(case.started_at), "endedAt": json_value(case.ended_at), "updatedAt": json_value(case.updated_at), "heirs": [_heir_data(item) for item in case.heirs.select_related("assigned_to").all()], "events": [_event_data(item) for item in case.events.select_related("created_by").all()]}
+    return {"id": str(case.id), "version": case.version, "owner": owner_summary(case.owner), "sourceNoticeNumber": case.source_notice_number or None, "sourceUrl": case.source_url or None, "announcementDate": case.announcement_date.isoformat() if case.announcement_date else None, "deathDate": case.death_date.isoformat() if case.death_date else None, "certificationDeadline": case.certification_deadline.isoformat() if case.certification_deadline else None, "notaryName": case.notary_name or None, "notaryPhone": case.notary_phone or None, "status": case.status, "assignedTo": user_data(case.assigned_to), "startedAt": json_value(case.started_at), "endedAt": json_value(case.ended_at), "updatedAt": json_value(case.updated_at), "heirs": [_heir_data(item) for item in case.heirs.select_related("assigned_to").all()], "events": [_event_data(item) for item in case.events.select_related("created_by").all()]}
 
 
 def _get_case(case_id: str) -> InheritanceCase:
@@ -378,6 +407,17 @@ def _case_access(request, case: InheritanceCase):
     if not can_access_owner(request, case.owner):
         return _detail("You do not have access to this inheritance case.", status.HTTP_403_FORBIDDEN)
     return None
+
+
+def _update_case_or_conflict(request, case: InheritanceCase, **changes):
+    expected_version = requested_version(request)
+    if expected_version is None:
+        return None, missing_version_response()
+    updated_case = update_if_current(case, expected_version, **changes)
+    if updated_case is None:
+        case.refresh_from_db(fields=["version"])
+        return None, version_conflict_response(case, expected_version)
+    return updated_case, None
 
 
 def _parse_case_fields(data: dict) -> dict:
@@ -432,10 +472,12 @@ def inheritance_case_assignment(request, case_id: str):
     if denied:
         return denied
     user_id = request.data.get("assignedTo") or request.data.get("assignedToSubject")
-    case.assigned_to = get_object_or_404(User, id=user_id, is_active=True) if user_id else None
-    case.save(update_fields=["assigned_to", "updated_at"])
-    InheritanceCaseEvent.objects.create(inheritance_case=case, type="ASSIGNMENT", description="Case assignment updated.", created_by=request.user)
-    return Response(_case_data(_get_case(case_id)))
+    assignee = get_object_or_404(User, id=user_id, is_active=True) if user_id else None
+    updated_case, conflict = _update_case_or_conflict(request, case, assigned_to=assignee)
+    if conflict:
+        return conflict
+    InheritanceCaseEvent.objects.create(inheritance_case=updated_case, type="ASSIGNMENT", description="Case assignment updated.", created_by=request.user)
+    return Response(_case_data(_get_case(str(updated_case.id))))
 
 
 @api_view(["PATCH"])
@@ -448,18 +490,16 @@ def inheritance_case_status(request, case_id: str):
     new_status = str(request.data.get("status", "")).upper()
     if new_status not in InheritanceCase.Status.values:
         return _detail(f"status must be one of: {', '.join(InheritanceCase.Status.values)}.")
-    case.status = new_status
-    if new_status in {InheritanceCase.Status.COMPLETED, InheritanceCase.Status.CLOSED}:
-        case.ended_at = timezone.now()
-    else:
-        case.ended_at = None
-    case.save(update_fields=["status", "ended_at", "updated_at"])
+    ended_at = timezone.now() if new_status in {InheritanceCase.Status.COMPLETED, InheritanceCase.Status.CLOSED} else None
+    updated_case, conflict = _update_case_or_conflict(request, case, status=new_status, ended_at=ended_at)
+    if conflict:
+        return conflict
     comment = str(request.data.get("comment", "")).strip() or f"Case status changed to {new_status}."
-    InheritanceCaseEvent.objects.create(inheritance_case=case, type="STATUS", description=comment, created_by=request.user)
-    return Response(_case_data(_get_case(case_id)))
+    InheritanceCaseEvent.objects.create(inheritance_case=updated_case, type="STATUS", description=comment, created_by=request.user)
+    return Response(_case_data(_get_case(str(updated_case.id))))
 
 
-def _save_heir(case: InheritanceCase, data: dict, *, heir: InheritanceHeir | None = None) -> InheritanceHeir:
+def _save_heir(request, case: InheritanceCase, data: dict, *, heir: InheritanceHeir | None = None) -> InheritanceHeir:
     assignee_id = data.get("assignedTo") or data.get("assignedToSubject")
     target = heir or InheritanceHeir(inheritance_case=case)
     target.display_name = str(data.get("displayName", "")).strip()
@@ -480,11 +520,14 @@ def inheritance_case_heirs(request, case_id: str):
     denied = _case_access(request, case)
     if denied:
         return denied
-    try:
-        heir = _save_heir(case, request.data)
-    except ValueError as exc:
-        return _detail(str(exc))
-    InheritanceCaseEvent.objects.create(inheritance_case=case, type="HEIR", description=f"Added heir {heir.display_name}.", created_by=request.user)
+    if not str(request.data.get("displayName", "")).strip():
+        return _detail("displayName is required.")
+    with transaction.atomic():
+        updated_case, conflict = _update_case_or_conflict(request, case)
+        if conflict:
+            return conflict
+        heir = _save_heir(request, updated_case, request.data)
+        InheritanceCaseEvent.objects.create(inheritance_case=updated_case, type="HEIR", description=f"Added heir {heir.display_name}.", created_by=request.user)
     return Response(_heir_data(heir), status=status.HTTP_201_CREATED)
 
 
@@ -496,11 +539,14 @@ def inheritance_case_heir_detail(request, case_id: str, heir_id: str):
     if denied:
         return denied
     heir = get_object_or_404(InheritanceHeir, id=heir_id, inheritance_case=case)
-    try:
-        heir = _save_heir(case, request.data, heir=heir)
-    except ValueError as exc:
-        return _detail(str(exc))
-    InheritanceCaseEvent.objects.create(inheritance_case=case, type="HEIR", description=f"Updated heir {heir.display_name}.", created_by=request.user)
+    if not str(request.data.get("displayName", "")).strip():
+        return _detail("displayName is required.")
+    with transaction.atomic():
+        updated_case, conflict = _update_case_or_conflict(request, case)
+        if conflict:
+            return conflict
+        heir = _save_heir(request, updated_case, request.data, heir=heir)
+        InheritanceCaseEvent.objects.create(inheritance_case=updated_case, type="HEIR", description=f"Updated heir {heir.display_name}.", created_by=request.user)
     return Response(_heir_data(heir))
 
 
@@ -514,7 +560,10 @@ def inheritance_case_event(request, case_id: str):
     content = str(request.data.get("content", request.data.get("description", ""))).strip()
     if not content:
         return _detail("content is required.")
-    event = InheritanceCaseEvent.objects.create(inheritance_case=case, type="NOTE", description=content, created_by=request.user)
+    updated_case, conflict = _update_case_or_conflict(request, case)
+    if conflict:
+        return conflict
+    event = InheritanceCaseEvent.objects.create(inheritance_case=updated_case, type="NOTE", description=content, created_by=request.user)
     return Response(_event_data(event), status=status.HTTP_201_CREATED)
 
 
@@ -921,7 +970,12 @@ def contract_generate_from_deal(request):
     contract_number = str(request.data.get("contractNumber", "")).strip()
     if not contract_number:
         return _detail("contractNumber is required.")
+    if Contract.objects.filter(id=contract_id).exists() or ContractHistory.objects.filter(id=contract_id).exists():
+        return _detail("A contract with this identifier already exists.", status.HTTP_409_CONFLICT)
     with transaction.atomic():
+        updated_deal, conflict = _update_deal_or_conflict(request, deal)
+        if conflict:
+            return conflict
         history = ContractHistory.objects.create(
             id=contract_id,
             sellers=draft["seller"]["name"], buyer=str(request.data.get("buyer", "ForestIQ buyer")),
@@ -929,5 +983,5 @@ def contract_generate_from_deal(request):
             data={"deal": draft, "terms": request.data.get("terms", draft["acceptedTerms"]), "contractNumber": contract_number},
             cadastres=", ".join(item["cadastralCode"] for item in draft["parcels"]),
         )
-        contract, _ = Contract.objects.update_or_create(id=contract_id, defaults={"base_id": str(request.data.get("baseId", "")), "source_deal": deal, "source_offer_id": draft["offerEntryId"]})
-    return Response({"contractId": contract.id, "historyId": history.id, "dealId": str(deal.id), "offerEntryId": draft["offerEntryId"], "pdf": f"/api/services/contracts/{contract.id}/pdf"}, status=status.HTTP_201_CREATED)
+        contract = Contract.objects.create(id=contract_id, base_id=str(request.data.get("baseId", "")), source_deal=updated_deal, source_offer_id=draft["offerEntryId"])
+    return Response({"contractId": contract.id, "version": contract.version, "historyId": history.id, "dealId": str(updated_deal.id), "offerEntryId": draft["offerEntryId"], "pdf": f"/api/services/contracts/{contract.id}/pdf"}, status=status.HTTP_201_CREATED)

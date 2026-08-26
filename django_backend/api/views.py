@@ -36,6 +36,7 @@ from forestry.models import (
 )
 from operations.models import ApplicationMessage, Contract, ContractHistory, Deal, DealStage, DirectMessage, PersonDump, Reminder
 
+from .concurrency import delete_if_current, missing_version_response, requested_version, update_if_current, version_conflict_response
 from .organization import organization_user_or_404, organization_users, request_organization_id
 from .permissions import (
     CanEvaluate,
@@ -363,11 +364,17 @@ def owner_detail(request, owner_id: str):
         return Response(owner_data(owner))
 
     editable = ("name", "type", "phone", "email", "address", "info", "out_of_admin_search_reason")
-    for field in editable:
-        if field in request.data:
-            setattr(owner, field, request.data[field] or "")
-    owner.save(update_fields=[field for field in editable if field in request.data])
-    return Response(owner_data(owner))
+    changes = {field: request.data[field] or "" for field in editable if field in request.data}
+    if not changes:
+        return Response(owner_data(owner))
+    expected_version = requested_version(request)
+    if expected_version is None:
+        return missing_version_response()
+    updated_owner = update_if_current(owner, expected_version, **changes)
+    if updated_owner is None:
+        owner.refresh_from_db(fields=["version"])
+        return version_conflict_response(owner, expected_version)
+    return Response(owner_data(updated_owner))
 
 
 @api_view(["POST"])
@@ -406,12 +413,16 @@ def owner_status(request, owner_id: str):
     new_status = str(request.data.get("code", "")).strip()
     if not OwnerStatus.objects.filter(id=new_status).exists():
         return _detail("Unknown owner status.")
+    expected_version = requested_version(request)
+    if expected_version is None:
+        return missing_version_response()
     old_status = owner.status
-    owner.status = new_status
-    owner.status_set_at = timezone.now()
-    owner.save(update_fields=["status", "status_set_at"])
+    updated_owner = update_if_current(owner, expected_version, status=new_status, status_set_at=timezone.now())
+    if updated_owner is None:
+        owner.refresh_from_db(fields=["version"])
+        return version_conflict_response(owner, expected_version)
     OwnerStatusChange.objects.create(user=request.user, from_status=old_status, to_status=new_status)
-    return Response(owner_data(owner))
+    return Response(owner_data(updated_owner))
 
 
 @api_view(["POST"])
@@ -420,9 +431,14 @@ def owner_assignee(request, owner_id: str):
     owner = get_object_or_404(Owner, id=owner_id)
     assignee_id = request.data.get("assignee")
     assignee = organization_user_or_404(request, assignee_id) if assignee_id else None
-    owner.assignee = assignee
-    owner.save(update_fields=["assignee"])
-    return Response(owner_data(owner))
+    expected_version = requested_version(request)
+    if expected_version is None:
+        return missing_version_response()
+    updated_owner = update_if_current(owner, expected_version, assignee=assignee)
+    if updated_owner is None:
+        owner.refresh_from_db(fields=["version"])
+        return version_conflict_response(owner, expected_version)
+    return Response(owner_data(updated_owner))
 
 
 @api_view(["GET", "POST"])
@@ -768,36 +784,58 @@ def new_messages_count(request):
 @permission_classes([IsAdmin])
 def contracts(request):
     if request.method == "GET":
+        records = list(ContractHistory.objects.all())
+        versions = dict(Contract.objects.filter(id__in=[item.id for item in records]).values_list("id", "version"))
         return Response(
             [
-                {"id": item.id, "sellers": item.sellers, "buyer": item.buyer, "contractNo": item.contract_number, "created": json_value(item.created_at)}
-                for item in ContractHistory.objects.all()
+                {"id": item.id, "version": versions.get(item.id), "sellers": item.sellers, "buyer": item.buyer, "contractNo": item.contract_number, "created": json_value(item.created_at)}
+                for item in records
             ]
         )
     data = request.data
     contract_id = str(data.get("id") or uuid4())
-    history = ContractHistory.objects.create(
-        id=contract_id,
-        sellers=", ".join(seller.get("name", "") for seller in data.get("sellers", [])),
-        buyer=data.get("buyer", {}).get("name", ""),
-        contract_number=str(data.get("contractNumber", "")),
-        created_at=timezone.now(),
-        data=data,
-        cadastres=", ".join(item.get("id", "") for item in data.get("details", {}).get("cadastres", [])),
-    )
-    Contract.objects.update_or_create(id=contract_id, defaults={"base_id": data.get("baseId", "")})
-    return Response({"id": history.id, "pdf": f"/api/services/contracts/{history.id}/pdf"}, status=status.HTTP_201_CREATED)
+    with transaction.atomic():
+        contract = Contract.objects.filter(id=contract_id).first()
+        if contract is None:
+            contract = Contract.objects.create(id=contract_id, base_id=data.get("baseId", ""))
+        else:
+            expected_version = requested_version(request)
+            if expected_version is None:
+                return missing_version_response()
+            updated_contract = update_if_current(contract, expected_version, base_id=data.get("baseId", ""))
+            if updated_contract is None:
+                contract.refresh_from_db(fields=["version"])
+                return version_conflict_response(contract, expected_version)
+            contract = updated_contract
+        history = ContractHistory.objects.create(
+            id=contract_id,
+            sellers=", ".join(seller.get("name", "") for seller in data.get("sellers", [])),
+            buyer=data.get("buyer", {}).get("name", ""),
+            contract_number=str(data.get("contractNumber", "")),
+            created_at=timezone.now(),
+            data=data,
+            cadastres=", ".join(item.get("id", "") for item in data.get("details", {}).get("cadastres", [])),
+        )
+    return Response({"id": history.id, "version": contract.version, "pdf": f"/api/services/contracts/{history.id}/pdf"}, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET", "DELETE"])
 @permission_classes([IsAdmin])
 def contract_detail(request, contract_id: str):
     history = get_object_or_404(ContractHistory, id=contract_id)
+    contract = get_object_or_404(Contract, id=contract_id)
     if request.method == "DELETE":
-        Contract.objects.filter(id=contract_id).delete()
+        expected_version = requested_version(request)
+        if expected_version is None:
+            return missing_version_response()
+        if not delete_if_current(contract, expected_version):
+            contract.refresh_from_db(fields=["version"])
+            return version_conflict_response(contract, expected_version)
         history.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-    return Response(history.data)
+    payload = dict(history.data)
+    payload["version"] = contract.version
+    return Response(payload)
 
 
 @api_view(["GET"])
@@ -821,8 +859,16 @@ def contract_document_upload(request, contract_id: str):
     if uploaded.content_type not in {"application/pdf", "application/x-pdf"}:
         return _detail("Only PDF contract files are accepted.", status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
     contract = get_object_or_404(Contract, id=contract_id)
-    contract.document_file.save(f"contract-{contract_id}.pdf", uploaded, save=True)
-    return Response({"id": contract.id, "document": contract.document_file.url}, status=status.HTTP_201_CREATED)
+    expected_version = requested_version(request)
+    if expected_version is None:
+        return missing_version_response()
+    contract.document_file.save(f"contract-{contract_id}.pdf", uploaded, save=False)
+    updated_contract = update_if_current(contract, expected_version, document_file=contract.document_file.name)
+    if updated_contract is None:
+        contract.document_file.delete(save=False)
+        contract.refresh_from_db(fields=["version"])
+        return version_conflict_response(contract, expected_version)
+    return Response({"id": updated_contract.id, "version": updated_contract.version, "document": updated_contract.document_file.url}, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET"])
