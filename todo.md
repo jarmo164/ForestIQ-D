@@ -61,3 +61,16 @@
 - [x] Lisada Render Blueprint `render.yaml` Django API, Celery workeri, Celery Beati, Redis’e ja PostgreSQL/PostGIS-i teenustele.
 - [x] Lisada Renderi käivitusjuhis, migratsioonide käitamine ja kohaliku Blueprinti kontroll.
 - [x] Pushida Renderi konfiguratsioon ForestIQ-D `main`-harusse.
+- [x] Sünkroniseerida ForestIQ-D ja Java ForestIQ `main`-harud ning fikseerida võrdluse commit’id.
+- [x] Inventeerida Java ForestIQ API-d, domeenimudelid, tausttööd, integratsioonid ja kasutajaliidese töövood.
+- [x] Võrrelda iga Java funktsiooni Django vastega ning klassifitseerida katvus: täielik, osaline või puudu.
+- [x] Koostada prioriseeritud epic’ute ja issue’de backlog koos sõltuvuste, vastuvõtukriteeriumide ja hinnangulise mahuga.
+- [x] Kontrollida backlog’i täielikkust ning dokumenteerida soovituslik rakendusjärjekord.
+- [x] Kontrollida ForestIQ-D olemasolevaid GitHubi issue’sid, label’eid ja pariteedibacklog’i lähteandmeid.
+- [x] Luua epic’u-, prioriteedi- ja töömahulabelid ForestIQ-D GitHubi backlog’i jaoks.
+- [x] Luua 48 pariteediissue’t koos vastuvõtukriteeriumide ning sõltuvustega.
+- [x] Kontrollida loodud GitHubi backlog’i täielikkust ja dokumenteerida tulemus.
+- [x] Kaardistada issue #12 jaoks kõik organisatsioonivõtit vajavad ärilised agregaatid ja kasutajaseosed.
+- [x] Lisada organisatsioonimudel ning mitte-null organisatsioonivõti kõigile sihtagregaatidele koos idempotentse backfill’iga.
+- [x] Lisada organisatsioonipõhised andmetervikluse testid, dokumentatsioon ja migratsiooni kontroll.
+- [ ] Commitida ja pushida AUTH-01 täiendused ForestIQ-D `main`-harusse ning sulgeda GitHubi issue #12.

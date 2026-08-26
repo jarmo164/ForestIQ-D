@@ -6,11 +6,13 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
+from accounts.models import OrganizationScopedModel
 from forestry.models import Owner
 
 
-class Reminder(models.Model):
+class Reminder(OrganizationScopedModel):
     due_time = models.DateTimeField(db_column="duetime")
     text = models.TextField(blank=True, db_column="reminder_text")
     owner = models.ForeignKey(Owner, null=True, blank=True, on_delete=models.CASCADE, related_name="reminders", db_column="owner_id")
@@ -25,14 +27,15 @@ class Reminder(models.Model):
     created_time = models.DateTimeField(auto_now_add=True, db_column="created_time")
     cadastre = models.TextField(blank=True)
     property_name = models.TextField(blank=True)
+    organization_parent_fields = ("owner", "creator")
 
     class Meta:
         db_table = "reminders"
         ordering = ("due_time", "id")
-        indexes = [models.Index(fields=("due_time",), name="reminder_due_idx")]
+        indexes = [models.Index(fields=("organization", "due_time"), name="reminder_organization_due_idx")]
 
 
-class ApplicationMessage(models.Model):
+class ApplicationMessage(OrganizationScopedModel):
     text = models.TextField(db_column="message_text")
     admin_message = models.BooleanField(default=False)
     recipient = models.ForeignKey(
@@ -44,13 +47,15 @@ class ApplicationMessage(models.Model):
         db_column="recipient",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    organization_parent_fields = ("recipient",)
 
     class Meta:
         db_table = "application_messages"
         ordering = ("-created_at", "-id")
+        indexes = [models.Index(fields=("organization", "recipient", "created_at"), name="app_message_org_idx")]
 
 
-class DirectMessage(models.Model):
+class DirectMessage(OrganizationScopedModel):
     text = models.TextField(db_column="message")
     created_at = models.DateTimeField(auto_now_add=True)
     noticed_at = models.DateTimeField(null=True, blank=True)
@@ -70,17 +75,18 @@ class DirectMessage(models.Model):
         related_name="received_direct_messages",
         db_column="recipient",
     )
+    organization_parent_fields = ("recipient", "sender")
 
     class Meta:
         db_table = "messages"
         ordering = ("-created_at", "-id")
         indexes = [
-            models.Index(fields=("recipient", "noticed_at"), name="message_received_idx"),
-            models.Index(fields=("sender", "created_at"), name="message_sent_idx"),
+            models.Index(fields=("organization", "recipient", "noticed_at"), name="message_org_received_idx"),
+            models.Index(fields=("organization", "sender", "created_at"), name="message_organization_sent_idx"),
         ]
 
 
-class PersonDump(models.Model):
+class PersonDump(OrganizationScopedModel):
     source = models.CharField(max_length=100, blank=True)
     name = models.CharField(max_length=100, blank=True)
     phone = models.CharField(max_length=100, blank=True)
@@ -92,19 +98,20 @@ class PersonDump(models.Model):
         ordering = ("name", "id")
 
 
-class Contract(models.Model):
+class Contract(OrganizationScopedModel):
     id = models.CharField(primary_key=True, max_length=100)
     document = models.BinaryField(null=True, blank=True, db_column="contract")
     document_file = models.FileField(upload_to="contracts/%Y/%m", null=True, blank=True)
     base_id = models.CharField(max_length=50, blank=True)
     source_deal = models.ForeignKey("Deal", null=True, blank=True, on_delete=models.SET_NULL, related_name="contracts")
     source_offer = models.ForeignKey("DealOffer", null=True, blank=True, on_delete=models.SET_NULL, related_name="contracts")
+    organization_parent_fields = ("source_deal", "source_offer")
 
     class Meta:
         db_table = "contracts"
 
 
-class ContractHistory(models.Model):
+class ContractHistory(OrganizationScopedModel):
     id = models.CharField(primary_key=True, max_length=100)
     sellers = models.CharField(max_length=1000)
     buyer = models.CharField(max_length=100)
@@ -127,7 +134,7 @@ class DealStage(models.TextChoices):
     CANCELLED = "CANCELLED", "Cancelled"
 
 
-class Deal(models.Model):
+class Deal(OrganizationScopedModel):
     """Commercial case for one owner and one or more selected cadastral units."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -155,14 +162,13 @@ class Deal(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="created_deals")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    organization_parent_fields = ("owner",)
 
     class Meta:
         db_table = "commercial_deals"
         ordering = ("-updated_at",)
-        indexes = [models.Index(fields=("owner", "stage"), name="deal_owner_stage_idx"), models.Index(fields=("stage", "updated_at"), name="deal_stage_updated_idx")]
-
-
-class DealOffer(models.Model):
+        indexes = [models.Index(fields=("organization", "owner", "stage"), name="deal_organization_owner_idx"), models.Index(fields=("organization", "stage", "updated_at"), name="deal_organization_stage_idx")]
+class DealOffer(OrganizationScopedModel):
     class Kind(models.TextChoices):
         OFFER = "OFFER", "Offer"
         COUNTEROFFER = "COUNTEROFFER", "Counteroffer"
@@ -188,14 +194,15 @@ class DealOffer(models.Model):
     sent_at = models.DateTimeField(null=True, blank=True)
     accepted_at = models.DateTimeField(null=True, blank=True)
     rejected_at = models.DateTimeField(null=True, blank=True)
+    organization_parent_fields = ("deal",)
 
     class Meta:
         db_table = "commercial_deal_offers"
         ordering = ("revision", "created_at")
-        constraints = [models.UniqueConstraint(fields=("deal", "revision"), name="unique_deal_offer_revision")]
+        constraints = [models.UniqueConstraint(fields=("organization", "deal", "revision"), name="unique_organization_deal_offer_revision")]
 
 
-class InheritanceCase(models.Model):
+class InheritanceCase(OrganizationScopedModel):
     class Status(models.TextChoices):
         NEW = "NEW", "New"
         IN_PROGRESS = "IN_PROGRESS", "In progress"
@@ -217,14 +224,22 @@ class InheritanceCase(models.Model):
     started_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+    organization_parent_fields = ("owner",)
 
     class Meta:
         db_table = "inheritance_cases"
         ordering = ("-updated_at",)
-        indexes = [models.Index(fields=("status", "assigned_to"), name="inherit_case_status_idx")]
+        indexes = [models.Index(fields=("organization", "status", "assigned_to"), name="inherit_case_organization_idx")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("organization", "owner", "source_notice_number"),
+                condition=~Q(source_notice_number=""),
+                name="unique_organization_inheritance_case",
+            )
+        ]
 
 
-class InheritanceHeir(models.Model):
+class InheritanceHeir(OrganizationScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     inheritance_case = models.ForeignKey(InheritanceCase, on_delete=models.CASCADE, related_name="heirs")
     display_name = models.CharField(max_length=255)
@@ -237,26 +252,28 @@ class InheritanceHeir(models.Model):
     contact_status = models.CharField(max_length=100, blank=True)
     assigned_to = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="assigned_inheritance_heirs")
     source = models.CharField(max_length=100, blank=True)
+    organization_parent_fields = ("inheritance_case",)
 
     class Meta:
         db_table = "inheritance_heirs"
         ordering = ("display_name",)
 
 
-class InheritanceCaseEvent(models.Model):
+class InheritanceCaseEvent(OrganizationScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     inheritance_case = models.ForeignKey(InheritanceCase, on_delete=models.CASCADE, related_name="events")
     type = models.CharField(max_length=100)
     description = models.TextField()
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="inheritance_events")
     created_at = models.DateTimeField(auto_now_add=True)
+    organization_parent_fields = ("inheritance_case",)
 
     class Meta:
         db_table = "inheritance_case_events"
         ordering = ("-created_at",)
 
 
-class OwnerImportBatch(models.Model):
+class OwnerImportBatch(OrganizationScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     filename = models.CharField(max_length=255)
     sha256 = models.CharField(max_length=64)
@@ -264,13 +281,14 @@ class OwnerImportBatch(models.Model):
     created_count = models.PositiveIntegerField(default=0)
     rejected_rows = models.JSONField(default=list, blank=True)
     committed_at = models.DateTimeField(auto_now_add=True)
+    organization_parent_fields = ("creator",)
 
     class Meta:
         db_table = "owner_import_batches"
         ordering = ("-committed_at",)
 
 
-class OwnershipTransitionEvent(models.Model):
+class OwnershipTransitionEvent(OrganizationScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(Owner, null=True, blank=True, on_delete=models.SET_NULL, related_name="ownership_transitions")
     cadastre = models.ForeignKey("forestry.Cadastre", null=True, blank=True, on_delete=models.SET_NULL, related_name="ownership_transitions")
@@ -279,8 +297,9 @@ class OwnershipTransitionEvent(models.Model):
     source_reference = models.CharField(max_length=255, blank=True)
     payload = models.JSONField(default=dict, blank=True)
     recorded_at = models.DateTimeField(auto_now_add=True)
+    organization_parent_fields = ("owner", "cadastre")
 
     class Meta:
         db_table = "ownership_transition_events"
         ordering = ("-occurred_at", "-recorded_at")
-        indexes = [models.Index(fields=("owner", "occurred_at"), name="ownership_owner_date_idx")]
+        indexes = [models.Index(fields=("organization", "owner", "occurred_at"), name="ownership_org_owner_idx")]

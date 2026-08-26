@@ -6,6 +6,8 @@ from django.conf import settings
 from django.contrib.gis.db import models as gis_models
 from django.db import models
 
+from accounts.models import OrganizationScopedModel
+
 
 class OwnerType(models.TextChoices):
     COUNTRY = "COUNTRY", "Country"
@@ -21,7 +23,7 @@ class CadastreLabelCode(models.TextChoices):
     NOTIFICATIONS_CONSUMED = "NOTIFICATIONS_CONSUMED", "Notifications consumed"
 
 
-class OwnerStatus(models.Model):
+class OwnerStatus(OrganizationScopedModel):
     id = models.CharField(primary_key=True, max_length=100)
     days_out_of_search = models.PositiveIntegerField(db_column="days_out_of_search")
     color_hex = models.CharField(max_length=6, db_column="reason_color")
@@ -30,12 +32,13 @@ class OwnerStatus(models.Model):
     class Meta:
         db_table = "owner_statuses"
         ordering = ("id",)
+        constraints = [models.UniqueConstraint(fields=("organization", "id"), name="unique_owner_status_organization_id")]
 
     def __str__(self) -> str:
         return self.id
 
 
-class Owner(models.Model):
+class Owner(OrganizationScopedModel):
     id = models.CharField(primary_key=True, max_length=50)
     name = models.CharField(max_length=100)
     type = models.CharField(max_length=20, choices=OwnerType.choices, blank=True)
@@ -62,15 +65,16 @@ class Owner(models.Model):
         db_table = "owners"
         ordering = ("name", "id")
         indexes = [
-            models.Index(fields=("status",), name="owners_status_idx"),
-            models.Index(fields=("assignee",), name="owners_assignee_idx"),
+            models.Index(fields=("organization", "status"), name="owners_organization_status_idx"),
+            models.Index(fields=("organization", "assignee"), name="owners_org_assignee_idx"),
         ]
+        constraints = [models.UniqueConstraint(fields=("organization", "id"), name="unique_owner_organization_id")]
 
     def __str__(self) -> str:
         return f"{self.id} — {self.name}"
 
 
-class Cadastre(models.Model):
+class Cadastre(OrganizationScopedModel):
     id = models.CharField(primary_key=True, max_length=50)
     name = models.CharField(max_length=100, blank=True)
     municipality = models.CharField(max_length=50, blank=True)
@@ -101,23 +105,25 @@ class Cadastre(models.Model):
         db_table = "cadastres"
         ordering = ("id",)
         indexes = [
-            models.Index(fields=("county", "municipality"), name="cadastre_location_idx"),
+            models.Index(fields=("organization", "county", "municipality"), name="cad_org_location_idx"),
         ]
+        constraints = [models.UniqueConstraint(fields=("organization", "id"), name="unique_cadastre_organization_id")]
 
     def __str__(self) -> str:
         return f"{self.id} — {self.name}"
 
 
-class OwnerCadastre(models.Model):
+class OwnerCadastre(OrganizationScopedModel):
     owner = models.ForeignKey(Owner, on_delete=models.CASCADE, db_column="owner_id")
     cadastre = models.ForeignKey(Cadastre, on_delete=models.CASCADE, db_column="cadastre_id")
+    organization_parent_fields = ("owner", "cadastre")
 
     class Meta:
         db_table = "owner_cadastre"
-        constraints = [models.UniqueConstraint(fields=("owner", "cadastre"), name="unique_owner_cadastre")]
+        constraints = [models.UniqueConstraint(fields=("organization", "owner", "cadastre"), name="unique_organization_owner_cadastre")]
 
 
-class OwnerLog(models.Model):
+class OwnerLog(OrganizationScopedModel):
     owner = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name="logs", db_column="owner_id")
     creator = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -127,34 +133,39 @@ class OwnerLog(models.Model):
     )
     message = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True, db_column="timestamp")
+    organization_parent_fields = ("owner",)
 
     class Meta:
         db_table = "owner_log"
         ordering = ("-created_at", "-id")
+        indexes = [models.Index(fields=("organization", "owner", "created_at"), name="owner_log_org_owner_idx")]
 
 
-class CadastreLabel(models.Model):
+class CadastreLabel(OrganizationScopedModel):
     id = models.BigAutoField(primary_key=True, db_column="pk")
     cadastre = models.ForeignKey(Cadastre, on_delete=models.CASCADE, related_name="labels", db_column="cadastre_id")
     code = models.CharField(max_length=100, choices=CadastreLabelCode.choices, db_column="id")
+    organization_parent_fields = ("cadastre",)
 
     class Meta:
         db_table = "cadastre_labels"
-        constraints = [models.UniqueConstraint(fields=("cadastre", "code"), name="unique_cadastre_label")]
+        constraints = [models.UniqueConstraint(fields=("organization", "cadastre", "code"), name="unique_organization_cadastre_label")]
 
 
-class OwnerStatusChange(models.Model):
+class OwnerStatusChange(OrganizationScopedModel):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, db_column="user_id")
     timestamp = models.DateTimeField(auto_now_add=True)
     from_status = models.CharField(max_length=100, blank=True)
     to_status = models.CharField(max_length=100, blank=True)
+    organization_parent_fields = ("user",)
 
     class Meta:
         db_table = "user_owner_status_change_statistics"
         ordering = ("-timestamp",)
+        indexes = [models.Index(fields=("organization", "user", "timestamp"), name="owner_status_change_org_idx")]
 
 
-class CadastreSubPart(models.Model):
+class CadastreSubPart(OrganizationScopedModel):
     cadastre = models.ForeignKey(Cadastre, on_delete=models.CASCADE, related_name="sub_parts", db_column="cadastre_id")
     sub_part_code = models.IntegerField(null=True, blank=True)
     tree_type_code = models.CharField(max_length=20, blank=True)
@@ -162,13 +173,14 @@ class CadastreSubPart(models.Model):
     polygon = models.JSONField(default=list, blank=True)
     boundary = gis_models.MultiPolygonField(srid=3301, null=True, blank=True)
     discovered_at = models.DateTimeField(auto_now_add=True, null=True)
+    organization_parent_fields = ("cadastre",)
 
     class Meta:
         db_table = "cadastre_sub_parts"
-        constraints = [models.UniqueConstraint(fields=("cadastre", "sub_part_code"), name="unique_cadastre_subpart")]
+        constraints = [models.UniqueConstraint(fields=("organization", "cadastre", "sub_part_code"), name="unique_organization_cadastre_subpart")]
 
 
-class CadastreNotification(models.Model):
+class CadastreNotification(OrganizationScopedModel):
     id = models.BigIntegerField(primary_key=True)
     notification_number = models.BigIntegerField()
     cadastre_subpart_code = models.IntegerField(null=True, blank=True)
@@ -183,14 +195,15 @@ class CadastreNotification(models.Model):
     cadastre = models.ForeignKey(Cadastre, on_delete=models.CASCADE, related_name="notifications", db_column="cadastre_id")
     archived = models.BooleanField(default=False)
     archive_date = models.DateTimeField(null=True, blank=True)
+    organization_parent_fields = ("cadastre",)
 
     class Meta:
         db_table = "cadastre_notifications"
         ordering = ("-registration_date", "-id")
-        indexes = [models.Index(fields=("cadastre", "archived"), name="notification_archive_idx")]
+        indexes = [models.Index(fields=("organization", "cadastre", "archived"), name="notif_org_archive_idx")]
 
 
-class ForestRegistryFeature(models.Model):
+class ForestRegistryFeature(OrganizationScopedModel):
     source_layer = models.CharField(max_length=100)
     source_id = models.CharField(max_length=100)
     cadastre = models.ForeignKey(Cadastre, on_delete=models.CASCADE, related_name="registry_features", db_column="cadastre_id")
@@ -204,23 +217,25 @@ class ForestRegistryFeature(models.Model):
     attributes = models.JSONField(default=dict, blank=True)
     geometry = models.JSONField(default=dict, blank=True)
     spatial_geometry = gis_models.GeometryField(srid=3301, null=True, blank=True)
+    organization_parent_fields = ("cadastre",)
 
     class Meta:
         db_table = "forest_registry_features"
-        constraints = [models.UniqueConstraint(fields=("source_layer", "source_id"), name="unique_registry_source")]
-        indexes = [models.Index(fields=("cadastre", "source_layer"), name="registry_cadastre_layer_idx")]
+        constraints = [models.UniqueConstraint(fields=("organization", "source_layer", "source_id"), name="unique_organization_registry_source")]
+        indexes = [models.Index(fields=("organization", "cadastre", "source_layer"), name="registry_org_cad_idx")]
 
 
-class OwnerFollowing(models.Model):
+class OwnerFollowing(OrganizationScopedModel):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, db_column="user_id")
     owner = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name="followings", db_column="owner_id")
+    organization_parent_fields = ("owner", "user")
 
     class Meta:
         db_table = "owner_followings"
-        constraints = [models.UniqueConstraint(fields=("owner", "user"), name="unique_owner_follower")]
+        constraints = [models.UniqueConstraint(fields=("organization", "owner", "user"), name="unique_organization_owner_follower")]
 
 
-class LastOwnersCadastresUpdate(models.Model):
+class LastOwnersCadastresUpdate(OrganizationScopedModel):
     event_time = models.DateTimeField()
 
     class Meta:
@@ -228,7 +243,7 @@ class LastOwnersCadastresUpdate(models.Model):
         ordering = ("-event_time",)
 
 
-class DataSyncRun(models.Model):
+class DataSyncRun(OrganizationScopedModel):
     """Auditable lifecycle of one externally sourced data refresh."""
 
     class Status(models.TextChoices):
@@ -261,14 +276,15 @@ class DataSyncRun(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     result = models.JSONField(default=dict, blank=True)
     error_message = models.TextField(blank=True)
+    organization_parent_fields = ("cadastre", "requested_by")
 
     class Meta:
         db_table = "data_sync_runs"
         ordering = ("-id",)
-        indexes = [models.Index(fields=("cadastre", "status"), name="sync_run_cadastre_status_idx")]
+        indexes = [models.Index(fields=("organization", "cadastre", "status"), name="sync_run_org_cad_idx")]
 
 
-class InheritanceSignal(models.Model):
+class InheritanceSignal(OrganizationScopedModel):
     """Read-only notice projection received from the authorised Pärimus API."""
 
     source_notice_number = models.CharField(max_length=64)
@@ -280,9 +296,10 @@ class InheritanceSignal(models.Model):
     source_url = models.URLField(max_length=500, blank=True)
     payload = models.JSONField(default=dict, blank=True)
     fetched_at = models.DateTimeField(auto_now=True)
+    organization_parent_fields = ("owner", "cadastre")
 
     class Meta:
         db_table = "inheritance_signals"
         ordering = ("-announcement_date", "-id")
-        constraints = [models.UniqueConstraint(fields=("source_notice_number", "cadastre"), name="unique_inheritance_notice_cadastre")]
-        indexes = [models.Index(fields=("owner", "announcement_date"), name="inheritance_owner_date_idx")]
+        constraints = [models.UniqueConstraint(fields=("organization", "source_notice_number", "cadastre"), name="unique_organization_inheritance_notice")]
+        indexes = [models.Index(fields=("organization", "owner", "announcement_date"), name="inheritance_org_owner_idx")]

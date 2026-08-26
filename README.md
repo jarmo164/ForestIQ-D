@@ -157,6 +157,20 @@ Käsk säilitab stabiilsed kasutaja-, omaniku-, katastri- ja lepingute identifik
 3. Võrdle enne ümberlülitust tabelite ridu ja tee sisselogimise, õiguste ning omaniku-katastri kontrolltestid.
 4. Suuna puhverserver Django API konteinerile ning jälgi `api/services/status` vastust.
 
+### Organisatsioonivõtme backfill (AUTH-01)
+
+AUTH-01 migratsioon lisab `Organization` mudeli, kasutaja organisatsiooniliikmesuse ja organisatsioonivõtme kõigile omaniku-, katastri-, tehingu-, lepingu-, pärimis- ning auditikirjetele. Juba olemasolevad read seotakse idempotentselt organisatsiooniga `forestiq-default` (UUID `00000000-0000-4000-8000-000000000001`); see säilitab praeguse ühe organisatsiooni töövoo kuni järgmine etapp lisab taotlusepõhise organisatsioonikonteksti.
+
+Pärast tootmismigratsiooni kontrolli tulemust ainult lugemisrežiimis. Käsk ei tee muudatusi; `--fail-on-issues` sobib kasutuselevõtu kontrollväravasse.
+
+```sh
+cd django_backend
+python manage.py migrate
+python manage.py verify_organization_backfill --fail-on-issues
+```
+
+Organisatsiooniga seotud alamkirjete loomisel pärineb võti nende ärilise vanemagregaadi järgi. Näiteks omaniku tegevuslogi, tehing, pakkumine, leping, pärimisjuhtum ning pärija ei saa salvestuda omaniku või tehinguga erinevasse organisatsiooni; ka ristorganisatsiooniline omaniku–katastri seos katkestatakse enne relatsiooni loomist.
+
 ## Turve
 
 Django API kasutab Bearer JWT autentimist. Reacti töölaud kasutab parooliga sisselogimise eeltokenit, TOTP kontrolli ning tavapäraseid ja värskendustokeneid. Õigused `ADMIN`, `OWNER_PROFILE`, `ASSIGNED_OWNERS`, `PHONES` ja `EVALUATION` on andmebaasis eraldiseisvad ning sünkroniseeritakse vastavatesse Django gruppidesse. Seega saavad tavapärased Django `Group` ja `Permission` kontrollid töötada paralleelselt olemasolevate ressursiõigustega; OIDC/Keycloak on dokumenteeritud järgmise etapina.
