@@ -80,3 +80,16 @@ def can_access_owner(subject, owner) -> bool:
     if has_membership_privilege(subject, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
         return True
     return has_membership_privilege(subject, PrivilegeCode.ASSIGNED_OWNERS) and owner.assignee_id == user.id
+
+
+def can_access_deal(subject, deal) -> bool:
+    """Allow assigned evaluators into their Deal workflow without exposing CRM owner data."""
+    user = getattr(subject, "user", subject)
+    if can_access_owner(subject, deal.owner):
+        return True
+    return bool(
+        user
+        and getattr(user, "is_authenticated", False)
+        and has_membership_privilege(subject, PrivilegeCode.EVALUATION)
+        and deal.evaluator_id == user.id
+    )

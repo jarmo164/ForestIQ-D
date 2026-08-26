@@ -38,7 +38,7 @@ from operations.models import (
 )
 
 from .concurrency import missing_version_response, requested_version, update_if_current, version_conflict_response
-from .permissions import CanEvaluate, CanManageOwners, IsAdmin, can_access_owner, has_membership_privilege
+from .permissions import CanEvaluate, CanManageOwners, IsAdmin, can_access_deal, can_access_owner, has_membership_privilege
 from .organization import organization_user_or_404, organization_users, request_organization_id
 from .serializers import cadastre_summary, json_value, owner_summary, user_data
 
@@ -112,7 +112,7 @@ def _get_deal(deal_id: str) -> Deal:
 
 
 def _ensure_deal_access(request, deal: Deal):
-    if not can_access_owner(request, deal.owner):
+    if not can_access_deal(request, deal):
         return _detail("You do not have access to this deal.", status.HTTP_403_FORBIDDEN)
     return None
 

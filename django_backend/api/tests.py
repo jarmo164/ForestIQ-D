@@ -5,11 +5,13 @@ import json
 from unittest.mock import Mock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
+from rest_framework.permissions import AllowAny
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from api.auth import token_pair
+from api.urls import urlpatterns
 from accounts.models import Organization, OrganizationMembership, OrganizationRole, Privilege, PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, Owner, OwnerStatus
 from operations.models import Contract, Deal, DealOffer, InheritanceCase, Reminder
@@ -382,3 +384,168 @@ class OptimisticLockingTests(TestCase):
         )
         self.assertEqual(response.status_code, 428, response.data)
         self.assertEqual(response.data["code"], "version_required")
+
+
+class ObjectAuthorizationMatrixTests(TestCase):
+    """API-04: role and tenant tests for every protected endpoint family."""
+
+    def setUp(self):
+        self.organization = Organization.objects.create(slug="matrix-org", name="Authorization matrix organization")
+        self.other_organization = Organization.objects.create(slug="matrix-other-org", name="Other authorization organization")
+        self.admin = User.objects.create_user("matrix-admin", "Matrix administrator", "very-secure-password", default_organization=self.organization)
+        self.manager = User.objects.create_user("matrix-manager", "Matrix CRM manager", "very-secure-password", default_organization=self.organization)
+        self.evaluator = User.objects.create_user("matrix-evaluator", "Matrix evaluator", "very-secure-password", default_organization=self.organization)
+        self.caller = User.objects.create_user("matrix-caller", "Matrix caller", "very-secure-password", default_organization=self.organization)
+        self.viewer = User.objects.create_user("matrix-viewer", "Matrix viewer", "very-secure-password", default_organization=self.organization)
+        self.roles = {
+            "admin": (self.admin, [OrganizationRole.MEMBER, OrganizationRole.ADMIN]),
+            "manager": (self.manager, [OrganizationRole.MEMBER, OrganizationRole.CRM_MANAGER]),
+            "evaluator": (self.evaluator, [OrganizationRole.MEMBER, OrganizationRole.EVALUATOR]),
+            "caller": (self.caller, [OrganizationRole.MEMBER, OrganizationRole.CALLER]),
+            "viewer": (self.viewer, [OrganizationRole.MEMBER, OrganizationRole.VIEWER]),
+        }
+        for user, roles in self.roles.values():
+            OrganizationMembership.objects.get(user=user, organization=self.organization).set_roles(roles, oidc_managed=True)
+
+        OwnerStatus.objects.create(id="MATRIX_CONTACTED", days_out_of_search=30, color_hex="4f8c6b", protected=False, organization=self.organization)
+        self.caller_owner = Owner.objects.create(id="61001010001", name="Caller-owned matrix record", assignee=self.caller, organization=self.organization)
+        self.manager_owner = Owner.objects.create(id="61001010002", name="CRM matrix record", assignee=self.manager, organization=self.organization)
+        self.other_owner = Owner.objects.create(id="62001010001", name="Other-tenant matrix record", organization=self.other_organization)
+        self.deal = Deal.objects.create(owner=self.manager_owner, sale_subject="FOREST", stage="EVALUATION", evaluator=self.evaluator, organization=self.organization)
+        self.unassigned_evaluator_deal = Deal.objects.create(owner=self.manager_owner, sale_subject="FOREST", stage="EVALUATION", evaluator=self.manager, organization=self.organization)
+        self.other_deal = Deal.objects.create(owner=self.other_owner, sale_subject="FOREST", stage="EVALUATION", organization=self.other_organization)
+
+    def _client_for(self, role: str) -> APIClient:
+        user, _ = self.roles[role]
+        membership = OrganizationMembership.objects.get(user=user, organization=self.organization)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(user, membership)['actualToken']['token']}")
+        return client
+
+    def _assert_role_statuses(self, method: str, path: str, expected: dict[str, int], payload=None):
+        for role, expected_status in expected.items():
+            with self.subTest(role=role, method=method, path=path):
+                response = getattr(self._client_for(role), method)(path, payload, format="json") if payload is not None else getattr(self._client_for(role), method)(path)
+                self.assertEqual(response.status_code, expected_status, response.data)
+
+    def test_role_matrix_for_general_crm_evaluation_and_admin_endpoint_families(self):
+        all_roles = {role: 200 for role in self.roles}
+        self._assert_role_statuses("get", "/api/services/status", all_roles)
+        self._assert_role_statuses(
+            "get",
+            "/api/services/owners",
+            {"admin": 200, "manager": 200, "evaluator": 403, "caller": 200, "viewer": 403},
+        )
+        self._assert_role_statuses(
+            "get",
+            "/api/services/deals/evaluation-queue",
+            {"admin": 200, "manager": 403, "evaluator": 200, "caller": 403, "viewer": 403},
+        )
+        self._assert_role_statuses(
+            "get",
+            "/api/services/admin/integrations",
+            {"admin": 200, "manager": 403, "evaluator": 403, "caller": 403, "viewer": 403},
+        )
+
+    def test_owner_object_scope_matrix_covers_assigned_crm_and_cross_tenant_records(self):
+        caller_path = f"/api/services/owners/{self.caller_owner.id}"
+        manager_path = f"/api/services/owners/{self.manager_owner.id}"
+        other_path = f"/api/services/owners/{self.other_owner.id}"
+        self._assert_role_statuses(
+            "get",
+            caller_path,
+            {"admin": 200, "manager": 200, "evaluator": 403, "caller": 200, "viewer": 403},
+        )
+        self._assert_role_statuses(
+            "get",
+            manager_path,
+            {"admin": 200, "manager": 200, "evaluator": 403, "caller": 403, "viewer": 403},
+        )
+        self._assert_role_statuses(
+            "get",
+            other_path,
+            {"admin": 404, "manager": 404, "evaluator": 403, "caller": 404, "viewer": 403},
+        )
+
+    def test_mutation_matrix_allows_admin_manager_and_assigned_caller_only(self):
+        caller_response = self._client_for("caller").post(
+            f"/api/services/owners/{self.caller_owner.id}/change-status",
+            {"code": "MATRIX_CONTACTED", "version": self.caller_owner.version},
+            format="json",
+        )
+        self.assertEqual(caller_response.status_code, 200, caller_response.data)
+        caller_denied = self._client_for("caller").post(
+            f"/api/services/owners/{self.manager_owner.id}/change-status",
+            {"code": "MATRIX_CONTACTED", "version": self.manager_owner.version},
+            format="json",
+        )
+        self.assertEqual(caller_denied.status_code, 403, caller_denied.data)
+        manager_response = self._client_for("manager").post(
+            f"/api/services/owners/{self.manager_owner.id}/change-status",
+            {"code": "MATRIX_CONTACTED", "version": self.manager_owner.version},
+            format="json",
+        )
+        self.assertEqual(manager_response.status_code, 200, manager_response.data)
+        admin_response = self._client_for("admin").post(
+            f"/api/services/owners/{self.caller_owner.id}/change-status",
+            {"code": "MATRIX_CONTACTED", "version": caller_response.data["version"]},
+            format="json",
+        )
+        self.assertEqual(admin_response.status_code, 200, admin_response.data)
+        for role in ("evaluator", "viewer"):
+            response = self._client_for(role).post(
+                f"/api/services/owners/{self.caller_owner.id}/change-status",
+                {"code": "MATRIX_CONTACTED", "version": admin_response.data["version"]},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 403, response.data)
+
+    def test_evaluator_can_mutate_only_assigned_deal_and_cross_tenant_deals_are_hidden(self):
+        evaluation = self._client_for("evaluator").post(
+            f"/api/services/deals/{self.deal.id}/evaluations",
+            {"status": "SUBMITTED", "version": self.deal.version},
+            format="json",
+        )
+        self.assertEqual(evaluation.status_code, 200, evaluation.data)
+        self.assertEqual(evaluation.data["evaluationStatus"], "SUBMITTED")
+        evaluator_denied = self._client_for("evaluator").post(
+            f"/api/services/deals/{self.unassigned_evaluator_deal.id}/evaluations",
+            {"status": "SUBMITTED", "version": self.unassigned_evaluator_deal.version},
+            format="json",
+        )
+        self.assertEqual(evaluator_denied.status_code, 403, evaluator_denied.data)
+        for role in ("manager", "caller", "viewer"):
+            response = self._client_for(role).post(
+                f"/api/services/deals/{self.deal.id}/evaluations",
+                {"status": "SUBMITTED", "version": evaluation.data["version"]},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 403, response.data)
+        for role in ("admin", "evaluator"):
+            response = self._client_for(role).post(
+                f"/api/services/deals/{self.other_deal.id}/evaluations",
+                {"status": "SUBMITTED", "version": self.other_deal.version},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 404, response.data)
+
+    def test_explicit_role_matrix_contains_every_approved_role(self):
+        self.assertEqual(set(self.roles), {"admin", "manager", "evaluator", "caller", "viewer"})
+        self.assertEqual(OrganizationMembership.objects.filter(organization=self.organization).count(), 5)
+
+
+class EndpointAuthorizationInventoryTests(SimpleTestCase):
+    """API-04 guardrail: every service route must declare an authorization policy."""
+
+    def test_every_service_endpoint_declares_a_non_public_permission_class(self):
+        public_auth_routes = {"services/totp", "services/token-refresh"}
+        unprotected_routes = []
+        for pattern in urlpatterns:
+            route = str(pattern.pattern)
+            if not route.startswith("services/") or route in public_auth_routes:
+                continue
+            view_class = getattr(pattern.callback, "cls", None)
+            permission_classes = getattr(view_class, "permission_classes", ())
+            if not permission_classes or AllowAny in permission_classes:
+                unprotected_routes.append(route)
+        self.assertEqual(unprotected_routes, [])

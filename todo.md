@@ -87,3 +87,7 @@
 - [x] Lisada agregaatide versiooniväljad, atomaarne võrdle-ja-uuenda toiming ning `428`/`409` konfliktivastused.
 - [x] Uuendada kliendi kriitilised töövookutsed versioonitunnusega ning lisada samaaegseid vananenud snapshot’e simuleeriv regressioonmaatriks.
 - [x] Dokumenteerida versioonileping, käitada kogu kvaliteedivärav ning sulgeda GitHubi issue #18 pärast avaldamist.
+- [x] Kaardistada API-04 jaoks kõigi kinnitatud organisatsiooniroolide endpointiperekonnad, objektiulatus ja teise organisatsiooni käitumine.
+- [x] Lisada admini, CRM manageri, hindaja, helistaja ja vaatleja lubatud/keelatud/tenantidevahelise regressioonimaatriksi testid.
+- [x] Rakendada hindajale objektitaseme juurdepääs ainult talle määratud Deal’ile ning lisada endpointide õiguste URL-inventuuri kaitse.
+- [x] Dokumenteerida autoriseerimismaatriks, käitada kvaliteedivärav ning sulgeda GitHubi issue #19 pärast avaldamist.
