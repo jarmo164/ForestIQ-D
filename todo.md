@@ -53,3 +53,5 @@
 - [x] Lisada õiguspõhised API-filtrid kliendisuhete, aktiivsete tegevuste ja tehinguetappide alusel.
 - [x] Rakendada MapLibre’i filtrite juhtpaneel ning siduda see vaatealapõhise GeoJSON-laadimisega.
 - [x] Lisada filtrite testid, dokumentatsioon ja jõudluskontroll ning pushida täiendused harusse `rewrite/django`.
+- [x] Kopeerida Django ümberkirjutuse Git-ajaloo uusim seis GitHubi hoidlasse `jarmo164/ForestIQ-D`.
+- [x] Kontrollida uue hoidla sihtharu ning dokumenteerida edukas üleviimine.
