@@ -73,4 +73,4 @@
 - [x] Kaardistada issue #12 jaoks kõik organisatsioonivõtit vajavad ärilised agregaatid ja kasutajaseosed.
 - [x] Lisada organisatsioonimudel ning mitte-null organisatsioonivõti kõigile sihtagregaatidele koos idempotentse backfill’iga.
 - [x] Lisada organisatsioonipõhised andmetervikluse testid, dokumentatsioon ja migratsiooni kontroll.
-- [ ] Commitida ja pushida AUTH-01 täiendused ForestIQ-D `main`-harusse ning sulgeda GitHubi issue #12.
+- [x] Commitida ja pushida AUTH-01 täiendused ForestIQ-D `main`-harusse ning sulgeda GitHubi issue #12.
