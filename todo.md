@@ -79,3 +79,7 @@
 - [x] Nõuda Celery töödel ja süsteemiimpordil eksplitsiitset organisatsiooni sisendit ning siduda auditiread sama kontekstiga.
 - [x] Lisada negatiivsed API- ja tausttööde isolatsioonitestid, dokumentatsioon ning migratsiooni-/kvaliteedikontroll.
 - [x] Commitida ja pushida AUTH-02 täiendused ForestIQ-D `main`-harusse ning sulgeda GitHubi issue.
+- [x] Kaardistada AUTH-03 jaoks Keycloak Authorization Code + PKCE voog, organisatsiooni claim ning liikmesusrollide õiguste kaart.
+- [x] Lisada OIDC-koodivahetus, stabiilne `oidc_subject`, organisatsiooniliikmesuse rollid ning rollipõhine endpointi- ja objektitaseme andmeautoriseerimine.
+- [x] Lisada negatiivsed rolli-, andmeulatuse-, Keycloak’i claim’i- ja tootmise kohaliku sisselogimise keelamise testid ning dokumenteerida seadistus.
+- [x] Commitida ja pushida AUTH-03 täiendused ForestIQ-D `main`-harusse ning sulgeda GitHubi issue #14.
