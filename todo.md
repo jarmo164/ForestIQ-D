@@ -78,4 +78,4 @@
 - [x] Rakendada kohustuslik päringukonteksti organisatsioon, organisatsioonipõhised queryset’id ning objektitaseme 404/403 kaitse kõigis äridomeenides.
 - [x] Nõuda Celery töödel ja süsteemiimpordil eksplitsiitset organisatsiooni sisendit ning siduda auditiread sama kontekstiga.
 - [x] Lisada negatiivsed API- ja tausttööde isolatsioonitestid, dokumentatsioon ning migratsiooni-/kvaliteedikontroll.
-- [ ] Commitida ja pushida AUTH-02 täiendused ForestIQ-D `main`-harusse ning sulgeda GitHubi issue.
+- [x] Commitida ja pushida AUTH-02 täiendused ForestIQ-D `main`-harusse ning sulgeda GitHubi issue.
