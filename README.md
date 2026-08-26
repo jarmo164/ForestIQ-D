@@ -239,4 +239,4 @@ pnpm check
 pnpm build
 ```
 
-Lisateavet ümberehituse domeenijaotuse, ühilduvuse, väliste registriühenduste ning käivituse kohta on failides [`docs/DJANGO_MIGRATION.md`](docs/DJANGO_MIGRATION.md) ja [`docs/DJANGO_REWRITE_ARCHITECTURE.md`](docs/DJANGO_REWRITE_ARCHITECTURE.md). Rollide, endpointiperekondade ja objektiulatuse kontrollitav leping on failis [`docs/API_AUTHORIZATION_MATRIX.md`](docs/API_AUTHORIZATION_MATRIX.md).
+Lisateavet ümberehituse domeenijaotuse, ühilduvuse, väliste registriühenduste ning käivituse kohta on failides [`docs/DJANGO_MIGRATION.md`](docs/DJANGO_MIGRATION.md) ja [`docs/DJANGO_REWRITE_ARCHITECTURE.md`](docs/DJANGO_REWRITE_ARCHITECTURE.md). Rollide, endpointiperekondade ja objektiulatuse kontrollitav leping on failis [`docs/API_AUTHORIZATION_MATRIX.md`](docs/API_AUTHORIZATION_MATRIX.md). PostGIS-põhise MVT kaarditeenuse URL-, filtri- ja tootmiseelduste leping on failis [`docs/GIS_MVT_TILES.md`](docs/GIS_MVT_TILES.md).

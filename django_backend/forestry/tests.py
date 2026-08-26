@@ -1,7 +1,7 @@
 """Tests for the externally sourced forestry data synchronisation layer."""
 
 from datetime import timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -327,6 +327,47 @@ class MapFeatureTests(TestCase):
         self.assertLessEqual(len(response.data["features"]), 1)
         invalid = self.client.get("/api/services/map/cadastres?bbox=invalid")
         self.assertEqual(invalid.status_code, 400)
+
+    def test_mvt_endpoint_requires_postgis_and_valid_tile_coordinates(self):
+        unavailable = self.client.get("/api/services/map/tiles/cadastres/8/140/88.pbf")
+        self.assertEqual(unavailable.status_code, 501, unavailable.data)
+        invalid = self.client.get("/api/services/map/tiles/cadastres/2/4/0.pbf")
+        self.assertEqual(invalid.status_code, 400, invalid.data)
+
+    @patch("api.views._map_vector_tile_bytes", return_value=b"mvt-bytes")
+    @patch("api.views.connection")
+    def test_mvt_endpoint_returns_vector_tile_content_type(self, database, build_tile):
+        database.vendor = "postgresql"
+        response = self.client.get("/api/services/map/tiles/cadastres/8/140/88.pbf?activeDeal=true")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/vnd.mapbox-vector-tile")
+        self.assertEqual(response.content, b"mvt-bytes")
+        self.assertEqual(build_tile.call_args.args[-4:], ("cadastres", 8, 140, 88))
+
+    @patch("api.views.connection")
+    def test_mvt_sql_uses_postgis_tile_functions_and_organization_scoped_queryset(self, database):
+        from api.views import _map_vector_tile_bytes
+
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (b"mvt-bytes",)
+        database.cursor.return_value.__enter__.return_value = cursor
+        with organization_scope(self.cadastre.organization_id):
+            tile = _map_vector_tile_bytes(
+                Cadastre.objects.exclude(boundary__isnull=True),
+                ("id", "name", "county", "municipality", "area"),
+                "boundary",
+                "cadastres",
+                8,
+                140,
+                88,
+            )
+        self.assertEqual(tile, b"mvt-bytes")
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("ST_TileEnvelope", sql)
+        self.assertIn("ST_AsMVTGeom", sql)
+        self.assertIn("ST_AsMVT", sql)
+        self.assertIn(self.cadastre.organization_id.hex, params)
+        self.assertEqual(params[-4:], [8, 140, 88, "cadastres"])
 
     def test_map_filters_match_customer_active_deal_and_recent_activity(self):
         owner = Owner.objects.create(id="38101010003", name="Filtriklient")

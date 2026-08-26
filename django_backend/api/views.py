@@ -8,10 +8,10 @@ import json
 from uuid import uuid4
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Count, Q
 from django.contrib.gis.geos import Polygon
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -170,6 +170,71 @@ def map_layer_features(request, layer: str):
             geometry.transform(4326)
             features.append({"type": "Feature", "id": str(record.id), "geometry": json.loads(geometry.json), "properties": {"id": str(record.id), "cadastreId": record.cadastre_id, "subpartCode": record.cadastre_subpart_code, "notificationNumber": record.notification_number, "workCode": record.work_code, "state": record.state, "registrationDate": record.registration_date.isoformat() if record.registration_date else "", "treeType": subpart.tree_type_code, "subpartArea": str(subpart.area or ""), "discoveredAt": subpart.discovered_at.isoformat() if subpart.discovered_at else ""}})
     return Response({"type": "FeatureCollection", "features": features})
+
+
+@api_view(["GET"])
+@permission_classes([CanViewOrganizationData])
+def map_vector_tile(request, layer: str, z: int, x: int, y: int):
+    """Return an organization-scoped Mapbox Vector Tile from PostGIS geometry."""
+
+    layer = layer.lower()
+    if layer not in {"cadastres", "subparts"}:
+        return _detail("Unknown vector tile layer.", status.HTTP_404_NOT_FOUND)
+    coordinates, error = _map_tile_coordinates(z, x, y)
+    if error:
+        return error
+    if connection.vendor != "postgresql":
+        return _detail("Vector tiles require a PostGIS database.", status.HTTP_501_NOT_IMPLEMENTED)
+
+    cadastres = _map_cadastre_queryset(request)
+    if layer == "cadastres":
+        queryset = cadastres.exclude(boundary__isnull=True)
+        properties = ("id", "name", "county", "municipality", "area")
+    else:
+        queryset = CadastreSubPart.objects.exclude(boundary__isnull=True).filter(cadastre__in=cadastres)
+        properties = ("id", "cadastre_id", "sub_part_code", "tree_type_code", "area")
+
+    tile = _map_vector_tile_bytes(queryset, properties, "boundary", layer, *coordinates)
+    response = HttpResponse(tile, content_type="application/vnd.mapbox-vector-tile")
+    response["Cache-Control"] = "private, max-age=60"
+    return response
+
+
+def _map_tile_coordinates(z: int, x: int, y: int):
+    if not 0 <= z <= 22:
+        return None, _detail("z must be between 0 and 22.")
+    maximum = 2**z
+    if not 0 <= x < maximum or not 0 <= y < maximum:
+        return None, _detail("x and y must be valid coordinates for z.")
+    return (z, x, y), None
+
+
+def _map_vector_tile_bytes(queryset, properties: tuple[str, ...], geometry_field: str, layer: str, z: int, x: int, y: int) -> bytes:
+    """Compile a scoped queryset into a single PostGIS ST_AsMVT query."""
+
+    source_sql, source_params = queryset.values(*properties, geometry_field).query.sql_with_params()
+    property_columns = ", ".join(properties)
+    sql = f"""
+        WITH source AS ({source_sql}),
+        tile_features AS (
+            SELECT {property_columns},
+                ST_AsMVTGeom(
+                    ST_Transform({geometry_field}, 3857),
+                    ST_TileEnvelope(%s, %s, %s),
+                    4096,
+                    64,
+                    true
+                ) AS geom
+            FROM source
+        )
+        SELECT COALESCE(ST_AsMVT(tile_features, %s, 4096, 'geom'), ''::bytea)
+        FROM tile_features
+        WHERE geom IS NOT NULL
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [*source_params, z, x, y, layer])
+        result = cursor.fetchone()
+    return bytes(result[0] if result and result[0] else b"")
 
 
 def _map_viewport(request):

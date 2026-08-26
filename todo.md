@@ -91,3 +91,7 @@
 - [x] Lisada admini, CRM manageri, hindaja, helistaja ja vaatleja lubatud/keelatud/tenantidevahelise regressioonimaatriksi testid.
 - [x] Rakendada hindajale objektitaseme juurdepääs ainult talle määratud Deal’ile ning lisada endpointide õiguste URL-inventuuri kaitse.
 - [x] Dokumenteerida autoriseerimismaatriks, käitada kvaliteedivärav ning sulgeda GitHubi issue #19 pärast avaldamist.
+- [x] Kaardistada GIS-01 jaoks olemasolevad GeoJSON kaardifiltrid, organisatsioonikontekst ja katastri/eraldise geomeetriaväljad.
+- [x] Lisada PostGIS-põhine MVT endpoint katastritele ning eraldistele koos `ST_TileEnvelope`, `ST_AsMVTGeom` ja `ST_AsMVT` SQL-i kasutusega.
+- [x] Säilitada tenant’i-, kliendi-, aktiivse tehingu-, tööetapi- ja tegevusfiltrid enne tile’i serialiseerimist ning lisada `.pbf`/SQL regressioonitestid.
+- [x] Dokumenteerida MVT endpoint, käitada kvaliteedivärav ning sulgeda GitHubi issue #20 pärast avaldamist.
