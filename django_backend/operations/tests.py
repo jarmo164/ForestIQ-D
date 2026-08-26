@@ -23,7 +23,11 @@ class ContractLocalFileTests(TestCase):
 
     def test_admin_can_store_and_read_local_contract_pdf(self):
         uploaded = SimpleUploadedFile("agreement.pdf", b"%PDF-1.4 test", content_type="application/pdf")
-        response = self.client.post(f"/api/services/contracts/{self.contract.id}/document", {"file": uploaded}, format="multipart")
+        response = self.client.post(
+            f"/api/services/contracts/{self.contract.id}/document",
+            {"file": uploaded, "version": self.contract.version},
+            format="multipart",
+        )
         self.assertEqual(response.status_code, 201, response.data)
         self.contract.refresh_from_db()
         self.assertTrue(self.contract.document_file.name.endswith("contract-contract-test.pdf"))
