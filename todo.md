@@ -52,4 +52,4 @@
 - [x] Kaardistada katastriüksuste ja eraldiste tegevusajaloo, kliendisuhte ning tehingu staatuse andmed.
 - [x] Lisada õiguspõhised API-filtrid kliendisuhete, aktiivsete tegevuste ja tehinguetappide alusel.
 - [x] Rakendada MapLibre’i filtrite juhtpaneel ning siduda see vaatealapõhise GeoJSON-laadimisega.
-- [ ] Lisada filtrite testid, dokumentatsioon ja jõudluskontroll ning pushida täiendused harusse `rewrite/django`.
+- [x] Lisada filtrite testid, dokumentatsioon ja jõudluskontroll ning pushida täiendused harusse `rewrite/django`.
