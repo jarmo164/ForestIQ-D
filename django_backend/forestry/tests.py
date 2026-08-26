@@ -328,7 +328,9 @@ class MapFeatureTests(TestCase):
         invalid = self.client.get("/api/services/map/cadastres?bbox=invalid")
         self.assertEqual(invalid.status_code, 400)
 
-    def test_mvt_endpoint_requires_postgis_and_valid_tile_coordinates(self):
+    @patch("api.views.connection")
+    def test_mvt_endpoint_requires_postgis_and_valid_tile_coordinates(self, database):
+        database.vendor = "sqlite"
         unavailable = self.client.get("/api/services/map/tiles/cadastres/8/140/88.pbf")
         self.assertEqual(unavailable.status_code, 501)
         invalid = self.client.get("/api/services/map/tiles/cadastres/2/4/0.pbf")
