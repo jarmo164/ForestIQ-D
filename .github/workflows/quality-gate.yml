@@ -1,0 +1,164 @@
+name: Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  django:
+    name: Django checks, migrations and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: forestiq
+          POSTGRES_USER: forestiq
+          POSTGRES_PASSWORD: forestiq
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U forestiq -d forestiq"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://forestiq:forestiq@localhost:5432/forestiq
+      REDIS_URL: redis://localhost:6379/0
+      DJANGO_SECRET_KEY: ci-only-secret-key
+      DJANGO_DEBUG: "true"
+      FORESTIQ_DEVMODE: "true"
+      FORESTIQ_TASKS_INLINE: "true"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install geospatial system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes gdal-bin libgdal-dev libgeos-dev
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Verify migration files are current
+        working-directory: django_backend
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Apply migrations
+        working-directory: django_backend
+        run: python manage.py migrate --noinput
+
+      - name: Run Django system checks
+        working-directory: django_backend
+        run: python manage.py check
+
+      - name: Run Django test suite
+        working-directory: django_backend
+        run: python manage.py test --verbosity 2
+
+  frontend:
+    name: Frontend typecheck, lint, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: forestiq-ui/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: forestiq-ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: forestiq-ui
+        run: pnpm check
+
+      - name: Lint
+        working-directory: forestiq-ui
+        run: pnpm lint
+
+      - name: Run unit tests
+        working-directory: forestiq-ui
+        run: pnpm test
+
+      - name: Build
+        working-directory: forestiq-ui
+        run: pnpm build
+
+  render_blueprint:
+    name: Render Blueprint validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Blueprint schema validator
+        run: python -m pip install check-jsonschema==0.33.0
+
+      - name: Validate render.yaml against Render's official Blueprint schema
+        run: >-
+          check-jsonschema
+          --schemafile https://render.com/schema/render.yaml.json
+          render.yaml
+
+  quality_gate:
+    name: All quality checks passed
+    if: ${{ always() }}
+    needs:
+      - django
+      - frontend
+      - render_blueprint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every quality check to pass
+        env:
+          DJANGO_RESULT: ${{ needs.django.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          RENDER_RESULT: ${{ needs.render_blueprint.result }}
+        run: |
+          test "$DJANGO_RESULT" = "success"
+          test "$FRONTEND_RESULT" = "success"
+          test "$RENDER_RESULT" = "success"
