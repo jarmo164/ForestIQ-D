@@ -94,7 +94,7 @@ def cadastre_sync(request, cadastre_id: str):
 @permission_classes([IsAuthenticated])
 def cadastre_map_features(request):
     """Return validated cadastral geometries as WGS84 GeoJSON for MapLibre."""
-    cadastres = Cadastre.objects.exclude(boundary__isnull=True)
+    cadastres = _map_cadastre_queryset(request)
     viewport, error = _map_viewport(request)
     if error:
         return error
@@ -119,9 +119,10 @@ def map_layer_features(request, layer: str):
     viewport, error = _map_viewport(request)
     if error:
         return error
+    cadastres = _map_cadastre_queryset(request)
     features = []
     if layer in {"subparts", "new-subparts"}:
-        records = CadastreSubPart.objects.exclude(boundary__isnull=True).select_related("cadastre").order_by("cadastre_id", "sub_part_code")
+        records = CadastreSubPart.objects.exclude(boundary__isnull=True).filter(cadastre__in=cadastres).select_related("cadastre").order_by("cadastre_id", "sub_part_code")
         if viewport:
             records = records.filter(boundary__intersects=viewport)
         if layer == "new-subparts":
@@ -132,7 +133,7 @@ def map_layer_features(request, layer: str):
             geometry.transform(4326)
             features.append({"type": "Feature", "id": f"{record.cadastre_id}:{record.sub_part_code}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.cadastre_id}:{record.sub_part_code}", "cadastreId": record.cadastre_id, "subpartCode": record.sub_part_code, "treeType": record.tree_type_code, "area": str(record.area or ""), "discoveredAt": record.discovered_at.isoformat() if record.discovered_at else ""}})
     elif layer == "registry":
-        records = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).select_related("cadastre").order_by("cadastre_id", "source_layer", "source_id")
+        records = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).filter(cadastre__in=cadastres).select_related("cadastre").order_by("cadastre_id", "source_layer", "source_id")
         if viewport:
             records = records.filter(spatial_geometry__intersects=viewport)
         for record in records[:_map_limit(request, settings.FORESTIQ_MAP_FEATURE_LIMIT)]:
@@ -140,8 +141,8 @@ def map_layer_features(request, layer: str):
             geometry.transform(4326)
             features.append({"type": "Feature", "id": f"{record.source_layer}:{record.source_id}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.source_layer}:{record.source_id}", "cadastreId": record.cadastre_id, "subpartCode": record.subpart_code, "title": record.title, "workCode": record.work_code, "decision": record.decision, "area": str(record.area or "")}})
     else:
-        records = CadastreNotification.objects.exclude(cadastre_subpart_code__isnull=True).select_related("cadastre").order_by("-registration_date", "-id")
-        subparts = CadastreSubPart.objects.exclude(boundary__isnull=True)
+        records = CadastreNotification.objects.exclude(cadastre_subpart_code__isnull=True).filter(cadastre__in=cadastres).select_related("cadastre").order_by("-registration_date", "-id")
+        subparts = CadastreSubPart.objects.exclude(boundary__isnull=True).filter(cadastre__in=cadastres)
         if viewport:
             subparts = subparts.filter(boundary__intersects=viewport)
             records = records.filter(cadastre_id__in=subparts.values("cadastre_id"))
@@ -178,6 +179,29 @@ def _map_limit(request, default: int) -> int:
     except (TypeError, ValueError):
         requested = default
     return max(1, min(requested, settings.FORESTIQ_MAP_MAX_FEATURE_LIMIT))
+
+
+def _map_cadastre_queryset(request):
+    """Filter map geometries by access and the commercial/activity filters selected in MapLibre."""
+    cadastres = Cadastre.objects.exclude(boundary__isnull=True)
+    if not request.user.has_privilege(PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+        cadastres = cadastres.filter(owners__assignee=request.user)
+    if request.query_params.get("customer") in {"1", "true"}:
+        cadastres = cadastres.filter(owners__deals__stage=DealStage.WON)
+    if request.query_params.get("activeDeal") in {"1", "true"}:
+        cadastres = cadastres.filter(deals__stage__in=[DealStage.QUALIFICATION, DealStage.EVALUATION, DealStage.NEGOTIATION])
+    stages = [stage.strip().upper() for stage in request.query_params.get("dealStage", "").split(",") if stage.strip()]
+    valid_stages = {choice for choice, _ in DealStage.choices}
+    if stages:
+        cadastres = cadastres.filter(deals__stage__in=[stage for stage in stages if stage in valid_stages])
+    try:
+        activity_days = int(request.query_params.get("activityDays", "0"))
+    except ValueError:
+        activity_days = 0
+    if activity_days:
+        since = timezone.now() - timedelta(days=max(1, min(activity_days, 730)))
+        cadastres = cadastres.filter(Q(owners__logs__created_at__gte=since) | Q(owners__reminders__created_time__gte=since) | Q(deals__updated_at__gte=since))
+    return cadastres.distinct()
 
 
 def _parse_millis(value):

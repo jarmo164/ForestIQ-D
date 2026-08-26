@@ -133,6 +133,8 @@ Katastriüksuse klõpsamine avab kaardikeskse tervikvaate. Klient laadib selleks
 
 MapLibre ei lae enam kõiki katastri- ja polügooniobjekte korraga. Pärast kaardi liikumise lõppu uuendatakse kihte ühe debounced päringutsükliga ning API saab ainult nähtava kaardiala `bbox`-i. Katastriüksused ning uued eraldised ilmuvad alates suumist 8, teatised suumist 9 ning polügoonitihedad eraldiste ja metsaregistri kihid suumist 10. Iga serverivastus on piiratud konfigureeritava `limit`-iga; serveri vaikimisi piirid on `FORESTIQ_MAP_CADASTRE_LIMIT=750`, `FORESTIQ_MAP_FEATURE_LIMIT=1500` ja absoluutne ülempiir `FORESTIQ_MAP_MAX_FEATURE_LIMIT=3000`.
 
+Kaarditööruumi filtrid piiravad kõiki nähtaval alal laetavaid kihte samade õiguspõhiste katastriüksustega. Filtreid saab kombineerida **võidetud tehingu/kliendisuhte**, **aktiivse tehingu**, kindla **tehinguetapi** ja viimase 7, 30, 90 või 365 päeva **tegevusajaloo** järgi. Filtri muutmine käivitab sama debounced vaatealapõhise päringutsükli ega lae kogu ruumiandmestikku uuesti.
+
 ## Andmebaasi migratsioon vanast MetsIS-ist
 
 Enne ümberlülitust tee lähte- ja sihtandmebaasist varukoopiad. Uue skeemi loovad Django migratsioonid. Vana PostgreSQL andmebaasi sisu saab kopeerida idempotentse käsuga, mis kasutab ainult lugemisühendust `LEGACY_DATABASE_URL` kaudu.

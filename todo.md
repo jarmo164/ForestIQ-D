@@ -49,3 +49,7 @@
 - [x] Lisada katastri-, eraldise- ja metsaregistrikihile vaatealapõhised ning piiratud GeoJSON-päringud.
 - [x] Lisada MapLibre’i liikumise järel debounced kihiuuendus ja suumipõhine renderdusstrateegia.
 - [x] Lisada jõudluse regressioonitestid, dokumentatsioon ning pushida optimeeringud harusse `rewrite/django`.
+- [x] Kaardistada katastriüksuste ja eraldiste tegevusajaloo, kliendisuhte ning tehingu staatuse andmed.
+- [x] Lisada õiguspõhised API-filtrid kliendisuhete, aktiivsete tegevuste ja tehinguetappide alusel.
+- [x] Rakendada MapLibre’i filtrite juhtpaneel ning siduda see vaatealapõhise GeoJSON-laadimisega.
+- [ ] Lisada filtrite testid, dokumentatsioon ja jõudluskontroll ning pushida täiendused harusse `rewrite/django`.

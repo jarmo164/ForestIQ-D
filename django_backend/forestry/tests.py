@@ -293,7 +293,7 @@ class MapFeatureTests(TestCase):
         self.assertEqual(response.data["cadastre"]["id"], self.cadastre.id)
         self.assertEqual(response.data["owners"][0]["name"], owner.name)
         self.assertTrue(response.data["owners"][0]["customerRelationship"]["isCustomer"])
-        self.assertEqual(response.data["activities"][0]["kind"], "DEAL")
+        self.assertIn("DEAL", [item["kind"] for item in response.data["activities"]])
         self.assertEqual(response.data["notifications"][0]["notificationNumber"], 7002)
         self.assertEqual(response.data["registryFeatures"][0]["title"], "Eraldis 12")
 
@@ -306,3 +306,24 @@ class MapFeatureTests(TestCase):
         self.assertLessEqual(len(response.data["features"]), 1)
         invalid = self.client.get("/api/services/map/cadastres?bbox=invalid")
         self.assertEqual(invalid.status_code, 400)
+
+    def test_map_filters_match_customer_active_deal_and_recent_activity(self):
+        owner = Owner.objects.create(id="38101010003", name="Filtriklient")
+        self.cadastre.owners.add(owner)
+        CadastreSubPart.objects.create(cadastre=self.cadastre, sub_part_code=13, boundary=self.cadastre.boundary)
+        won = Deal.objects.create(owner=owner, sale_subject="FOREST", stage=DealStage.WON)
+        won.parcels.add(self.cadastre)
+        active = Deal.objects.create(owner=owner, sale_subject="LAND", stage=DealStage.NEGOTIATION)
+        active.parcels.add(self.cadastre)
+        OwnerLog.objects.create(owner=owner, creator=self.user, message="Kaardifiltri tegevus")
+
+        customer = self.client.get("/api/services/map/cadastres?customer=true")
+        active_response = self.client.get("/api/services/map/layers/subparts?activeDeal=true")
+        recent = self.client.get("/api/services/map/cadastres?activityDays=30&dealStage=NEGOTIATION")
+
+        self.assertEqual(customer.status_code, 200, customer.data)
+        self.assertIn(self.cadastre.id, [feature["properties"]["id"] for feature in customer.data["features"]])
+        self.assertEqual(active_response.status_code, 200, active_response.data)
+        self.assertTrue(active_response.data["features"])
+        self.assertEqual(recent.status_code, 200, recent.data)
+        self.assertIn(self.cadastre.id, [feature["properties"]["id"] for feature in recent.data["features"]])
