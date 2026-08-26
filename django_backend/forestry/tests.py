@@ -330,9 +330,9 @@ class MapFeatureTests(TestCase):
 
     def test_mvt_endpoint_requires_postgis_and_valid_tile_coordinates(self):
         unavailable = self.client.get("/api/services/map/tiles/cadastres/8/140/88.pbf")
-        self.assertEqual(unavailable.status_code, 501, unavailable.data)
+        self.assertEqual(unavailable.status_code, 501)
         invalid = self.client.get("/api/services/map/tiles/cadastres/2/4/0.pbf")
-        self.assertEqual(invalid.status_code, 400, invalid.data)
+        self.assertEqual(invalid.status_code, 400)
 
     @patch("api.views._map_vector_tile_bytes", return_value=b"mvt-bytes")
     @patch("api.views.connection")
@@ -366,7 +366,7 @@ class MapFeatureTests(TestCase):
         self.assertIn("ST_TileEnvelope", sql)
         self.assertIn("ST_AsMVTGeom", sql)
         self.assertIn("ST_AsMVT", sql)
-        self.assertIn(self.cadastre.organization_id.hex, params)
+        self.assertIn(self.cadastre.organization_id, params)
         self.assertEqual(params[-4:], [8, 140, 88, "cadastres"])
 
     def test_map_filters_match_customer_active_deal_and_recent_activity(self):
