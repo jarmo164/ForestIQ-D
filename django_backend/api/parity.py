@@ -37,7 +37,7 @@ from operations.models import (
     Reminder,
 )
 
-from .permissions import CanEvaluate, CanManageOwners, IsAdmin, can_access_owner
+from .permissions import CanEvaluate, CanManageOwners, IsAdmin, can_access_owner, has_membership_privilege
 from .organization import organization_user_or_404, organization_users, request_organization_id
 from .serializers import cadastre_summary, json_value, owner_summary, user_data
 
@@ -71,7 +71,7 @@ def _date(value, field: str) -> date | None:
 
 def _owner_access(request, owner_id: str):
     owner = get_object_or_404(Owner.objects.prefetch_related("cadastres").select_related("assignee"), id=owner_id)
-    if not can_access_owner(request.user, owner):
+    if not can_access_owner(request, owner):
         return None, _detail("You do not have access to this owner.", status.HTTP_403_FORBIDDEN)
     return owner, None
 
@@ -111,7 +111,7 @@ def _get_deal(deal_id: str) -> Deal:
 
 
 def _ensure_deal_access(request, deal: Deal):
-    if not can_access_owner(request.user, deal.owner):
+    if not can_access_owner(request, deal.owner):
         return _detail("You do not have access to this deal.", status.HTTP_403_FORBIDDEN)
     return None
 
@@ -169,7 +169,7 @@ def deals_by_owner(request, owner_id: str):
 @permission_classes([CanEvaluate])
 def deal_evaluation_queue(request):
     records = Deal.objects.filter(stage=DealStage.EVALUATION).select_related("owner", "evaluator").prefetch_related("parcels", "offers")
-    if not request.user.has_privilege(PrivilegeCode.ADMIN) and not request.user.has_privilege(PrivilegeCode.OWNER_PROFILE):
+    if not has_membership_privilege(request, PrivilegeCode.ADMIN) and not has_membership_privilege(request, PrivilegeCode.OWNER_PROFILE):
         records = records.filter(evaluator__in=[request.user, None])
     return Response([_deal_data(item) for item in records])
 
@@ -182,12 +182,12 @@ def deal_evaluation_claim(request, deal_id: str):
     if denied:
         return denied
     if request.method == "POST":
-        if deal.evaluator_id and deal.evaluator_id != request.user.id and not request.user.has_privilege(PrivilegeCode.ADMIN):
+        if deal.evaluator_id and deal.evaluator_id != request.user.id and not has_membership_privilege(request, PrivilegeCode.ADMIN):
             return _detail("The evaluation is already assigned.", status.HTTP_409_CONFLICT)
         deal.evaluator = request.user
         deal.stage = DealStage.EVALUATION
         deal.save(update_fields=["evaluator", "stage", "updated_at"])
-    elif deal.evaluator_id == request.user.id or request.user.has_privilege(PrivilegeCode.ADMIN):
+    elif deal.evaluator_id == request.user.id or has_membership_privilege(request, PrivilegeCode.ADMIN):
         deal.evaluator = None
         deal.save(update_fields=["evaluator", "updated_at"])
     else:
@@ -213,7 +213,7 @@ def deal_evaluation_submit(request, deal_id: str):
     denied = _ensure_deal_access(request, deal)
     if denied:
         return denied
-    if deal.evaluator_id and deal.evaluator_id != request.user.id and not request.user.has_privilege(PrivilegeCode.ADMIN):
+    if deal.evaluator_id and deal.evaluator_id != request.user.id and not has_membership_privilege(request, PrivilegeCode.ADMIN):
         return _detail("Only the assigned evaluator can submit this evaluation.", status.HTTP_403_FORBIDDEN)
     evaluation_status = str(request.data.get("status", "")).upper()
     if evaluation_status not in {"NEEDS_DATA", "SUBMITTED", "APPROVED"}:
@@ -375,7 +375,7 @@ def _get_case(case_id: str) -> InheritanceCase:
 
 
 def _case_access(request, case: InheritanceCase):
-    if not can_access_owner(request.user, case.owner):
+    if not can_access_owner(request, case.owner):
         return _detail("You do not have access to this inheritance case.", status.HTTP_403_FORBIDDEN)
     return None
 
@@ -408,7 +408,7 @@ def inheritance_by_owner(request, owner_id: str):
 @permission_classes([CanManageOwners])
 def inheritance_cases(request):
     records = InheritanceCase.objects.select_related("owner", "assigned_to").prefetch_related("heirs", "events")
-    if not request.user.has_privilege(PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+    if not has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
         records = records.filter(assigned_to__in=[request.user, None])
     requested_status = request.query_params.get("status")
     if requested_status:

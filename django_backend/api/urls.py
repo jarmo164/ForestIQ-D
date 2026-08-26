@@ -5,6 +5,8 @@ from django.urls import path
 from . import auth, parity, views
 
 urlpatterns = [
+    path("oidc/config", auth.oidc_configuration),
+    path("oidc/exchange", auth.oidc_exchange),
     path("password-login", auth.password_login),
     path("services/totp", auth.totp_login),
     path("services/token-refresh", auth.refresh_token),

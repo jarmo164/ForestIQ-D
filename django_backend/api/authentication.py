@@ -26,20 +26,22 @@ class OrganizationJWTAuthentication(JWTAuthentication):
         except (TypeError, ValueError):
             raise AuthenticationFailed("JWT does not contain a valid organization_id claim.")
 
-        membership_exists = OrganizationMembership.objects.filter(
+        membership = OrganizationMembership.objects.select_related("organization").filter(
             user_id=user.id,
             organization_id=organization_id,
             organization__is_active=True,
-        ).exists()
-        if not membership_exists:
+        ).first()
+        if membership is None:
             raise AuthenticationFailed("JWT organization is not an active membership for this user.")
-
         context_token = activate_organization(organization_id)
+
         request._forestiq_organization_context_token = context_token
         raw_request = getattr(request, "_request", None)
         if raw_request is not None:
             raw_request._forestiq_organization_context_token = context_token
         request.organization_id = organization_id
+        request.organization_membership = membership
         if raw_request is not None:
             raw_request.organization_id = organization_id
+            raw_request.organization_membership = membership
         return user, token

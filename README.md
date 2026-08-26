@@ -177,9 +177,35 @@ Iga Bearer JWT sisaldab välju `organization_id` ja `organizationId`. Django kon
 
 Celery tööde, WFS-i ja API-importide signatuurid nõuavad samuti eksplitsiitset organisatsioonivõtit. Beat’i globaalne dispetšer ei töötle äriridu otse, vaid väljastab iga aktiivse organisatsiooni jaoks eraldi scoped töö. Kõik käsitsi impordi- ja sünkroonikäsud nõuavad `--organization <UUID-või-slug>` argumenti; `forestiq-default` on AUTH-01 backfill’i üleminekuorganisatsioon.
 
+### Keycloak, liikmesusrollid ja õigused (AUTH-03)
+
+AUTH-03 kasutab **Authorization Code + PKCE (`S256`)** voogu. React küsib brauserile ohutu seadistuse teelt `GET /api/oidc/config`, genereerib krüptograafiliselt juhusliku `state`, `nonce` ja `code_verifier` väärtuse ning suunab kasutaja Keycloaki. Tagasisuunamisel saadetakse kood koos verifier’iga ainult Django teele `POST /api/oidc/exchange`. Django vahetab koodi serveris, kontrollib ID tokeni allkirja Keycloaki JWKS-i, `iss`, `aud` ja `nonce` väärtust ning väljastab seejärel ForestIQ sisemise, lühiajalise JWT.
+
+Keycloaki `sub` talletatakse muutumatu `oidc_subject` väljana. Iga sisselogimine seob kasutaja aktiivse organisatsiooniga tokeni seadistatavast `organization_id` claim’ist ning värskendab üksnes selle organisatsiooniliikmesuse rolle. API ei usalda vana tokeni õiguste claim’i: päringu autentimine loeb kehtiva liikmesuse andmebaasist, nii et rolli või liikmesuse eemaldamine jõustub kohe järgmisel API päringul.
+
+| Keycloak’i roll | ForestIQ liikmesusõigused | Endpointi ja andmete ulatus |
+| --- | --- | --- |
+| `ORG_OWNER`, `ORG_ADMIN` | `ADMIN`, `OWNER_PROFILE`, `ASSIGNED_OWNERS`, `PHONES`, `EVALUATION` | Täielik haldus organisatsiooni piires. |
+| `CRM_MANAGER` | `OWNER_PROFILE`, `ASSIGNED_OWNERS` | Kõik organisatsiooni omaniku- ja CRM-andmed; haldusendpointid jäävad keelatuks. |
+| `EVALUATOR` | `EVALUATION` | Hindamisjärjekord ja talle määratud hindamiste töövoog. |
+| `CALLER` | `ASSIGNED_OWNERS`, `PHONES` | Ainult talle määratud omanike andmed ning telefonikataloog. |
+| `ORG_MEMBER`, `VIEWER` | Puuduvad kirjutamisõigused | Ainult selgelt lubatud üldised lugemis- ja sõnumiendpointid; omaniku- ning CRM-andmed on keelatud. |
+
+Seadista tootmises järgmised keskkonnamuutujad ning registreeri Keycloakis täpne Reacti tagasisuunamise URI, näiteks `https://app.example.ee/login`. `KEYCLOAK_ISSUER` peab tootmises kasutama HTTPS-i. `KEYCLOAK_ORGANIZATION_CLAIM` toetab punktnotatsiooni, näiteks `organization.id`.
+
+```sh
+KEYCLOAK_OIDC_ENABLED=true
+KEYCLOAK_ISSUER=https://sso.example.ee/realms/forestiq
+KEYCLOAK_CLIENT_ID=forestiq-web
+KEYCLOAK_ORGANIZATION_CLAIM=organization_id
+# Valikuline: KEYCLOAK_SCOPES=openid profile email
+```
+
+Kohalik parooli- ja TOTP-vool jääb ainult arenduse ühilduvuseks. `FORESTIQ_DEVMODE=true` toimib üksnes koos `DJANGO_DEBUG=true`; tootmises (`DJANGO_DEBUG=false`) tagastavad kohalikud `password-login`, TOTP ja paroolivahetuse endpointid vastuse `403`, sõltumata keskkonnamuutujast.
+
 ## Turve
 
-Django API kasutab Bearer JWT autentimist. Reacti töölaud kasutab parooliga sisselogimise eeltokenit, TOTP kontrolli ning tavapäraseid ja värskendustokeneid. Õigused `ADMIN`, `OWNER_PROFILE`, `ASSIGNED_OWNERS`, `PHONES` ja `EVALUATION` on andmebaasis eraldiseisvad ning sünkroniseeritakse vastavatesse Django gruppidesse. Seega saavad tavapärased Django `Group` ja `Permission` kontrollid töötada paralleelselt olemasolevate ressursiõigustega; OIDC/Keycloak on dokumenteeritud järgmise etapina.
+Django API kasutab organisatsiooniga seotud sisemist Bearer JWT-d. Reacti töölaud kasutab tootmises Keycloak’i Authorization Code + PKCE voogu; kohalik parooli/TOTP voog on ainult arenduseks. Õigused `ADMIN`, `OWNER_PROFILE`, `ASSIGNED_OWNERS`, `PHONES` ja `EVALUATION` tulenevad aktiivse organisatsiooniliikmesuse rollidest ning pärandõigused sünkroniseeritakse endiselt vastavatesse Django gruppidesse. Seega töötavad tavapärased Django `Group` ja `Permission` kontrollid paralleelselt liikmesusepõhise ressursiõigusega, kuid tenantide vahelist pääsu ei saa globaalne grupp anda.
 
 Ära kasuta `.env.example` väärtusi tootmises. Määra unikaalne `DJANGO_SECRET_KEY`, tugev PostgreSQL parool, `DJANGO_DEBUG=false`, korrektne `DJANGO_ALLOWED_HOSTS` ning päris TOTP saladused.
 

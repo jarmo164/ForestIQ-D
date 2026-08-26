@@ -84,6 +84,52 @@ class PrivilegeCode(models.TextChoices):
     EVALUATION = "EVALUATION", "Evaluation"
 
 
+class OrganizationRole(models.TextChoices):
+    """Tenant-scoped roles supplied by Keycloak and enforced per membership."""
+
+    OWNER = "ORG_OWNER", "Organization owner"
+    ADMIN = "ORG_ADMIN", "Organization administrator"
+    MEMBER = "ORG_MEMBER", "Organization member"
+    CRM_MANAGER = "CRM_MANAGER", "CRM manager"
+    EVALUATOR = "EVALUATOR", "Evaluator"
+    CALLER = "CALLER", "Caller"
+    VIEWER = "VIEWER", "Viewer"
+
+
+ROLE_PRIVILEGES: dict[str, frozenset[str]] = {
+    OrganizationRole.OWNER: frozenset(PrivilegeCode.values),
+    OrganizationRole.ADMIN: frozenset(PrivilegeCode.values),
+    OrganizationRole.CRM_MANAGER: frozenset((PrivilegeCode.OWNER_PROFILE, PrivilegeCode.ASSIGNED_OWNERS)),
+    OrganizationRole.EVALUATOR: frozenset((PrivilegeCode.EVALUATION,)),
+    OrganizationRole.CALLER: frozenset((PrivilegeCode.ASSIGNED_OWNERS, PrivilegeCode.PHONES)),
+    OrganizationRole.MEMBER: frozenset(),
+    OrganizationRole.VIEWER: frozenset(),
+}
+
+
+def normalize_organization_roles(values) -> list[str]:
+    """Return known, de-duplicated membership roles in a stable order."""
+    known = set(OrganizationRole.values)
+    aliases = {"ORG_MANAGER": OrganizationRole.ADMIN, "ORG_USER": OrganizationRole.MEMBER}
+    normalized = {aliases.get(str(value).upper(), str(value).upper()) for value in (values or [])}
+    return [role for role in OrganizationRole.values if role in known and role in normalized]
+
+
+def roles_from_legacy_privileges(privileges) -> list[str]:
+    """Map pre-AUTH-03 privilege rows to the least-surprising membership roles."""
+    granted = set(privileges or [])
+    roles = [OrganizationRole.MEMBER]
+    if PrivilegeCode.ADMIN in granted:
+        roles.append(OrganizationRole.ADMIN)
+    if PrivilegeCode.OWNER_PROFILE in granted:
+        roles.append(OrganizationRole.CRM_MANAGER)
+    if PrivilegeCode.EVALUATION in granted:
+        roles.append(OrganizationRole.EVALUATOR)
+    if PrivilegeCode.ASSIGNED_OWNERS in granted or PrivilegeCode.PHONES in granted:
+        roles.append(OrganizationRole.CALLER)
+    return normalize_organization_roles(roles)
+
+
 class UserManager(BaseUserManager):
     """Manager that uses the legacy human-readable identifier as the login name."""
 
@@ -111,9 +157,10 @@ class UserManager(BaseUserManager):
 
 class User(AbstractBaseUser, PermissionsMixin):
     """ForestIQ application user with a stable string primary key."""
-
     id = models.CharField(primary_key=True, max_length=50)
+    oidc_subject = models.CharField(max_length=255, unique=True, blank=True, null=True)
     full_name = models.CharField(max_length=100, db_column="fullname")
+
     password = models.CharField("password hash", max_length=128, db_column="password_hash")
     totp_secret = models.CharField(max_length=64, blank=True, null=True)
     visible = models.BooleanField(default=False, db_column="ivisible")
@@ -159,7 +206,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         if self.default_organization_id:
-            OrganizationMembership.objects.get_or_create(organization_id=self.default_organization_id, user_id=self.pk)
+            OrganizationMembership.objects.get_or_create(
+                organization_id=self.default_organization_id,
+                user_id=self.pk,
+                defaults={"roles": [OrganizationRole.MEMBER]},
+            )
 
     @property
     def privilege_codes(self) -> list[str]:
@@ -189,11 +240,14 @@ class Privilege(models.Model):
 
 
 class OrganizationMembership(models.Model):
-    """Explicit user-to-organization membership, ready for OIDC role mapping."""
+    """A user's organization boundary and the roles valid only inside that boundary."""
 
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="memberships")
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="organization_memberships")
+    roles = models.JSONField(default=list, blank=True)
+    oidc_managed = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "organization_memberships"
@@ -202,3 +256,27 @@ class OrganizationMembership(models.Model):
 
     def __str__(self) -> str:
         return f"{self.organization.slug}:{self.user_id}"
+
+    @property
+    def role_codes(self) -> list[str]:
+        return normalize_organization_roles(self.roles)
+
+    @property
+    def privilege_codes(self) -> list[str]:
+        privileges: set[str] = set()
+        for role in self.role_codes:
+            privileges.update(ROLE_PRIVILEGES.get(role, ()))
+        return [code for code in PrivilegeCode.values if code in privileges]
+
+    def has_role(self, *roles: str) -> bool:
+        return bool(set(self.role_codes).intersection(roles))
+
+    def has_privilege(self, *codes: str) -> bool:
+        return bool(set(self.privilege_codes).intersection(codes))
+
+    def set_roles(self, roles, *, oidc_managed: bool | None = None) -> None:
+        """Persist normalized roles, optionally recording their Keycloak provenance."""
+        self.roles = normalize_organization_roles(roles)
+        if oidc_managed is not None:
+            self.oidc_managed = oidc_managed
+        self.save(update_fields=["roles", "oidc_managed", "updated_at"])

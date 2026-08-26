@@ -17,7 +17,6 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Privilege, PrivilegeCode, User
@@ -38,7 +37,16 @@ from forestry.models import (
 from operations.models import ApplicationMessage, Contract, ContractHistory, Deal, DealStage, DirectMessage, PersonDump, Reminder
 
 from .organization import organization_user_or_404, organization_users, request_organization_id
-from .permissions import CanEvaluate, CanManageOwners, CanUseAssignedOwners, CanUsePhones, IsAdmin, can_access_owner
+from .permissions import (
+    CanEvaluate,
+    CanManageOwners,
+    CanUseAssignedOwners,
+    CanUsePhones,
+    CanViewOrganizationData,
+    IsAdmin,
+    can_access_owner,
+    has_membership_privilege,
+)
 from .serializers import (
     cadastre_data,
     json_value,
@@ -97,7 +105,7 @@ def cadastre_sync(request, cadastre_id: str):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewOrganizationData])
 def cadastre_map_features(request):
     """Return validated cadastral geometries as WGS84 GeoJSON for MapLibre."""
     cadastres = _map_cadastre_queryset(request)
@@ -115,7 +123,7 @@ def cadastre_map_features(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewOrganizationData])
 def map_layer_features(request, layer: str):
     """Return validated GeoDjango layers as WGS84 GeoJSON for the MapLibre client."""
 
@@ -190,7 +198,7 @@ def _map_limit(request, default: int) -> int:
 def _map_cadastre_queryset(request):
     """Filter map geometries by access and the commercial/activity filters selected in MapLibre."""
     cadastres = Cadastre.objects.exclude(boundary__isnull=True)
-    if not request.user.has_privilege(PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+    if not has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
         cadastres = cadastres.filter(owners__assignee=request.user)
     if request.query_params.get("customer") in {"1", "true"}:
         cadastres = cadastres.filter(owners__deals__stage=DealStage.WON)
@@ -224,7 +232,7 @@ def _parse_millis(value):
 
 def _owner_or_forbidden(request, owner_id: str):
     owner = get_object_or_404(Owner.objects.select_related("assignee").prefetch_related("cadastres"), id=owner_id)
-    if not can_access_owner(request.user, owner):
+    if not can_access_owner(request, owner):
         return None, _detail("You do not have access to this owner.", status.HTTP_403_FORBIDDEN)
     return owner, None
 
@@ -244,7 +252,7 @@ def _paginate(queryset, request):
 
 def _owner_queryset(request):
     queryset = Owner.objects.select_related("assignee").prefetch_related("cadastres")
-    if not request.user.has_privilege(PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+    if not has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
         queryset = queryset.filter(assignee=request.user)
     for field in ("id", "name", "phone", "email"):
         value = request.query_params.get(field)
@@ -260,7 +268,7 @@ def _owner_queryset(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewOrganizationData])
 def service_status(request):
     return Response({"status": "OK", "service": "forestiq-django", "time": int(timezone.now().timestamp() * 1000)})
 
@@ -365,7 +373,7 @@ def owner_detail(request, owner_id: str):
 @api_view(["POST"])
 @permission_classes([CanManageOwners])
 def owner_add(request, owner_id: str):
-    if not request.user.has_privilege(PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+    if not has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
         return _detail("Owner creation requires OWNER_PROFILE.", status.HTTP_403_FORBIDDEN)
     if Owner.objects.filter(id=owner_id).exists():
         return _detail("Owner already exists.", status.HTTP_409_CONFLICT)
@@ -449,7 +457,7 @@ def mark_cadastres(request, owner_id: str):
 def cadastre_detail(request, cadastre_id: str):
     cadastre = get_object_or_404(Cadastre.objects.prefetch_related("owners", "labels", "sub_parts"), id=cadastre_id)
     owners = cadastre.owners.select_related("assignee")
-    if not any(can_access_owner(request.user, owner) for owner in owners):
+    if not any(can_access_owner(request, owner) for owner in owners):
         return _detail("You do not have access to this cadastre.", status.HTTP_403_FORBIDDEN)
     return Response(cadastre_data(cadastre))
 
@@ -460,7 +468,7 @@ def cadastre_workspace(request, cadastre_id: str):
     """Return an access-controlled, map-first workspace payload for one cadastral unit."""
 
     cadastre = get_object_or_404(Cadastre.objects.prefetch_related("owners", "labels", "sub_parts", "notifications", "registry_features"), id=cadastre_id)
-    owners = [owner for owner in cadastre.owners.select_related("assignee").all() if can_access_owner(request.user, owner)]
+    owners = [owner for owner in cadastre.owners.select_related("assignee").all() if can_access_owner(request, owner)]
     if not owners:
         return _detail("You do not have access to this cadastre.", status.HTTP_403_FORBIDDEN)
     activities = []
@@ -664,16 +672,18 @@ def reminders(request):
 @permission_classes([CanManageOwners])
 def reminder_detail(request, reminder_id: int):
     reminder = get_object_or_404(Reminder, id=reminder_id)
-    if reminder.creator_id != request.user.id and (not reminder.owner or reminder.owner.assignee_id != request.user.id) and not request.user.has_privilege(PrivilegeCode.ADMIN):
+    if reminder.creator_id != request.user.id and (not reminder.owner or reminder.owner.assignee_id != request.user.id) and not has_membership_privilege(request, PrivilegeCode.ADMIN):
         return _detail("You do not have access to this reminder.", status.HTTP_403_FORBIDDEN)
     reminder.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanUseAssignedOwners])
 def reminders_dashboard(request):
     records = Reminder.objects.select_related("owner", "owner__assignee", "creator").filter(due_time__lte=timezone.now() + timedelta(days=7))
+    if not has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+        records = records.filter(Q(creator=request.user) | Q(owner__assignee=request.user))
     return Response([reminder_data(item) for item in records])
 
 
@@ -704,21 +714,21 @@ def persons_dump_detail(request, person_id: int):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewOrganizationData])
 def received_messages(request):
     records = DirectMessage.objects.select_related("sender", "recipient").filter(recipient=request.user)
     return Response([message_data(item) for item in _paginate(records, request)])
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewOrganizationData])
 def sent_messages(request):
     records = DirectMessage.objects.select_related("sender", "recipient").filter(sender=request.user)
     return Response([message_data(item) for item in _paginate(records, request)])
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewOrganizationData])
 def send_message(request):
     recipient = organization_user_or_404(request, request.data.get("recipient"), active_only=True)
     text = str(request.data.get("message", "")).strip()
@@ -729,7 +739,7 @@ def send_message(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewOrganizationData])
 def mark_messages_read(request):
     records = DirectMessage.objects.filter(recipient=request.user, noticed_at__isnull=True)
     ids = request.data.get("ids")
@@ -743,13 +753,13 @@ def mark_messages_read(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewOrganizationData])
 def message_users(request):
     return Response(list(organization_users(request, active_only=True).values_list("id", flat=True)))
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewOrganizationData])
 def new_messages_count(request):
     return Response({"newMessageCount": DirectMessage.objects.filter(recipient=request.user, noticed_at__isnull=True).count()})
 

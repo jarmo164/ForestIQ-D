@@ -1,6 +1,7 @@
 /** ForestIQ Landscape Desk design: quiet Nordic data tooling with crisp operational hierarchy. */
 export type Privilege = "ADMIN" | "OWNER_PROFILE" | "ASSIGNED_OWNERS" | "PHONES" | "EVALUATION";
-export interface AppUser { id: string; name: string; privileges: Privilege[]; }
+export type OrganizationRole = "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER" | "CRM_MANAGER" | "EVALUATOR" | "CALLER" | "VIEWER";
+export interface AppUser { id: string; name: string; privileges: Privilege[]; roles: OrganizationRole[]; organizationId: string; }
 export interface Owner { id: string; name: string; status?: string | null; statusSetAt?: number | null; assignee?: { id: string; name: string } | null; phone?: string | null; email?: string | null; address?: string | null; info?: string | null; type?: string | null; cadastres?: Cadastre[]; }
 export interface Cadastre { id: string; name?: string | null; marked?: boolean; area?: number | null; forestArea?: number | null; type?: string | null; county?: string | null; municipality?: string | null; address?: string | null; labels?: string[]; }
 export interface Reminder { id: string; text: string; dueTime: number; owner?: Owner | null; creator?: string; }

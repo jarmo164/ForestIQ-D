@@ -144,7 +144,21 @@ SIMPLE_JWT = {
 }
 
 TOTP_TOKEN_LIFETIME_SECONDS = int(os.getenv("TOTP_TOKEN_LIFETIME_SECONDS", "180"))
-FORESTIQ_DEVMODE = env_bool("FORESTIQ_DEVMODE", DEBUG)
+# A production deployment can never enable the local password/TOTP bypass, even
+# if an environment variable is accidentally copied from development.
+FORESTIQ_DEVMODE = DEBUG and env_bool("FORESTIQ_DEVMODE", DEBUG)
+
+# Keycloak is an external public client: the browser performs Authorization
+# Code + PKCE and Django exchanges the code before minting its internal JWT.
+KEYCLOAK_OIDC_ENABLED = env_bool("KEYCLOAK_OIDC_ENABLED", False)
+KEYCLOAK_ISSUER = os.getenv("KEYCLOAK_ISSUER", "").rstrip("/")
+KEYCLOAK_CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "forestiq-web")
+KEYCLOAK_SCOPES = os.getenv("KEYCLOAK_SCOPES", "openid profile email")
+KEYCLOAK_ORGANIZATION_CLAIM = os.getenv("KEYCLOAK_ORGANIZATION_CLAIM", "organization_id")
+KEYCLOAK_HTTP_TIMEOUT_SECONDS = int(os.getenv("KEYCLOAK_HTTP_TIMEOUT_SECONDS", "10"))
+KEYCLOAK_JWKS_CACHE_SECONDS = int(os.getenv("KEYCLOAK_JWKS_CACHE_SECONDS", "3600"))
+KEYCLOAK_CLOCK_SKEW_SECONDS = int(os.getenv("KEYCLOAK_CLOCK_SKEW_SECONDS", "30"))
+KEYCLOAK_DISCOVERY_URL = f"{KEYCLOAK_ISSUER}/.well-known/openid-configuration"
 
 # Redis carries only queued work; the authoritative audit state remains in
 # DataSyncRun, so jobs stay observable even after a broker restart.

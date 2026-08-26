@@ -1,13 +1,16 @@
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
-from django.test import TestCase
+from unittest.mock import Mock, patch
+
+from django.test import TestCase, override_settings
 
 from accounts.models import (
     DEFAULT_ORGANIZATION_ID,
     DEFAULT_ORGANIZATION_SLUG,
     Organization,
     OrganizationMembership,
+    OrganizationRole,
     Privilege,
     PrivilegeCode,
     User,
@@ -70,3 +73,91 @@ class OrganizationOwnershipTests(TestCase):
         InheritanceCase.objects.create(owner=self.owner, source_notice_number="NOTICE-1")
         with self.assertRaises(IntegrityError):
             InheritanceCase.objects.create(owner=self.owner, source_notice_number="NOTICE-1")
+
+
+class KeycloakClaimMappingTests(TestCase):
+    @override_settings(
+        KEYCLOAK_OIDC_ENABLED=True,
+        KEYCLOAK_ISSUER="https://sso.example.test/realms/forestiq",
+        KEYCLOAK_CLIENT_ID="forestiq-web",
+        KEYCLOAK_ORGANIZATION_CLAIM="organization_id",
+    )
+    @patch("accounts.oidc._verified_claims")
+    @patch("accounts.oidc.requests.post")
+    @patch("accounts.oidc.discovery_document")
+    def test_keycloak_roles_create_an_oidc_managed_membership(self, mocked_discovery, mocked_post, mocked_claims):
+        from accounts.oidc import exchange_authorization_code
+
+        organization = Organization.objects.create(slug="keycloak-org", name="Keycloak organization")
+        mocked_discovery.return_value = {
+            "authorization_endpoint": "https://sso.example.test/auth",
+            "token_endpoint": "https://sso.example.test/token",
+            "jwks_uri": "https://sso.example.test/jwks",
+            "issuer": "https://sso.example.test/realms/forestiq",
+        }
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"id_token": "signed-provider-token"}
+        mocked_post.return_value = response
+        mocked_claims.return_value = {
+            "sub": "keycloak-subject-123",
+            "name": "Keycloak User",
+            "organization_id": str(organization.id),
+            "realm_access": {"roles": ["ORG_MEMBER", "CRM_MANAGER", "EVALUATOR"]},
+        }
+
+        user, membership = exchange_authorization_code(
+            code="authorization-code",
+            code_verifier="pkce-verifier",
+            redirect_uri="https://app.example/login",
+            nonce="browser-nonce",
+        )
+
+        self.assertEqual(user.id, "keycloak-subject-123")
+        self.assertEqual(membership.organization, organization)
+        self.assertTrue(membership.oidc_managed)
+        self.assertEqual(
+            membership.role_codes,
+            [OrganizationRole.MEMBER, OrganizationRole.CRM_MANAGER, OrganizationRole.EVALUATOR],
+        )
+        self.assertTrue(membership.has_privilege(PrivilegeCode.OWNER_PROFILE))
+        self.assertTrue(membership.has_privilege(PrivilegeCode.EVALUATION))
+        self.assertFalse(membership.has_privilege(PrivilegeCode.ADMIN))
+
+    @override_settings(
+        KEYCLOAK_OIDC_ENABLED=True,
+        KEYCLOAK_ISSUER="https://sso.example.test/realms/forestiq",
+        KEYCLOAK_CLIENT_ID="forestiq-web",
+        KEYCLOAK_ORGANIZATION_CLAIM="organization_id",
+    )
+    @patch("accounts.oidc._verified_claims")
+    @patch("accounts.oidc.requests.post")
+    @patch("accounts.oidc.discovery_document")
+    def test_keycloak_rejects_unknown_roles_before_creating_membership(self, mocked_discovery, mocked_post, mocked_claims):
+        from accounts.oidc import OIDCAuthenticationError, exchange_authorization_code
+
+        organization = Organization.objects.create(slug="keycloak-denied-org", name="Keycloak denied organization")
+        mocked_discovery.return_value = {
+            "authorization_endpoint": "https://sso.example.test/auth",
+            "token_endpoint": "https://sso.example.test/token",
+            "jwks_uri": "https://sso.example.test/jwks",
+            "issuer": "https://sso.example.test/realms/forestiq",
+        }
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"id_token": "signed-provider-token"}
+        mocked_post.return_value = response
+        mocked_claims.return_value = {
+            "sub": "keycloak-denied-subject",
+            "organization_id": str(organization.id),
+            "realm_access": {"roles": ["UNRELATED_ROLE"]},
+        }
+
+        with self.assertRaises(OIDCAuthenticationError):
+            exchange_authorization_code(
+                code="authorization-code",
+                code_verifier="pkce-verifier",
+                redirect_uri="https://app.example/login",
+            )
+
+        self.assertFalse(User.objects.filter(id="keycloak-denied-subject").exists())

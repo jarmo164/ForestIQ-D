@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from django.contrib.auth.models import Group
 
-from accounts.models import PrivilegeCode, User
+from accounts.models import OrganizationMembership, PrivilegeCode, User, roles_from_legacy_privileges
 
 ROLE_GROUPS = {
     PrivilegeCode.ADMIN: "ForestIQ Administrators",
@@ -23,3 +23,8 @@ def sync_user_groups(user: User) -> None:
     wanted_groups = [Group.objects.get_or_create(name=name)[0] for name in wanted_names]
     user.groups.remove(*Group.objects.filter(name__in=managed_names))
     user.groups.add(*wanted_groups)
+
+    # Local users remain supported only in development. Keep their tenant roles
+    # equivalent to the legacy privileges while never overwriting Keycloak state.
+    local_memberships = OrganizationMembership.objects.filter(user=user, oidc_managed=False)
+    local_memberships.update(roles=roles_from_legacy_privileges(granted))

@@ -2,6 +2,7 @@
 
 import base64
 import json
+from unittest.mock import Mock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -9,7 +10,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from api.auth import token_pair
-from accounts.models import Organization, Privilege, PrivilegeCode, User
+from accounts.models import Organization, OrganizationMembership, OrganizationRole, Privilege, PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, Owner, OwnerStatus
 from operations.models import Contract, Deal, DealOffer, InheritanceCase, Reminder
 
@@ -194,3 +195,98 @@ class MainParityWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["source"], "cadastre")
+
+
+class MembershipRoleAuthorizationTests(TestCase):
+    """AUTH-03: roles must apply within the active membership, not globally."""
+
+    def setUp(self):
+        self.organization = Organization.objects.create(slug="role-org", name="Role authorization organization")
+        self.viewer = User.objects.create_user("role-viewer", "Role Viewer", "very-secure-password", default_organization=self.organization)
+        self.caller = User.objects.create_user("role-caller", "Role Caller", "very-secure-password", default_organization=self.organization)
+        self.manager = User.objects.create_user("role-manager", "Role Manager", "very-secure-password", default_organization=self.organization)
+        self.assigned_owner = Owner.objects.create(id="50001010001", name="Assigned owner", assignee=self.caller, organization=self.organization)
+        self.other_owner = Owner.objects.create(id="50001010002", name="Other owner", assignee=self.manager, organization=self.organization)
+
+        self._set_roles(self.viewer, [OrganizationRole.MEMBER, OrganizationRole.VIEWER])
+        self._set_roles(self.caller, [OrganizationRole.MEMBER, OrganizationRole.CALLER])
+        self._set_roles(self.manager, [OrganizationRole.MEMBER, OrganizationRole.CRM_MANAGER])
+
+    def _set_roles(self, user, roles):
+        membership = OrganizationMembership.objects.get(user=user, organization=self.organization)
+        membership.set_roles(roles, oidc_managed=True)
+        return membership
+
+    def _client_for(self, user):
+        membership = OrganizationMembership.objects.get(user=user, organization=self.organization)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(user, membership)['actualToken']['token']}")
+        return client
+
+    def test_viewer_has_member_read_endpoint_but_not_owner_workflow_access(self):
+        client = self._client_for(self.viewer)
+
+        self.assertEqual(client.get("/api/services/status").status_code, 200)
+        self.assertEqual(client.get("/api/services/owners").status_code, 403)
+
+    def test_caller_can_read_only_its_assigned_owner_data(self):
+        client = self._client_for(self.caller)
+
+        self.assertEqual(client.get(f"/api/services/owners/{self.assigned_owner.id}").status_code, 200)
+        self.assertEqual(client.get(f"/api/services/owners/{self.other_owner.id}").status_code, 403)
+
+    def test_crm_manager_can_read_organization_owner_data(self):
+        response = self._client_for(self.manager).get(f"/api/services/owners/{self.other_owner.id}")
+
+        self.assertEqual(response.status_code, 200, response.data)
+
+    def test_internal_token_contains_membership_roles_and_privileges(self):
+        membership = OrganizationMembership.objects.get(user=self.manager, organization=self.organization)
+        access_token = token_pair(self.manager, membership)["actualToken"]["token"]
+        payload = json.loads(base64.urlsafe_b64decode(access_token.split(".")[1] + "=="))
+
+        self.assertIn(OrganizationRole.CRM_MANAGER, payload["roles"])
+        self.assertIn(PrivilegeCode.OWNER_PROFILE, payload["privileges"])
+        self.assertEqual(payload["organization_id"], str(self.organization.id))
+
+
+class ProductionLocalLoginTests(TestCase):
+    @override_settings(FORESTIQ_DEVMODE=False)
+    def test_password_login_is_rejected_when_local_login_is_disabled(self):
+        user = User.objects.create_user("production-local", "Production Local", "very-secure-password")
+        encoded = base64.b64encode(f"{user.id}:very-secure-password".encode("ascii")).decode("ascii")
+
+        response = self.client.post("/api/password-login", HTTP_AUTHORIZATION=f"Basic {encoded}")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["detail"], "Local development login is disabled.")
+
+    @override_settings(KEYCLOAK_OIDC_ENABLED=False, FORESTIQ_DEVMODE=False)
+    def test_oidc_configuration_does_not_expose_secrets_when_disabled(self):
+        response = self.client.get("/api/oidc/config")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {"enabled": False, "localLoginEnabled": False})
+
+
+class OidcExchangeEndpointTests(TestCase):
+    @patch("api.auth.exchange_authorization_code")
+    def test_exchange_returns_internal_token_with_keycloak_auth_source(self, mocked_exchange):
+        organization = Organization.objects.create(slug="oidc-api-org", name="OIDC API organization")
+        user = User.objects.create_user("oidc-api-user", "OIDC API user", "very-secure-password", default_organization=organization)
+        membership = OrganizationMembership.objects.get(user=user, organization=organization)
+        membership.set_roles([OrganizationRole.MEMBER, OrganizationRole.EVALUATOR], oidc_managed=True)
+        mocked_exchange.return_value = (user, membership)
+
+        response = self.client.post(
+            "/api/oidc/exchange",
+            {"code": "provider-code", "codeVerifier": "pkce-verifier", "redirectUri": "https://app.example/login", "nonce": "nonce"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        mocked_exchange.assert_called_once()
+        payload = json.loads(base64.urlsafe_b64decode(response.data["actualToken"]["token"].split(".")[1] + "=="))
+        self.assertEqual(payload["auth_source"], "keycloak")
+        self.assertIn(OrganizationRole.EVALUATOR, payload["roles"])
+        self.assertIn(PrivilegeCode.EVALUATION, payload["privileges"])
