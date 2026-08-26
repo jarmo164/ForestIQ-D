@@ -4,12 +4,25 @@ import base64
 import json
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import Privilege, PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, Owner, OwnerStatus
 from operations.models import Contract, Deal, DealOffer, InheritanceCase, Reminder
+
+
+class RenderCorsTests(TestCase):
+    @override_settings(CORS_ALLOWED_ORIGINS=["https://forestiq-d-ui.onrender.com"])
+    def test_render_static_client_origin_is_allowed_for_api_preflight(self):
+        response = self.client.options(
+            "/api/services/status",
+            HTTP_ORIGIN="https://forestiq-d-ui.onrender.com",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="GET",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["access-control-allow-origin"], "https://forestiq-d-ui.onrender.com")
 
 
 class ApiAuthenticationTests(TestCase):

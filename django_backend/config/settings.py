@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.gis",
+    "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
     "accounts",
@@ -35,6 +36,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -120,6 +122,15 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticated"],
     "EXCEPTION_HANDLER": "api.exceptions.api_exception_handler",
 }
+
+# Render deploys the MapLibre UI as a separate static site. Keep this list
+# explicit: an empty value leaves cross-origin requests disabled by default.
+CORS_ALLOWED_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("DJANGO_CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+CORS_ALLOW_CREDENTIALS = False
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.getenv("JWT_ACCESS_MINUTES", "200"))),

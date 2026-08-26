@@ -16,6 +16,7 @@ COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY django_backend /app
+COPY scripts/render-predeploy.sh /app/scripts/render-predeploy.sh
 
 RUN python manage.py collectstatic --noinput \
     && chown -R forestiq:forestiq /app

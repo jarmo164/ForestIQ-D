@@ -57,3 +57,7 @@
 - [x] Kontrollida uue hoidla sihtharu ning dokumenteerida edukas üleviimine.
 - [x] Pushida ForestIQ-D Django ümberkirjutuse praegune commit uude `main`-harusse.
 - [x] Kontrollida, et ForestIQ-D `main` ja `rewrite/django` osutavad samale commit’ile.
+- [x] Kaardistada Renderi jaoks olemasolev Django, Celery, Redis’e, PostGIS-i ja kasutajaliidese käivituskonfiguratsioon.
+- [x] Lisada Render Blueprint `render.yaml` Django API, Celery workeri, Celery Beati, Redis’e ja PostgreSQL/PostGIS-i teenustele.
+- [x] Lisada Renderi käivitusjuhis, migratsioonide käitamine ja kohaliku Blueprinti kontroll.
+- [ ] Pushida Renderi konfiguratsioon ForestIQ-D `main`-harusse.

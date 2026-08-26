@@ -15,6 +15,10 @@ ForestIQ on metsaostjate töölaud. Haru `rewrite` server on ümber ehitatud **P
 
 Django rakendused on jagatud selgete domeenipiiridega: `accounts` haldab identiteeti ja õigusi, `forestry` metsaomanike ning katastri domeeni, `operations` meeldetuletusi, sõnumeid ja lepinguid ning `api` säilitab REST-liidese ühilduvuse.
 
+## Renderi kasutuselevõtt
+
+Render Blueprint on failis [`render.yaml`](render.yaml). See loob Django API, Celery workeri, Celery Beati, Redis’e, PostgreSQL/PostGIS-i ning eraldi MapLibre’i staatilise kliendi. Täielik kasutuselevõtu, PostGIS-i aktiveerimise, keskkonnamuutujate ja lokaalsete mediafailide piirangute juhend on failis [`docs/RENDER_DEPLOY.md`](docs/RENDER_DEPLOY.md).
+
 ## Main-haru funktsioonide pariteet
 
 Django ümberkirjutus sisaldab nüüd lisaks omaniku-, katastri- ja kaartetöövoole kommertstehinguid, hindamist, pakkumiste revisjone, võidu/kaotuse olekuid ning võidetud tehingust lepingu drafti loomist. Pärimisjuhtum sisaldab ametliku teate kontrolli, juhtumi staatust, määramist, pärijate andmeid ja auditeeritud sündmusi. Kõik toimingud rakendavad olemasolevat ForestIQ õigust ning jätavad omaniku või juhtumi tööajalukku kirje.

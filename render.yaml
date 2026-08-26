@@ -1,0 +1,122 @@
+# Render Blueprint for the ForestIQ Django rewrite.
+# Deploy this Blueprint from the repository's main branch.
+
+services:
+  - type: web
+    runtime: docker
+    name: forestiq-d-api
+    branch: main
+    dockerfilePath: django_backend/Dockerfile
+    dockerContext: .
+    dockerCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3 --access-logfile - --error-logfile -
+    preDeployCommand: sh scripts/render-predeploy.sh
+    healthCheckPath: /api/services/status
+    plan: starter
+    autoDeployTrigger: commit
+    disk:
+      name: forestiq-media
+      mountPath: /app/media
+      sizeGB: 1
+    envVars:
+      - fromGroup: forestiq-d-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: forestiq-d-postgis
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: forestiq-d-redis
+          property: connectionString
+      - key: DJANGO_ALLOWED_HOSTS
+        value: .onrender.com,localhost,127.0.0.1
+      - key: DJANGO_CORS_ALLOWED_ORIGINS
+        value: https://forestiq-d-ui.onrender.com
+      - key: FORESTIQ_MEDIA_ROOT
+        value: /app/media
+
+  - type: worker
+    runtime: docker
+    name: forestiq-d-worker
+    branch: main
+    dockerfilePath: django_backend/Dockerfile
+    dockerContext: .
+    dockerCommand: celery -A config worker --loglevel=INFO --concurrency=2
+    plan: starter
+    autoDeployTrigger: commit
+    envVars:
+      - fromGroup: forestiq-d-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: forestiq-d-postgis
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: forestiq-d-redis
+          property: connectionString
+
+  - type: worker
+    runtime: docker
+    name: forestiq-d-beat
+    branch: main
+    dockerfilePath: django_backend/Dockerfile
+    dockerContext: .
+    dockerCommand: celery -A config beat --loglevel=INFO
+    plan: starter
+    autoDeployTrigger: commit
+    envVars:
+      - fromGroup: forestiq-d-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: forestiq-d-postgis
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: forestiq-d-redis
+          property: connectionString
+
+  - type: keyvalue
+    name: forestiq-d-redis
+    plan: starter
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+    persistenceMode: journal-snapshot
+
+  - type: web
+    runtime: static
+    name: forestiq-d-ui
+    branch: main
+    buildCommand: cd forestiq-ui && corepack enable && corepack prepare pnpm@10.15.1 --activate && pnpm install --frozen-lockfile && pnpm build
+    staticPublishPath: forestiq-ui/dist/public
+    autoDeployTrigger: commit
+    envVars:
+      - key: VITE_API_BASE
+        value: https://forestiq-d-api.onrender.com/api
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+databases:
+  - name: forestiq-d-postgis
+    databaseName: forestiq
+    user: forestiq
+    plan: basic-1gb
+
+envVarGroups:
+  - name: forestiq-d-shared
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: FORESTIQ_DEVMODE
+        value: "false"
+      - key: TIME_ZONE
+        value: Europe/Tallinn
+      - key: FORESTIQ_TASKS_INLINE
+        value: "false"
+      - key: FORESTIQ_METSAREGISTER_DELTA_INTERVAL_SECONDS
+        value: "3600"
