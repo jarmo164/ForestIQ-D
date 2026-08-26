@@ -60,4 +60,4 @@
 - [x] Kaardistada Renderi jaoks olemasolev Django, Celery, Redis’e, PostGIS-i ja kasutajaliidese käivituskonfiguratsioon.
 - [x] Lisada Render Blueprint `render.yaml` Django API, Celery workeri, Celery Beati, Redis’e ja PostgreSQL/PostGIS-i teenustele.
 - [x] Lisada Renderi käivitusjuhis, migratsioonide käitamine ja kohaliku Blueprinti kontroll.
-- [ ] Pushida Renderi konfiguratsioon ForestIQ-D `main`-harusse.
+- [x] Pushida Renderi konfiguratsioon ForestIQ-D `main`-harusse.
