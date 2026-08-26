@@ -37,6 +37,7 @@ from forestry.models import (
 )
 from operations.models import ApplicationMessage, Contract, ContractHistory, Deal, DealStage, DirectMessage, PersonDump, Reminder
 
+from .organization import organization_user_or_404, organization_users, request_organization_id
 from .permissions import CanEvaluate, CanManageOwners, CanUseAssignedOwners, CanUsePhones, IsAdmin, can_access_owner
 from .serializers import (
     cadastre_data,
@@ -86,7 +87,12 @@ def sync_runs(request):
 def cadastre_sync(request, cadastre_id: str):
     """Queue one cadastral unit's source refresh through Celery."""
     cadastre = get_object_or_404(Cadastre, id=cadastre_id)
-    run = enqueue_cadastre_sync(cadastre.id, requested_by_id=request.user.id, source="api")
+    run = enqueue_cadastre_sync(
+        cadastre.id,
+        organization_id=str(request_organization_id(request)),
+        requested_by_id=request.user.id,
+        source="api",
+    )
     return Response(_sync_run_data(run), status=status.HTTP_202_ACCEPTED)
 
 
@@ -263,7 +269,7 @@ def service_status(request):
 @permission_classes([IsAdmin])
 def admin_users(request):
     if request.method == "GET":
-        return Response([_user_payload(user) for user in User.objects.prefetch_related("privilege_assignments").all()])
+        return Response([_user_payload(user) for user in organization_users(request).prefetch_related("privilege_assignments")])
 
     user_id = str(request.data.get("id", "")).strip()
     full_name = str(request.data.get("name", "")).strip()
@@ -274,7 +280,7 @@ def admin_users(request):
     if User.objects.filter(id=user_id).exists():
         return _detail("A user with that id already exists.", status.HTTP_409_CONFLICT)
     with transaction.atomic():
-        user = User.objects.create_user(user_id, full_name, password)
+        user = User.objects.create_user(user_id, full_name, password, default_organization_id=request_organization_id(request))
         Privilege.objects.bulk_create([Privilege(user=user, code=code) for code in privileges if code in PrivilegeCode.values])
         sync_user_groups(user)
     return Response(_user_payload(user), status=status.HTTP_201_CREATED)
@@ -283,7 +289,7 @@ def admin_users(request):
 @api_view(["POST", "DELETE"])
 @permission_classes([IsAdmin])
 def admin_user_detail(request, user_id: str):
-    user = get_object_or_404(User, id=user_id)
+    user = organization_user_or_404(request, user_id)
     if request.method == "DELETE":
         if user.id == request.user.id:
             return _detail("You cannot delete the current user.")
@@ -383,7 +389,7 @@ def owner_status(request, owner_id: str):
     if request.method == "GET":
         return Response(
             {
-                "possibleAssignees": [user_data(user) for user in User.objects.filter(is_active=True)],
+                "possibleAssignees": [user_data(user) for user in organization_users(request, active_only=True)],
                 "possibleOwnerStatuses": list(OwnerStatus.objects.values_list("id", flat=True)),
                 "status": owner.status,
                 "assignee": user_data(owner.assignee),
@@ -405,7 +411,7 @@ def owner_status(request, owner_id: str):
 def owner_assignee(request, owner_id: str):
     owner = get_object_or_404(Owner, id=owner_id)
     assignee_id = request.data.get("assignee")
-    assignee = get_object_or_404(User, id=assignee_id) if assignee_id else None
+    assignee = organization_user_or_404(request, assignee_id) if assignee_id else None
     owner.assignee = assignee
     owner.save(update_fields=["assignee"])
     return Response(owner_data(owner))
@@ -597,7 +603,7 @@ def caller_workdesk_prep(request):
     return Response(
         {
             "statuses": [owner_status_data(item) for item in OwnerStatus.objects.all()],
-            "users": [user_data(user) for user in User.objects.filter(is_active=True)],
+            "users": [user_data(user) for user in organization_users(request, active_only=True)],
         }
     )
 
@@ -608,7 +614,7 @@ def admin_workdesk_prep(request):
     return Response(
         {
             "statuses": [owner_status_data(item) for item in OwnerStatus.objects.all()],
-            "users": [user_data(user) for user in User.objects.filter(is_active=True)],
+            "users": [user_data(user) for user in organization_users(request, active_only=True)],
             "counties": list(Cadastre.objects.exclude(county="").values_list("county", flat=True).distinct()),
             "municipalities": list(Cadastre.objects.exclude(municipality="").values_list("municipality", flat=True).distinct()),
         }
@@ -625,7 +631,7 @@ def admin_workdesk_search(request):
 @permission_classes([IsAdmin])
 def admin_workdesk_assign(request):
     owner_ids = request.data.get("owners", [])
-    assignee = get_object_or_404(User, id=request.data.get("userId"))
+    assignee = organization_user_or_404(request, request.data.get("userId"))
     queryset = Owner.objects.filter(id__in=owner_ids)
     if not request.data.get("reassign", False):
         queryset = queryset.filter(assignee__isnull=True)
@@ -714,7 +720,7 @@ def sent_messages(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def send_message(request):
-    recipient = get_object_or_404(User, id=request.data.get("recipient"))
+    recipient = organization_user_or_404(request, request.data.get("recipient"), active_only=True)
     text = str(request.data.get("message", "")).strip()
     if not text:
         return _detail("Message is required.")
@@ -739,7 +745,7 @@ def mark_messages_read(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def message_users(request):
-    return Response(list(User.objects.filter(is_active=True).values_list("id", flat=True)))
+    return Response(list(organization_users(request, active_only=True).values_list("id", flat=True)))
 
 
 @api_view(["GET"])
@@ -834,7 +840,7 @@ def owner_followings(request, owner_id: str):
     if denied:
         return denied
     follower_ids = list(owner.followings.values_list("user_id", flat=True))
-    potential_ids = list(User.objects.exclude(id__in=follower_ids).filter(is_active=True).values_list("id", flat=True))
+    potential_ids = list(organization_users(request, active_only=True).exclude(id__in=follower_ids).values_list("id", flat=True))
     return Response({"followers": follower_ids, "potentialFollowers": potential_ids})
 
 
@@ -844,7 +850,7 @@ def owner_following_detail(request, owner_id: str, user_id: str):
     owner, denied = _owner_or_forbidden(request, owner_id)
     if denied:
         return denied
-    user = get_object_or_404(User, id=user_id)
+    user = organization_user_or_404(request, user_id)
     if request.method == "POST":
         OwnerFollowing.objects.get_or_create(owner=owner, user=user)
     else:
@@ -855,7 +861,7 @@ def owner_following_detail(request, owner_id: str, user_id: str):
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def user_statistics_prep(request):
-    return Response({"users": [user_data(user) for user in User.objects.filter(is_active=True)], "statuses": list(OwnerStatus.objects.values_list("id", flat=True))})
+    return Response({"users": [user_data(user) for user in organization_users(request, active_only=True)], "statuses": list(OwnerStatus.objects.values_list("id", flat=True))})
 
 
 @api_view(["GET"])

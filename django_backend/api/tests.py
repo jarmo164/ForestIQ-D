@@ -6,8 +6,10 @@ import json
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
-from accounts.models import Privilege, PrivilegeCode, User
+from api.auth import token_pair
+from accounts.models import Organization, Privilege, PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, Owner, OwnerStatus
 from operations.models import Contract, Deal, DealOffer, InheritanceCase, Reminder
 
@@ -66,11 +68,42 @@ class ApiAuthenticationTests(TestCase):
         self.assertEqual(response.data[0]["message"], "Called the owner.")
 
 
+class OrganizationIsolationTests(TestCase):
+    """AUTH-02 negative API checks for tenant-bounded querysets and JWT claims."""
+
+    def setUp(self):
+        self.organization_a = Organization.objects.create(slug="api-org-a", name="API organization A")
+        self.organization_b = Organization.objects.create(slug="api-org-b", name="API organization B")
+        self.user_a = User.objects.create_user("api-org-a-user", "API organization A user", "very-secure-password", default_organization=self.organization_a)
+        Privilege.objects.create(user=self.user_a, code=PrivilegeCode.OWNER_PROFILE)
+        self.owner_b = Owner.objects.create(id="39901010001", name="Organization B owner", organization=self.organization_b)
+
+    def test_user_cannot_read_an_owner_from_another_organization(self):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.user_a)['actualToken']['token']}")
+
+        response = client.get(f"/api/services/owners/{self.owner_b.id}")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Owner.objects.filter(id=self.owner_b.id, organization=self.organization_b).exists())
+
+    def test_jwt_organization_without_membership_is_rejected(self):
+        refresh = RefreshToken.for_user(self.user_a)
+        access = refresh.access_token
+        access["organization_id"] = str(self.organization_b.id)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+
+        response = client.get("/api/services/status")
+
+        self.assertEqual(response.status_code, 401)
+
+
 class AdminWorkflowTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser("admin", "Administrator", "very-secure-admin-password")
         self.client = APIClient()
-        self.client.force_authenticate(self.admin)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.admin)['actualToken']['token']}")
         OwnerStatus.objects.create(id="ASSIGNED", days_out_of_search=60, color_hex="c5edc8", protected=True)
 
     def test_admin_can_create_and_assign_owner_status(self):
@@ -85,7 +118,7 @@ class MainParityWorkflowTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser("parity-admin", "Parity administrator", "very-secure-admin-password")
         self.client = APIClient()
-        self.client.force_authenticate(self.admin)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.admin)['actualToken']['token']}")
         self.owner = Owner.objects.create(id="48001010001", name="Parity owner", assignee=self.admin)
         self.cadastre = Cadastre.objects.create(id="48001:001:0001", name="Parity parcel")
         self.owner.cadastres.add(self.cadastre)

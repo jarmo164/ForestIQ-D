@@ -15,7 +15,9 @@ from psycopg.rows import dict_row
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from accounts.models import Privilege, User
+from accounts.models import OrganizationMembership, Privilege, User
+from accounts.organization_context import organization_scope
+from accounts.organization_selection import active_organization
 from forestry.models import (
     Cadastre,
     CadastreLabel,
@@ -60,6 +62,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--confirm", action="store_true", help="Confirm that the legacy database is a read-only migration source.")
+        parser.add_argument("--organization", required=True, help="Organization UUID or slug that will own the imported business records")
 
     def handle(self, *args, **options):
         if not options["confirm"]:
@@ -67,14 +70,18 @@ class Command(BaseCommand):
         source_url = os.getenv("LEGACY_DATABASE_URL")
         if not source_url:
             raise CommandError("LEGACY_DATABASE_URL is required.")
+        self.organization = active_organization(options["organization"])
+        if self.organization is None:
+            raise CommandError("--organization must identify an active organization by UUID or slug.")
         with psycopg.connect(source_url, row_factory=dict_row) as source:
             self.source = source
-            with transaction.atomic():
-                self.import_users()
-                self.import_owner_statuses()
-                self.import_owners_and_cadastres()
-                self.import_owner_activity()
-                self.import_operational_data()
+            with organization_scope(self.organization.id):
+                with transaction.atomic():
+                    self.import_users()
+                    self.import_owner_statuses()
+                    self.import_owners_and_cadastres()
+                    self.import_owner_activity()
+                    self.import_operational_data()
         self.stdout.write(self.style.SUCCESS("Legacy MetsIS data import completed."))
 
     def rows(self, table):
@@ -88,18 +95,23 @@ class Command(BaseCommand):
 
     def import_users(self):
         for row in self.rows("users"):
-            user, _ = User.objects.update_or_create(
-                id=row["id"],
-                defaults={
-                    "full_name": row.get("fullname") or row["id"],
-                    "password": row.get("password_hash") or "!",
-                    "totp_secret": row.get("totp_secret"),
-                    "visible": bool(row.get("ivisible", False)),
-                    "is_active": True,
-                    "is_staff": False,
-                    "is_superuser": False,
-                },
-            )
+            defaults = {
+                "full_name": row.get("fullname") or row["id"],
+                "password": row.get("password_hash") or "!",
+                "totp_secret": row.get("totp_secret"),
+                "visible": bool(row.get("ivisible", False)),
+                "is_active": True,
+                "is_staff": False,
+                "is_superuser": False,
+            }
+            user = User.objects.filter(id=row["id"]).first()
+            if user is None:
+                user = User.objects.create(id=row["id"], default_organization=self.organization, **defaults)
+            else:
+                for field, value in defaults.items():
+                    setattr(user, field, value)
+                user.save(update_fields=tuple(defaults))
+                OrganizationMembership.objects.get_or_create(organization=self.organization, user=user)
         for row in self.rows("privileges"):
             if User.objects.filter(id=row["user_id"]).exists():
                 Privilege.objects.get_or_create(user_id=row["user_id"], code=row["id"])

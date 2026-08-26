@@ -2,6 +2,8 @@
 
 from django.core.management.base import BaseCommand, CommandError
 
+from accounts.organization_selection import active_organization
+from accounts.organization_context import organization_scope
 from forestry.models import DataSyncRun
 from forestry.services.import_runner import API_SOURCES, configured_sources, run_cadastre_import, selected_cadastres
 
@@ -17,16 +19,22 @@ class Command(BaseCommand):
         parser.add_argument("--limit", type=int, help="Maximum number of cadastral units when --all is used")
         parser.add_argument("--dry-run", action="store_true", help="Validate configuration and print the planned scope without API calls or database writes")
         parser.add_argument("--continue-on-error", action="store_true", help="Continue with later sources and cadastral units after an API error")
+        parser.add_argument("--organization", required=True, help="Organization UUID or slug that owns the import")
 
     def handle(self, *args, **options):
+        organization = active_organization(options["organization"])
+        if organization is None:
+            raise CommandError("--organization must identify an active organization by UUID or slug.")
         try:
             sources, _skipped = configured_sources(API_SOURCES, options["source"])
-            cadastres = selected_cadastres(cadastre_id=options["cadastre"], all_cadastres=options["all"], limit=options["limit"])
+            with organization_scope(organization.id):
+                cadastres = selected_cadastres(cadastre_id=options["cadastre"], all_cadastres=options["all"], limit=options["limit"])
         except ValueError as exc:
             raise CommandError(str(exc)) from exc
         source_names = ", ".join(source.key for source in sources)
         forestek_selected = any(source.key == "forestek" for source in sources)
-        forestek_completed = DataSyncRun.objects.filter(source__icontains="forestek", status=DataSyncRun.Status.SUCCEEDED).exists()
+        with organization_scope(organization.id):
+            forestek_completed = DataSyncRun.objects.filter(source__icontains="forestek", status=DataSyncRun.Status.SUCCEEDED).exists()
         if forestek_selected and forestek_completed:
             raise CommandError("Forestek initial import has already completed and is intentionally one-time only.")
         if options["dry_run"]:
@@ -35,7 +43,7 @@ class Command(BaseCommand):
             return
         failed = 0
         for cadastre in cadastres:
-            run = run_cadastre_import(cadastre=cadastre, sources=sources, category="api", continue_on_error=options["continue_on_error"])
+            run = run_cadastre_import(cadastre=cadastre, organization_id=str(organization.id), sources=sources, category="api", continue_on_error=options["continue_on_error"])
             self.stdout.write(f"{cadastre.id}: run {run.id} {run.status} {run.result}")
             if run.status == "FAILED":
                 failed += 1

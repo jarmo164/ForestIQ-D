@@ -7,12 +7,14 @@ from datetime import datetime, timezone as datetime_timezone
 from decimal import Decimal, InvalidOperation
 import json
 from typing import Any, Iterator
+from uuid import UUID
 
 import requests
 from django.conf import settings
 from django.db import transaction
 from django.utils.dateparse import parse_datetime
 
+from accounts.organization_context import current_organization_id
 from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, ForestRegistryFeature
 from forestry.services.external_sync import ExternalSourceError, geometry_from_geojson
 
@@ -21,6 +23,15 @@ def _safe_field(name: str) -> str:
     if not name.replace("_", "").isalnum():
         raise ExternalSourceError("WFS CQL field contains unsupported characters")
     return name
+
+
+def _require_organization_context(organization_id: str) -> UUID:
+    """Ensure an import is executing under the tenant supplied to its caller."""
+
+    expected = UUID(str(organization_id))
+    if current_organization_id() != expected:
+        raise ValueError("Metsaregister import requires the matching organization context.")
+    return expected
 
 
 def _cql_equals(values: dict[str, str | int]) -> str:
@@ -160,9 +171,15 @@ def _store_allocation(*, report: FullImportReport, layer: str, feature: dict[str
             report.updated_subparts += 1
 
 
-def import_all_metsaregister(*, page_size: int | None = None, fetch_notifications: bool = True) -> FullImportReport:
+def import_all_metsaregister(
+    *,
+    organization_id: str,
+    page_size: int | None = None,
+    fetch_notifications: bool = True,
+) -> FullImportReport:
     """Import every configured Metsaregister allocation; notifications are fetched only for new allocations."""
 
+    _require_organization_context(organization_id)
     layer = settings.FORESTIQ_METSAREGISTER_FULL_WFS_LAYER
     if not settings.FORESTIQ_METSAREGISTER_WFS_URL or not layer:
         raise ExternalSourceError("Metsaregister WFS URL and full-import layer must be configured")
@@ -173,9 +190,16 @@ def import_all_metsaregister(*, page_size: int | None = None, fetch_notification
     return report
 
 
-def import_metsaregister_delta(*, since: datetime, page_size: int | None = None, fetch_notifications: bool = True) -> FullImportReport:
+def import_metsaregister_delta(
+    *,
+    organization_id: str,
+    since: datetime,
+    page_size: int | None = None,
+    fetch_notifications: bool = True,
+) -> FullImportReport:
     """Use a server-side CQL timestamp filter and persist only newly discovered allocations."""
 
+    _require_organization_context(organization_id)
     layer = settings.FORESTIQ_METSAREGISTER_FULL_WFS_LAYER
     if not settings.FORESTIQ_METSAREGISTER_WFS_URL or not layer:
         raise ExternalSourceError("Metsaregister WFS URL and delta layer must be configured")

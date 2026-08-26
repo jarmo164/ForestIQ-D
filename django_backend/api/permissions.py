@@ -5,6 +5,7 @@ from __future__ import annotations
 from rest_framework.permissions import BasePermission
 
 from accounts.models import PrivilegeCode
+from accounts.organization_context import current_organization_id
 
 
 class HasForestIQPrivilege(BasePermission):
@@ -16,6 +17,7 @@ class HasForestIQPrivilege(BasePermission):
         return bool(
             request.user
             and request.user.is_authenticated
+            and current_organization_id() is not None
             and request.user.has_privilege(*self.required_privileges)
         )
 

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from django.conf import settings
 from django.utils import timezone
 
+from accounts.organization_context import organization_scope
 from forestry.models import Cadastre, DataSyncRun
 from forestry.services.external_sync import (
     sync_cadastre_wfs,
@@ -19,7 +20,7 @@ from forestry.services.external_sync import (
 )
 
 
-Importer = Callable[[str], int]
+Importer = Callable[..., int]
 
 
 @dataclass(frozen=True)
@@ -75,26 +76,35 @@ def configured_sources(definitions: dict[str, SourceDefinition], requested: str)
     return selected, skipped
 
 
-def run_cadastre_import(*, cadastre: Cadastre, sources: list[SourceDefinition], category: str, continue_on_error: bool) -> DataSyncRun:
+def run_cadastre_import(
+    *,
+    cadastre: Cadastre,
+    organization_id: str,
+    sources: list[SourceDefinition],
+    category: str,
+    continue_on_error: bool,
+) -> DataSyncRun:
     """Run selected source importers synchronously and persist one audit record per cadastre."""
 
-    run = DataSyncRun.objects.create(cadastre=cadastre, source=f"cli:{category}:{','.join(source.key for source in sources)}", status=DataSyncRun.Status.RUNNING, started_at=timezone.now())
-    result: dict[str, Any] = {}
-    errors: dict[str, str] = {}
-    for source in sources:
-        try:
-            result[source.key] = source.importer(cadastre.id)
-        except Exception as exc:  # External sources are intentionally surfaced in the durable audit record.
-            errors[source.key] = str(exc)[:4000]
-            if not continue_on_error:
-                break
-    run.finished_at = timezone.now()
-    run.result = result
-    if errors:
-        run.status = DataSyncRun.Status.FAILED
-        run.error_message = "; ".join(f"{key}: {message}" for key, message in errors.items())[:4000]
-    else:
-        run.status = DataSyncRun.Status.SUCCEEDED
-        run.error_message = ""
-    run.save(update_fields=("status", "started_at", "finished_at", "result", "error_message"))
-    return run
+    with organization_scope(organization_id):
+        scoped_cadastre = Cadastre.objects.get(id=cadastre.id)
+        run = DataSyncRun.objects.create(cadastre=scoped_cadastre, source=f"cli:{category}:{','.join(source.key for source in sources)}", status=DataSyncRun.Status.RUNNING, started_at=timezone.now())
+        result: dict[str, Any] = {}
+        errors: dict[str, str] = {}
+        for source in sources:
+            try:
+                result[source.key] = source.importer(scoped_cadastre.id, organization_id=str(organization_id))
+            except Exception as exc:  # External sources are intentionally surfaced in the durable audit record.
+                errors[source.key] = str(exc)[:4000]
+                if not continue_on_error:
+                    break
+        run.finished_at = timezone.now()
+        run.result = result
+        if errors:
+            run.status = DataSyncRun.Status.FAILED
+            run.error_message = "; ".join(f"{key}: {message}" for key, message in errors.items())[:4000]
+        else:
+            run.status = DataSyncRun.Status.SUCCEEDED
+            run.error_message = ""
+        run.save(update_fields=("status", "started_at", "finished_at", "result", "error_message"))
+        return run

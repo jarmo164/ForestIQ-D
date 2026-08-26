@@ -9,6 +9,8 @@ from django.contrib.auth.models import PermissionsMixin
 from django.core.exceptions import ValidationError
 from django.db import models
 
+from accounts.organization_context import OrganizationScopedManager, current_organization_id
+
 
 DEFAULT_ORGANIZATION_SLUG = "forestiq-default"
 DEFAULT_ORGANIZATION_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
@@ -47,13 +49,20 @@ class OrganizationScopedModel(models.Model):
         default=default_organization_id,
     )
     organization_parent_fields: tuple[str, ...] = ()
+    objects = OrganizationScopedManager()
+    all_objects = models.Manager()
 
     class Meta:
         abstract = True
+        default_manager_name = "objects"
+        base_manager_name = "all_objects"
 
     def save(self, *args, **kwargs):
         """Keep dependent records in the same organization as their aggregate root."""
 
+        active_organization_id = current_organization_id()
+        if self._state.adding and active_organization_id and self.organization_id == DEFAULT_ORGANIZATION_ID:
+            self.organization_id = active_organization_id
         parent_organization_ids = set()
         for parent_field in self.organization_parent_fields:
             parent = getattr(self, parent_field, None)

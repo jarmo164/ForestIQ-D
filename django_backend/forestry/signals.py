@@ -24,6 +24,6 @@ def enforce_owner_cadastre_organization(sender, instance, action, reverse, model
 
     if action == "post_add":
         if reverse:
-            OwnerCadastre.objects.filter(owner=instance, cadastre_id__in=pk_set).exclude(organization_id=instance.organization_id).update(organization_id=instance.organization_id)
+            OwnerCadastre.all_objects.filter(owner=instance, cadastre_id__in=pk_set).exclude(organization_id=instance.organization_id).update(organization_id=instance.organization_id)
         else:
-            OwnerCadastre.objects.filter(cadastre=instance, owner_id__in=pk_set).exclude(organization_id=instance.organization_id).update(organization_id=instance.organization_id)
+            OwnerCadastre.all_objects.filter(cadastre=instance, owner_id__in=pk_set).exclude(organization_id=instance.organization_id).update(organization_id=instance.organization_id)

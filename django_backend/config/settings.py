@@ -41,6 +41,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "api.middleware.OrganizationContextMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -116,7 +117,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "api.authentication.OrganizationJWTAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated"],
@@ -157,11 +158,11 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BEAT_SCHEDULE = {
     "forestiq-daily-portfolio-sync": {
-        "task": "forestry.tasks.enqueue_portfolio_sync",
+        "task": "forestry.tasks.enqueue_all_organizations_portfolio_sync",
         "schedule": float(os.getenv("FORESTIQ_PORTFOLIO_SYNC_INTERVAL_SECONDS", "86400")),
     },
     "forestiq-metsaregister-cql-delta": {
-        "task": "forestry.tasks.run_metsaregister_delta_check",
+        "task": "forestry.tasks.enqueue_all_organizations_metsaregister_delta_check",
         "schedule": float(os.getenv("FORESTIQ_METSAREGISTER_DELTA_INTERVAL_SECONDS", "3600")),
     },
 }

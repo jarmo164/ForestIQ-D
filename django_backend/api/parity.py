@@ -38,6 +38,7 @@ from operations.models import (
 )
 
 from .permissions import CanEvaluate, CanManageOwners, IsAdmin, can_access_owner
+from .organization import organization_user_or_404, organization_users, request_organization_id
 from .serializers import cadastre_summary, json_value, owner_summary, user_data
 
 
@@ -150,7 +151,7 @@ def deals_by_owner(request, owner_id: str):
     evaluator = None
     evaluator_id = data.get("evaluatorId") or data.get("evaluatorSubject")
     if evaluator_id:
-        evaluator = get_object_or_404(User, id=evaluator_id, is_active=True)
+        evaluator = organization_user_or_404(request, evaluator_id, active_only=True)
     request_evaluation = bool(data.get("requestEvaluation", False))
     with transaction.atomic():
         deal = Deal.objects.create(
@@ -199,7 +200,7 @@ def deal_evaluation_claim(request, deal_id: str):
 def deal_evaluation_assignment(request, deal_id: str):
     deal = _get_deal(deal_id)
     evaluator_id = request.data.get("evaluatorId") or request.data.get("evaluatorSubject")
-    deal.evaluator = get_object_or_404(User, id=evaluator_id, is_active=True) if evaluator_id else None
+    deal.evaluator = organization_user_or_404(request, evaluator_id, active_only=True) if evaluator_id else None
     deal.stage = DealStage.EVALUATION
     deal.save(update_fields=["evaluator", "stage", "updated_at"])
     return Response(_deal_data(_get_deal(deal_id)))
@@ -467,7 +468,7 @@ def _save_heir(case: InheritanceCase, data: dict, *, heir: InheritanceHeir | Non
     target.personal_code = str(data.get("personalCode", "")); target.registry_code = str(data.get("registryCode", ""))
     target.inheritance_share = str(data.get("inheritanceShare", "")); target.relation_to_deceased = str(data.get("relationToDeceased", ""))
     target.phone = str(data.get("phone", "")); target.email = str(data.get("email", "")); target.contact_status = str(data.get("contactStatus", ""))
-    target.source = str(data.get("source", "")); target.assigned_to = get_object_or_404(User, id=assignee_id, is_active=True) if assignee_id else None
+    target.source = str(data.get("source", "")); target.assigned_to = organization_user_or_404(request, assignee_id, active_only=True) if assignee_id else None
     target.save()
     return target
 
@@ -761,12 +762,17 @@ def integration_start(request, key: str):
         return _detail("Forestek is a one-time initial import. Run the controlled management command only before its first successful import.", status.HTTP_409_CONFLICT)
     cadastre_id = request.data.get("cadastreId") or request.data.get("parameters", {}).get("cadastreId")
     if cadastre_id:
-        run = enqueue_cadastre_sync(str(cadastre_id), requested_by_id=request.user.id, source=key.lower())
+        run = enqueue_cadastre_sync(
+            str(cadastre_id),
+            organization_id=str(request_organization_id(request)),
+            requested_by_id=request.user.id,
+            source=key.lower(),
+        )
         return Response({"key": key, "status": run.status, "runId": run.id, "taskId": run.task_id}, status=status.HTTP_202_ACCEPTED)
     if settings.FORESTIQ_TASKS_INLINE:
-        result = enqueue_portfolio_sync()
+        result = enqueue_portfolio_sync(str(request_organization_id(request)))
         return Response({"key": key, "status": "SUCCEEDED", "result": result})
-    task = enqueue_portfolio_sync.delay()
+    task = enqueue_portfolio_sync.delay(str(request_organization_id(request)))
     return Response({"key": key, "status": "QUEUED", "taskId": task.id}, status=status.HTTP_202_ACCEPTED)
 
 
@@ -804,7 +810,14 @@ def registry_recover(request):
     batch_size = min(max(int(request.data.get("batchSize", 25)), 1), 200)
     queued = []
     for cadastre_id in _stale_cadastres().order_by("id").values_list("id", flat=True)[:batch_size]:
-        queued.append(enqueue_cadastre_sync(cadastre_id, requested_by_id=request.user.id, source="recovery").id)
+        queued.append(
+            enqueue_cadastre_sync(
+                cadastre_id,
+                organization_id=str(request_organization_id(request)),
+                requested_by_id=request.user.id,
+                source="recovery",
+            ).id
+        )
     return Response({"queued": len(queued), "runIds": queued}, status=status.HTTP_202_ACCEPTED)
 
 
@@ -817,7 +830,12 @@ def registry_health(request):
 
 def _registry_refresh(request, cadastre_id: str, source: str):
     get_object_or_404(Cadastre, id=cadastre_id)
-    run = enqueue_cadastre_sync(cadastre_id, requested_by_id=request.user.id, source=source)
+    run = enqueue_cadastre_sync(
+        cadastre_id,
+        organization_id=str(request_organization_id(request)),
+        requested_by_id=request.user.id,
+        source=source,
+    )
     return Response({"id": run.id, "cadastreId": cadastre_id, "source": source, "status": run.status, "taskId": run.task_id}, status=status.HTTP_202_ACCEPTED)
 
 

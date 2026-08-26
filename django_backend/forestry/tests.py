@@ -10,13 +10,21 @@ from django.utils import timezone
 from django.contrib.gis.geos import MultiPolygon, Polygon
 from rest_framework.test import APIClient
 
-from accounts.models import User
+from accounts.organization_context import organization_scope
+from accounts.models import Organization, User
+from api.auth import token_pair
 from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, Owner, OwnerLog
 from operations.models import Deal, DealStage
 from forestry.services import import_runner
 from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance
 from forestry.services.metsaregister_full_import import FullImportReport, import_metsaregister_delta
-from forestry.tasks import run_metsaregister_delta_check
+from forestry.tasks import run_cadastre_sync, run_metsaregister_delta_check
+
+
+def authenticated_client(user: User) -> APIClient:
+    client = APIClient()
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(user)['actualToken']['token']}")
+    return client
 
 
 class CadastreWfsTests(TestCase):
@@ -51,7 +59,8 @@ class CadastreWfsTests(TestCase):
         }
         get.return_value = response
 
-        self.assertEqual(sync_cadastre_wfs(self.cadastre.id), 1)
+        with organization_scope(self.cadastre.organization_id):
+            self.assertEqual(sync_cadastre_wfs(self.cadastre.id, organization_id=str(self.cadastre.organization_id)), 1)
         self.cadastre.refresh_from_db()
         self.assertEqual(self.cadastre.name, "")
         self.assertEqual(self.cadastre.registration_number, "12345")
@@ -86,7 +95,8 @@ class InheritanceApiTests(TestCase):
         }
         get.return_value = response
 
-        self.assertEqual(sync_parimus_inheritance(self.cadastre.id), 1)
+        with organization_scope(self.cadastre.organization_id):
+            self.assertEqual(sync_parimus_inheritance(self.cadastre.id, organization_id=str(self.cadastre.organization_id)), 1)
         signal = self.owner.inheritance_signals.get()
         self.assertEqual(signal.cadastre_id, self.cadastre.id)
         self.assertEqual(signal.source_notice_number, "123456")
@@ -97,8 +107,7 @@ class SyncEndpointTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser("admin", "Administrator", "very-secure-admin-password")
         self.cadastre = Cadastre.objects.create(id="79501:001:0003")
-        self.client = APIClient()
-        self.client.force_authenticate(self.admin)
+        self.client = authenticated_client(self.admin)
 
     @override_settings(FORESTIQ_TASKS_INLINE=True)
     @patch("forestry.tasks.sync_parimus_inheritance", return_value=0)
@@ -114,23 +123,34 @@ class SyncEndpointTests(TestCase):
 
     def test_non_admin_cannot_submit_a_sync_run(self):
         caller = User.objects.create_user("caller", "Caller", "very-secure-password")
-        client = APIClient()
-        client.force_authenticate(caller)
+        client = authenticated_client(caller)
         response = client.post(f"/api/services/admin/cadastres/{self.cadastre.id}/sync")
         self.assertEqual(response.status_code, 403)
+
+    def test_worker_cannot_run_another_organizations_audit_row(self):
+        other_organization = Organization.objects.create(slug="worker-other", name="Worker other organization")
+        other_cadastre = Cadastre.objects.create(id="79501:001:9999", organization=other_organization)
+        run = DataSyncRun.objects.create(cadastre=other_cadastre, source="cross-organization-test")
+
+        with self.assertRaises(DataSyncRun.DoesNotExist):
+            run_cadastre_sync.run(run.id, str(self.cadastre.organization_id))
+
+        run.refresh_from_db()
+        self.assertEqual(run.status, DataSyncRun.Status.QUEUED)
 
 
 class ImportCommandTests(TestCase):
     def setUp(self):
         self.cadastre = Cadastre.objects.create(id="79501:001:0005")
+        self.organization = self.cadastre.organization
 
     @override_settings(FORESTIQ_CADASTRE_WFS_URL="https://wfs.example.test", FORESTIQ_CADASTRE_WFS_LAYER="cadastre:parcel")
     def test_wfs_command_persists_successful_audit_run(self):
         sync = Mock(return_value=1)
         source = import_runner.SourceDefinition("cadastre", sync, ("FORESTIQ_CADASTRE_WFS_URL", "FORESTIQ_CADASTRE_WFS_LAYER"))
         with patch.dict(import_runner.WFS_SOURCES, {"cadastre": source}, clear=True):
-            call_command("import_wfs_sources", "--cadastre", self.cadastre.id, "--source", "cadastre")
-        sync.assert_called_once_with(self.cadastre.id)
+            call_command("import_wfs_sources", "--cadastre", self.cadastre.id, "--source", "cadastre", "--organization", str(self.organization.id))
+        sync.assert_called_once_with(self.cadastre.id, organization_id=str(self.organization.id))
         run = DataSyncRun.objects.get(cadastre=self.cadastre)
         self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
         self.assertEqual(run.result, {"cadastre": 1})
@@ -139,21 +159,21 @@ class ImportCommandTests(TestCase):
     @override_settings(FORESTIQ_CADASTRE_WFS_URL="https://wfs.example.test", FORESTIQ_CADASTRE_WFS_LAYER="cadastre:parcel")
     @patch("forestry.services.import_runner.sync_cadastre_wfs")
     def test_wfs_dry_run_makes_no_requests_or_audit_records(self, sync):
-        call_command("import_wfs_sources", "--cadastre", self.cadastre.id, "--source", "cadastre", "--dry-run")
+        call_command("import_wfs_sources", "--cadastre", self.cadastre.id, "--source", "cadastre", "--dry-run", "--organization", str(self.organization.id))
         sync.assert_not_called()
         self.assertFalse(DataSyncRun.objects.exists())
 
     def test_api_command_requires_explicit_source_configuration(self):
         with self.assertRaises(CommandError):
-            call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek", "--dry-run")
+            call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek", "--dry-run", "--organization", str(self.organization.id))
 
     @override_settings(FORESTEK_API_URL="https://forestek.example.test", FORESTEK_API_TOKEN="test-token")
     def test_api_command_persists_audited_result(self):
         sync = Mock(return_value=2)
         source = import_runner.SourceDefinition("forestek", sync, ("FORESTEK_API_URL", "FORESTEK_API_TOKEN"))
         with patch.dict(import_runner.API_SOURCES, {"forestek": source}, clear=True):
-            call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek")
-        sync.assert_called_once_with(self.cadastre.id)
+            call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek", "--organization", str(self.organization.id))
+        sync.assert_called_once_with(self.cadastre.id, organization_id=str(self.organization.id))
         run = DataSyncRun.objects.get(cadastre=self.cadastre)
         self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
         self.assertEqual(run.result, {"forestek": 2})
@@ -162,12 +182,13 @@ class ImportCommandTests(TestCase):
     def test_forestek_command_refuses_a_second_successful_initial_import(self):
         DataSyncRun.objects.create(cadastre=self.cadastre, source="cli:api:forestek", status=DataSyncRun.Status.SUCCEEDED)
         with self.assertRaises(CommandError):
-            call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek", "--dry-run")
+            call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek", "--dry-run", "--organization", str(self.organization.id))
 
 
 class MetsaregisterFullImportTests(TestCase):
     def setUp(self):
         self.cadastre = Cadastre.objects.create(id="79501:001:0006")
+        self.organization = self.cadastre.organization
         CadastreSubPart.objects.create(cadastre=self.cadastre, sub_part_code=10)
 
     @override_settings(
@@ -188,7 +209,7 @@ class MetsaregisterFullImportTests(TestCase):
         notifications.json.return_value = {"features": [{"id": "9001", "properties": {"teatise_nr": "7001", "eraldis_nr": 11, "raie_liik": "RAIE", "pindala": "2.4"}, "geometry": geometry}]}
         get.side_effect = [allocations, notifications]
 
-        call_command("import_metsaregister_full", "--page-size", "100")
+        call_command("import_metsaregister_full", "--page-size", "100", "--organization", str(self.organization.id))
 
         self.assertTrue(CadastreSubPart.objects.filter(cadastre=self.cadastre, sub_part_code=11).exists())
         self.assertEqual(CadastreNotification.objects.filter(cadastre=self.cadastre, cadastre_subpart_code=11).count(), 1)
@@ -204,7 +225,7 @@ class MetsaregisterFullImportTests(TestCase):
     @override_settings(FORESTIQ_METSAREGISTER_FULL_WFS_LAYER="metsaregister:eraldis")
     @patch("forestry.services.metsaregister_full_import.requests.get")
     def test_full_import_dry_run_makes_no_wfs_request(self, get):
-        call_command("import_metsaregister_full", "--dry-run")
+        call_command("import_metsaregister_full", "--dry-run", "--organization", str(self.organization.id))
         get.assert_not_called()
         self.assertFalse(DataSyncRun.objects.exists())
 
@@ -223,7 +244,8 @@ class MetsaregisterFullImportTests(TestCase):
         get.return_value = response
         since = timezone.now() - timedelta(hours=1)
 
-        report = import_metsaregister_delta(since=since, page_size=100)
+        with organization_scope(self.organization.id):
+            report = import_metsaregister_delta(organization_id=str(self.organization.id), since=since, page_size=100)
 
         self.assertEqual(report.new_subparts, 1)
         self.assertTrue(CadastreSubPart.objects.filter(cadastre=self.cadastre, sub_part_code=13).exists())
@@ -233,7 +255,7 @@ class MetsaregisterFullImportTests(TestCase):
 
     @patch("forestry.tasks.import_metsaregister_delta", return_value=FullImportReport(features=1, new_subparts=1, notifications=2))
     def test_celery_delta_task_creates_audited_run(self, import_delta):
-        result = run_metsaregister_delta_check.run()
+        result = run_metsaregister_delta_check.run(str(self.organization.id))
         run = DataSyncRun.objects.get(source="celery:metsaregister-cql-delta")
         self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
         self.assertEqual(result["new_subparts"], 1)
@@ -250,8 +272,7 @@ class MapFeatureTests(TestCase):
             name="Kaardi testüksus",
             boundary=MultiPolygon(Polygon(((500000, 6500000), (500100, 6500000), (500000, 6500100), (500000, 6500000)), srid=3301), srid=3301),
         )
-        self.client = APIClient()
-        self.client.force_authenticate(self.user)
+        self.client = authenticated_client(self.user)
 
     def test_map_endpoint_returns_wgs84_geojson(self):
         response = self.client.get("/api/services/map/cadastres")

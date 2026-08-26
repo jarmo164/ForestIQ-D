@@ -30,6 +30,8 @@ def _claims(token: Token, user: User) -> None:
     token["userId"] = user.id
     token["userName"] = user.full_name
     token["privileges"] = user.privilege_codes
+    token["organization_id"] = str(user.default_organization_id)
+    token["organizationId"] = str(user.default_organization_id)
 
 
 def token_pair(user: User) -> dict:

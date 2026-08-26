@@ -5,6 +5,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import User
+from api.auth import token_pair
 from operations.models import Contract
 
 
@@ -18,7 +19,7 @@ class ContractLocalFileTests(TestCase):
         self.user = User.objects.create_superuser("contract-admin", "Contract administrator", "strong-password")
         self.contract = Contract.objects.create(id="contract-test")
         self.client = APIClient()
-        self.client.force_authenticate(self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.user)['actualToken']['token']}")
 
     def test_admin_can_store_and_read_local_contract_pdf(self):
         uploaded = SimpleUploadedFile("agreement.pdf", b"%PDF-1.4 test", content_type="application/pdf")

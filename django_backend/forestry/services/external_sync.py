@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 from typing import Any
+from uuid import UUID
 
 import requests
 from django.conf import settings
@@ -17,6 +18,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
+from accounts.organization_context import current_organization_id
 from forestry.models import (
     Cadastre,
     CadastreSubPart,
@@ -29,6 +31,15 @@ from forestry.models import (
 
 class ExternalSourceError(RuntimeError):
     """A source returned an invalid or unavailable response."""
+
+
+def _require_organization_context(organization_id: str) -> UUID:
+    """Refuse direct background writes that are not bound to their supplied tenant."""
+
+    expected = UUID(str(organization_id))
+    if current_organization_id() != expected:
+        raise ValueError("External synchronization requires the matching organization context.")
+    return expected
 
 
 def geometry_from_geojson(geometry: dict[str, Any], *, polygon_only: bool = False):
@@ -141,7 +152,8 @@ def _centroid(geometry: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def sync_cadastre_wfs(cadastre_id: str) -> int:
+def sync_cadastre_wfs(cadastre_id: str, *, organization_id: str) -> int:
+    _require_organization_context(organization_id)
     cadastre = Cadastre.objects.get(id=cadastre_id)
     features = wfs_features(
         settings.FORESTIQ_CADASTRE_WFS_URL,
@@ -184,7 +196,8 @@ def _feature_source_id(feature: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def sync_metsaregister_wfs(cadastre_id: str) -> int:
+def sync_metsaregister_wfs(cadastre_id: str, *, organization_id: str) -> int:
+    _require_organization_context(organization_id)
     cadastre = Cadastre.objects.get(id=cadastre_id)
     saved = 0
     source_layers = list(settings.FORESTIQ_METSAREGISTER_WFS_LAYERS)
@@ -234,7 +247,8 @@ def sync_metsaregister_wfs(cadastre_id: str) -> int:
     return saved
 
 
-def sync_optional_soos_wfs(cadastre_id: str) -> int:
+def sync_optional_soos_wfs(cadastre_id: str, *, organization_id: str) -> int:
+    _require_organization_context(organization_id)
     if not settings.FORESTIQ_SOOS_WFS_URL or not settings.FORESTIQ_SOOS_WFS_LAYER:
         return 0
     cadastre = Cadastre.objects.get(id=cadastre_id)
@@ -277,7 +291,8 @@ def _walk_owner_rows(value: Any) -> Iterable[dict[str, Any]]:
             yield from _walk_owner_rows(nested)
 
 
-def sync_forestek_owner_relations(cadastre_id: str) -> int:
+def sync_forestek_owner_relations(cadastre_id: str, *, organization_id: str) -> int:
+    _require_organization_context(organization_id)
     if not settings.FORESTEK_API_URL or not settings.FORESTEK_API_TOKEN:
         return 0
     cadastre = Cadastre.objects.get(id=cadastre_id)
@@ -305,7 +320,8 @@ def sync_forestek_owner_relations(cadastre_id: str) -> int:
     return count
 
 
-def sync_parimus_inheritance(cadastre_id: str) -> int:
+def sync_parimus_inheritance(cadastre_id: str, *, organization_id: str) -> int:
+    _require_organization_context(organization_id)
     if not settings.PARIMUS_API_URL or not settings.PARIMUS_API_TOKEN:
         return 0
     cadastre = Cadastre.objects.get(id=cadastre_id)

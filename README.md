@@ -66,7 +66,7 @@ Arenduskeskkonnas loob käivitus `autocreated` administraatori. Kasutajanimi ja 
 
 ## WFS ja registriandmete värskendamine
 
-Maa- ja Ruumiameti katastri WFS ning metsaregistri WFS on seadistatud vaikimisi avalikeks allikateks. Celery worker värskendab need katastriüksuse kaupa ning säilitab iga käivituse auditi mudelis `DataSyncRun`; Celery Beat paneb portfelli sünkroniseerimise iga 24 tunni järel automaatselt järjekorda. Arenduses saab intervalli muuta muutujaga `FORESTIQ_PORTFOLIO_SYNC_INTERVAL_SECONDS`.
+Maa- ja Ruumiameti katastri WFS ning metsaregistri WFS on seadistatud vaikimisi avalikeks allikateks. Celery worker värskendab need katastriüksuse kaupa ning säilitab iga käivituse auditi mudelis `DataSyncRun`; Celery Beat loetleb aktiivsed organisatsioonid ja paneb iga organisatsiooni portfelli sünkroniseerimise eraldi järjekorda. Arenduses saab intervalli muuta muutujaga `FORESTIQ_PORTFOLIO_SYNC_INTERVAL_SECONDS`.
 
 Üksikut katastriüksust saab värskendada administraatori API kaudu (`POST /api/services/admin/cadastres/{id}/sync`). Foresteki omaniku-katastri seosed, SOOS-i WFS ja Pärimuse päringud on tahtlikult opt-in: need käivituvad alles siis, kui nende teenuse URL ja eraldi vähimate õigustega token on `.env` failis seadistatud. Täpne andmevoog, auditeerimine ja migratsioonisammud on failis [`docs/DJANGO_REWRITE_ARCHITECTURE.md`](docs/DJANGO_REWRITE_ARCHITECTURE.md).
 
@@ -78,13 +78,13 @@ Käsud käivitavad importimise samas protsessis ning loovad iga tegelikult töö
 cd django_backend
 
 # Avalikud WFS-i allikad: katastriüksus, metsaregister ning seadistatud SOOS.
-python manage.py import_wfs_sources --cadastre 79501:001:0001 --source all --dry-run
-python manage.py import_wfs_sources --cadastre 79501:001:0001 --source cadastre
-python manage.py import_wfs_sources --all --source metsaregister --limit 50 --continue-on-error
+python manage.py import_wfs_sources --organization forestiq-default --cadastre 79501:001:0001 --source all --dry-run
+python manage.py import_wfs_sources --organization forestiq-default --cadastre 79501:001:0001 --source cadastre
+python manage.py import_wfs_sources --organization forestiq-default --all --source metsaregister --limit 50 --continue-on-error
 
 # Volitatud API-allikad: enne on vaja seadistada FORESTEK_API_URL/TOKEN või PARIMUS_API_URL/TOKEN.
-python manage.py import_external_api_sources --cadastre 79501:001:0001 --source forestek --dry-run
-python manage.py import_external_api_sources --all --source parimus --limit 25 --continue-on-error
+python manage.py import_external_api_sources --organization forestiq-default --cadastre 79501:001:0001 --source forestek --dry-run
+python manage.py import_external_api_sources --organization forestiq-default --all --source parimus --limit 25 --continue-on-error
 ```
 
 `import_wfs_sources` toetab allikaid `cadastre`, `metsaregister`, `soos` ja `all`. Valiku `all` korral jäetakse seadistamata SOOS teadlikult vahele; eraldi `--source soos` nõuab selle URL-i ja kihi seadistust. `import_external_api_sources` toetab `forestek`, `parimus` ja `all`; ükski volitatud API-päring ei käivitu enne URL-i ning tokeni eelkontrolli läbimist. Tõrked talletatakse auditireal ning `--continue-on-error` lubab töödelda järgmisi üksusi.
@@ -99,26 +99,26 @@ Kui metsaregister on põhiandmeallikas, käivita esmalt täisimport. Käsk loeb 
 cd django_backend
 
 # Kontrollib seadistuse ja kavandatud voo, kuid ei tee WFS-päringuid.
-python manage.py import_metsaregister_full --dry-run
+python manage.py import_metsaregister_full --organization forestiq-default --dry-run
 
 # Esmane täielik eraldiste import ning uute eraldiste teatised.
-python manage.py import_metsaregister_full --page-size 1000
+python manage.py import_metsaregister_full --organization forestiq-default --page-size 1000
 
 # Ainult eraldiste täisimport, kui teatiste kiht ei ole veel seadistatud.
-python manage.py import_metsaregister_full --without-notifications
+python manage.py import_metsaregister_full --organization forestiq-default --without-notifications
 ```
 
 Teatiste automaatseks järelpäringuks seadista lisaks metsaregistri URL-ile ja eraldiste kihile `FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER`. Vajadusel saab CQL-väljade nimed määrata muutujatega `FORESTIQ_METSAREGISTER_NOTIFICATION_CADASTRE_FIELD` ja `FORESTIQ_METSAREGISTER_NOTIFICATION_SUBPART_FIELD`; vaikimisi kasutatakse `katastri_nr` ja `eraldis_nr`. Käsk jätab kogu täisimpordi kohta ühe `DataSyncRun` auditikirje, mis sisaldab eraldiste, uute eraldiste ja imporditud teatiste arvu.
 
 ### Perioodiline metsaregistri CQL-deltakontroll
 
-Celery Beat käivitab tausttöö `forestry.tasks.run_metsaregister_delta_check` vaikimisi iga tunni järel. Töö kasutab WFS-i eraldiste kihil CQL-filtrit kujul `registreerimise_kp >= '<UTC-aeg>'`, kus alguspunkt on eelmise eduka kontrolli lõpetamisaeg koos väikese kattuvusakna (`FORESTIQ_METSAREGISTER_DELTA_OVERLAP_MINUTES`) võrra. Esimesel käivitamisel kasutatakse piiratud tagasivaateakent (`FORESTIQ_METSAREGISTER_DELTA_LOOKBACK_HOURS`). Kattuvus teeb töö idempotentseks: muutunud või juba nähtud eraldised uuendatakse, kuid teatiste CQL-päring tehakse ainult lokaalselt uutele eraldistele.
+Celery Beat käivitab organisatsioonide dispetšeri vaikimisi iga tunni järel. Dispetšer loob iga aktiivse organisatsiooni jaoks eraldi `run_metsaregister_delta_check` töö ja auditirea. Iga töö kasutab WFS-i eraldiste kihil CQL-filtrit kujul `registreerimise_kp >= '<UTC-aeg>'`, kus alguspunkt on sama organisatsiooni eelmise eduka kontrolli lõpetamisaeg koos väikese kattuvusakna (`FORESTIQ_METSAREGISTER_DELTA_OVERLAP_MINUTES`) võrra. Esimesel käivitamisel kasutatakse piiratud tagasivaateakent (`FORESTIQ_METSAREGISTER_DELTA_LOOKBACK_HOURS`). Kattuvus teeb töö idempotentseks: muutunud või juba nähtud eraldised uuendatakse, kuid teatiste CQL-päring tehakse ainult lokaalselt uutele eraldistele.
 
 ```sh
 cd django_backend
 
 # Käivita sama kontroll üks kord käsitsi.
-python manage.py check_metsaregister_delta
+python manage.py check_metsaregister_delta --organization forestiq-default
 ```
 
 Ajastust saab muuta keskkonnamuutujaga `FORESTIQ_METSAREGISTER_DELTA_INTERVAL_SECONDS`; CQL-is kasutatavat muutmisvälja määrab `FORESTIQ_METSAREGISTER_DELTA_FIELD`, mille vaikimisi väärtus on `registreerimise_kp`. Iga jooks salvestatakse eraldi `DataSyncRun` kirjeks allikaga `celery:metsaregister-cql-delta`, koos kasutatud algusaja, tuvastatud uute eraldiste ja imporditud teatiste arvuga.
@@ -147,13 +147,13 @@ Enne ümberlülitust tee lähte- ja sihtandmebaasist varukoopiad. Uue skeemi loo
 cd django_backend
 python manage.py migrate
 export LEGACY_DATABASE_URL='postgresql://readonly_user:password@legacy-host:5432/metsis'
-python manage.py import_legacy_metsis --confirm
+python manage.py import_legacy_metsis --confirm --organization forestiq-default
 ```
 
 Käsk säilitab stabiilsed kasutaja-, omaniku-, katastri- ja lepingute identifikaatorid ning vana BCrypt-parooliräsi. Soovitatav tootmises kasutuselevõtu järjekord on järgmine.
 
 1. Käivita uus PostgreSQL ning tee sinna `migrate`.
-2. Impordi kontrollitud koopiast andmed käsuga `import_legacy_metsis --confirm`.
+2. Impordi kontrollitud koopiast andmed käsuga `import_legacy_metsis --confirm --organization forestiq-default`.
 3. Võrdle enne ümberlülitust tabelite ridu ja tee sisselogimise, õiguste ning omaniku-katastri kontrolltestid.
 4. Suuna puhverserver Django API konteinerile ning jälgi `api/services/status` vastust.
 
@@ -170,6 +170,12 @@ python manage.py verify_organization_backfill --fail-on-issues
 ```
 
 Organisatsiooniga seotud alamkirjete loomisel pärineb võti nende ärilise vanemagregaadi järgi. Näiteks omaniku tegevuslogi, tehing, pakkumine, leping, pärimisjuhtum ning pärija ei saa salvestuda omaniku või tehinguga erinevasse organisatsiooni; ka ristorganisatsiooniline omaniku–katastri seos katkestatakse enne relatsiooni loomist.
+
+### Organisatsioonipõhine API- ja tööisolatsioon (AUTH-02)
+
+Iga Bearer JWT sisaldab välju `organization_id` ja `organizationId`. Django kontrollib, et tokeni kasutajal on aktiivne liikmesus nimetatud organisatsioonis, ning aktiveerib päringu ajaks fail-closed organisatsioonikonteksti. Kõigi organisatsioonivõtmega ärimudelite tavapärased queryset’id filtreeritakse selle konteksti järgi; teise organisatsiooni detailobjekt tagastab seega `404`, enne eraldi ressurssiõiguse kontrolli.
+
+Celery tööde, WFS-i ja API-importide signatuurid nõuavad samuti eksplitsiitset organisatsioonivõtit. Beat’i globaalne dispetšer ei töötle äriridu otse, vaid väljastab iga aktiivse organisatsiooni jaoks eraldi scoped töö. Kõik käsitsi impordi- ja sünkroonikäsud nõuavad `--organization <UUID-või-slug>` argumenti; `forestiq-default` on AUTH-01 backfill’i üleminekuorganisatsioon.
 
 ## Turve
 
