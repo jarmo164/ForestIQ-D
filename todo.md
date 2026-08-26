@@ -55,3 +55,5 @@
 - [x] Lisada filtrite testid, dokumentatsioon ja jõudluskontroll ning pushida täiendused harusse `rewrite/django`.
 - [x] Kopeerida Django ümberkirjutuse Git-ajaloo uusim seis GitHubi hoidlasse `jarmo164/ForestIQ-D`.
 - [x] Kontrollida uue hoidla sihtharu ning dokumenteerida edukas üleviimine.
+- [x] Pushida ForestIQ-D Django ümberkirjutuse praegune commit uude `main`-harusse.
+- [x] Kontrollida, et ForestIQ-D `main` ja `rewrite/django` osutavad samale commit’ile.
