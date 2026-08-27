@@ -38,6 +38,8 @@ from operations.models import (
     Reminder,
 )
 
+from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
+
 from .concurrency import missing_version_response, requested_version, update_if_current, version_conflict_response
 from .permissions import CanEvaluate, CanManageOwners, IsAdmin, can_access_deal, can_access_owner, has_membership_privilege
 from .organization import organization_user_or_404, organization_users, request_organization_id
@@ -1034,6 +1036,14 @@ def contract_generate_from_deal(request):
         template_snapshot = build_template_snapshot(template)
     if Contract.objects.filter(id=contract_id).exists() or ContractHistory.objects.filter(id=contract_id).exists():
         return _detail("A contract with this identifier already exists.", status.HTTP_409_CONFLICT)
+    if template is None:
+        return _detail("templateId is required for server-side PDF generation.")
+    from .contract_templates import render_template_preview_html
+
+    try:
+        pdf_bytes, pdf_sha256 = render_contract_pdf(html=render_template_preview_html(template, deal))
+    except (ContractPdfRenderError, ValueError) as exc:
+        return _detail(str(exc), status.HTTP_422_UNPROCESSABLE_ENTITY)
     with transaction.atomic():
         updated_deal, conflict = _update_deal_or_conflict(request, deal)
         if conflict:
@@ -1047,6 +1057,7 @@ def contract_generate_from_deal(request):
                 "terms": request.data.get("terms", draft["acceptedTerms"]),
                 "contractNumber": contract_number,
                 "template": template_snapshot,
+                "pdfSha256": pdf_sha256,
             },
             cadastres=", ".join(item["cadastralCode"] for item in draft["parcels"]),
         )
@@ -1057,5 +1068,6 @@ def contract_generate_from_deal(request):
             source_offer_id=draft["offerEntryId"],
             template_version=template,
             template_snapshot=template_snapshot,
+            document=pdf_bytes,
         )
-    return Response({"contractId": contract.id, "version": contract.version, "historyId": history.id, "dealId": str(updated_deal.id), "offerEntryId": draft["offerEntryId"], "templateVersionId": str(template.id) if template else None, "pdf": f"/api/services/contracts/{contract.id}/pdf"}, status=status.HTTP_201_CREATED)
+    return Response({"contractId": contract.id, "version": contract.version, "historyId": history.id, "dealId": str(updated_deal.id), "offerEntryId": draft["offerEntryId"], "templateVersionId": str(template.id), "pdf": f"/api/services/contracts/{contract.id}/pdf", "pdfSha256": pdf_sha256}, status=status.HTTP_201_CREATED)

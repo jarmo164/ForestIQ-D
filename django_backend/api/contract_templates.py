@@ -89,6 +89,13 @@ def _render_preview(template: ContractTemplate, deal: Deal) -> str:
     return PLACEHOLDER_PATTERN.sub(lambda match: escape(values[match.group(1)]), template.html)
 
 
+def render_template_preview_html(template: ContractTemplate, deal: Deal) -> str:
+    """Render the same escaped organization-scoped template used by the preview API."""
+
+    _template_placeholders(template.html)
+    return _render_preview(template, deal)
+
+
 def _detail(message: str, http_status: int = status.HTTP_400_BAD_REQUEST) -> Response:
     return Response({"detail": message}, status=http_status)
 
@@ -131,15 +138,19 @@ def _template_data(template: ContractTemplate) -> dict:
 
 
 def template_snapshot(template: ContractTemplate) -> dict:
-    """Return immutable data copied onto a contract at generation time."""
+    """Return immutable, JSON-serializable data copied onto a contract at generation time."""
 
+    company = _company_data(template.company_profile) if template.company_profile else None
+    if company:
+        company["createdAt"] = template.company_profile.created_at.isoformat()
+        company["updatedAt"] = template.company_profile.updated_at.isoformat()
     return {
         "templateId": str(template.id),
         "templateKey": template.template_key,
         "version": template.version,
         "name": template.name,
         "html": template.html,
-        "companyProfile": _company_data(template.company_profile) if template.company_profile else None,
+        "companyProfile": company,
     }
 
 
