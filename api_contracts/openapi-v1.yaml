@@ -447,6 +447,26 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/summary:
+    get:
+      operationId: services_cadastres_summary_retrieve
+      description: |-
+        Return compact, access-controlled counters for a cadastral unit.
+
+        The endpoint deliberately avoids the expensive activity and object payloads used by
+        the map workspace. It is therefore appropriate for map side-panels and performance
+        budgets that must remain predictable at portfolio scale.
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/cadastres/{cadastre_id}/workspace:
     get:
       operationId: services_cadastres_workspace_retrieve

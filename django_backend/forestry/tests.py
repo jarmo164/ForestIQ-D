@@ -499,6 +499,29 @@ class MapFeatureTests(TestCase):
         self.assertEqual(response.data["notifications"][0]["notificationNumber"], 7002)
         self.assertEqual(response.data["registryFeatures"][0]["title"], "Eraldis 12")
 
+    def test_cadastre_summary_aggregates_owners_subparts_notifications_and_customer_relationship(self):
+        owner = Owner.objects.create(id="38101010004", name="Summary klient")
+        self.cadastre.owners.add(owner)
+        CadastreSubPart.objects.create(cadastre=self.cadastre, sub_part_code=44, tree_type_code="KU", area="2.5000")
+        CadastreNotification.objects.create(id=12044, notification_number=7044, cadastre=self.cadastre, cadastre_subpart_code=44, work_code="RAIE")
+        CadastreNotification.objects.create(id=12045, notification_number=7045, cadastre=self.cadastre, cadastre_subpart_code=44, work_code="HARV", archived=True)
+        active = Deal.objects.create(owner=owner, sale_subject="FOREST", stage=DealStage.EVALUATION)
+        active.parcels.add(self.cadastre)
+        won = Deal.objects.create(owner=owner, sale_subject="FOREST", stage=DealStage.WON)
+        won.parcels.add(self.cadastre)
+
+        response = self.client.get(f"/api/services/cadastres/{self.cadastre.id}/summary")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["cadastre"]["id"], self.cadastre.id)
+        self.assertEqual(response.data["owners"], {"count": 1, "customerCount": 1})
+        self.assertEqual(response.data["subparts"]["count"], 1)
+        self.assertEqual(response.data["notifications"], {"count": 2, "activeCount": 1})
+        self.assertTrue(response.data["customerRelationship"]["isCustomer"])
+        self.assertEqual(response.data["customerRelationship"]["activeDealCount"], 1)
+        self.assertEqual(response.data["customerRelationship"]["wonDealCount"], 1)
+        self.assertEqual(response.data["customerRelationship"]["dealStages"], {"EVALUATION": 1, "WON": 1})
+
     def test_map_layers_accept_viewport_and_enforce_bounded_feature_limit(self):
         response = self.client.get("/api/services/map/cadastres?bbox=24,58,26,60&limit=1")
         self.assertEqual(response.status_code, 200, response.data)
