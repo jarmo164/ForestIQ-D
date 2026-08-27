@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from io import BytesIO
+from hashlib import sha256
 import json
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from django.conf import settings
@@ -63,6 +65,7 @@ from .serializers import (
     user_data,
 )
 from forestry.tasks import enqueue_cadastre_sync
+from forestry.services.tile_cache import cache_vector_tile, get_cached_vector_tile, vector_tile_cache_key
 
 
 def _detail(message: str, http_status: int = status.HTTP_400_BAD_REQUEST) -> Response:
@@ -253,10 +256,55 @@ def map_vector_tile(request, layer: str, z: int, x: int, y: int):
         properties = ("id", "cadastre_id", "subpart_code", "title", "work_code", "decision", "area", "volume")
         geometry_field = "spatial_geometry"
 
-    tile = _map_vector_tile_bytes(queryset, properties, geometry_field, layer, *coordinates)
-    response = HttpResponse(tile, content_type="application/vnd.mapbox-vector-tile")
-    response["Cache-Control"] = "private, max-age=60"
+    organization_id = str(request_organization_id(request))
+    cache_key = vector_tile_cache_key(
+        organization_id=organization_id,
+        layer=layer,
+        z=z,
+        x=x,
+        y=y,
+        query_fingerprint=_tile_query_fingerprint(request),
+    )
+    tile = get_cached_vector_tile(cache_key)
+    if tile is None:
+        tile = _map_vector_tile_bytes(queryset, properties, geometry_field, layer, *coordinates)
+        cache_vector_tile(cache_key, tile)
+
+    etag = f'"{sha256(tile).hexdigest()}"'
+    if _if_none_match_matches(request.headers.get("If-None-Match", ""), etag):
+        response = HttpResponse(status=status.HTTP_304_NOT_MODIFIED)
+    else:
+        response = HttpResponse(tile, content_type="application/vnd.mapbox-vector-tile")
+    response["ETag"] = etag
+    response["Cache-Control"] = f"private, max-age={settings.FORESTIQ_MVT_CACHE_TTL_SECONDS}, must-revalidate"
+    response["Vary"] = "Authorization"
     return response
+
+
+def _tile_query_fingerprint(request) -> str:
+    """Canonicalize only supported map filters and include the access principal.
+
+    Organization scoping alone is insufficient because non-admins receive only their
+    assigned owners' cadastres. The principal makes cached payloads safe across roles.
+    """
+
+    filters = []
+    for key in ("customer", "activeDeal", "activityDays", "dealStage"):
+        value = request.query_params.get(key)
+        if value:
+            filters.append((key, value))
+    filters.sort()
+    return f"user={request.user.pk}&{urlencode(filters)}"
+
+
+def _if_none_match_matches(header: str, etag: str) -> bool:
+    """Return whether a standard strong or weak conditional validator matches."""
+
+    for candidate in header.split(","):
+        candidate = candidate.strip()
+        if candidate == "*" or candidate.removeprefix("W/") == etag:
+            return True
+    return False
 
 
 def _map_tile_coordinates(z: int, x: int, y: int):

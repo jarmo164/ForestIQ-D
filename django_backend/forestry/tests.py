@@ -538,6 +538,35 @@ class MapFeatureTests(TestCase):
         self.assertEqual(build_tile.call_args.args[-4:], ("registry", 10, 560, 350))
         self.assertEqual(build_tile.call_args.args[2], "spatial_geometry")
 
+    @patch("api.views._map_vector_tile_bytes", side_effect=[b"first-tile", b"changed-tile"])
+    @patch("api.views.connection")
+    def test_mvt_endpoint_uses_versioned_cache_and_supports_etag_revalidation(self, database, build_tile):
+        from django.core.cache import cache
+        from forestry.services.tile_cache import invalidate_vector_tiles
+
+        cache.clear()
+        database.vendor = "postgresql"
+        path = "/api/services/map/tiles/cadastres/8/140/88.pbf?activeDeal=true"
+        first = self.client.get(path)
+        second = self.client.get(path)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.content, b"first-tile")
+        self.assertEqual(first["ETag"], second["ETag"])
+        self.assertEqual(build_tile.call_count, 1)
+
+        not_modified = self.client.get(path, HTTP_IF_NONE_MATCH=f"W/{first['ETag']}")
+        self.assertEqual(not_modified.status_code, 304)
+        self.assertEqual(not_modified["ETag"], first["ETag"])
+        self.assertEqual(build_tile.call_count, 1)
+
+        invalidate_vector_tiles(str(self.cadastre.organization_id), ("cadastres",))
+        refreshed = self.client.get(path)
+        self.assertEqual(refreshed.status_code, 200)
+        self.assertEqual(refreshed.content, b"changed-tile")
+        self.assertNotEqual(refreshed["ETag"], first["ETag"])
+        self.assertEqual(build_tile.call_count, 2)
+
     @patch("api.views.connection")
     def test_mvt_sql_uses_postgis_tile_functions_and_organization_scoped_queryset(self, database):
         from api.views import _map_vector_tile_bytes
