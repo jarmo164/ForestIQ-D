@@ -13,6 +13,8 @@ describe("route authorization", () => {
     expect(hasAccess(caller, requirementForPath("/workdesk/evaluator"))).toBe(false);
     expect(hasAccess(caller, requirementForPath("/owners/79601:001:9999"))).toBe(true);
     expect(hasAccess(null, requirementForPath("/owners"))).toBe(false);
+    expect(hasAccess(caller, requirementForPath("/inheritance/case-123"))).toBe(true);
+    expect(hasAccess(viewer, requirementForPath("/inheritance/case-123"))).toBe(false);
   });
 
   it("exposes navigation entries only to roles with the required privileges", () => {
