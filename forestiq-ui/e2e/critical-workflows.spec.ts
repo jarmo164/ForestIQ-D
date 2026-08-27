@@ -104,7 +104,5 @@ test("map workspace renders its interactive map and cadastre guidance", async ({
   await expect(
     page.getByLabel("Interaktiivne ForestIQ GeoDjango kaart"),
   ).toBeVisible();
-  await expect(
-    page.getByText("klõpsa katastriüksusel tervikvaate avamiseks."),
-  ).toBeVisible();
+  await expect(page.getByText("Suured katastri- ja registrikihid laetakse MVT-paanidena")).toBeVisible();
 });

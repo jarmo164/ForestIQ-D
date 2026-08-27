@@ -527,6 +527,17 @@ class MapFeatureTests(TestCase):
         self.assertEqual(response.content, b"mvt-bytes")
         self.assertEqual(build_tile.call_args.args[-4:], ("cadastres", 8, 140, 88))
 
+    @patch("api.views._map_vector_tile_bytes", return_value=b"registry-mvt-bytes")
+    @patch("api.views.connection")
+    def test_mvt_registry_endpoint_returns_organization_scoped_vector_tile(self, database, build_tile):
+        database.vendor = "postgresql"
+        response = self.client.get("/api/services/map/tiles/registry/10/560/350.pbf?customer=true")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/vnd.mapbox-vector-tile")
+        self.assertEqual(response.content, b"registry-mvt-bytes")
+        self.assertEqual(build_tile.call_args.args[-4:], ("registry", 10, 560, 350))
+        self.assertEqual(build_tile.call_args.args[2], "spatial_geometry")
+
     @patch("api.views.connection")
     def test_mvt_sql_uses_postgis_tile_functions_and_organization_scoped_queryset(self, database):
         from api.views import _map_vector_tile_bytes
