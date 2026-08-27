@@ -42,7 +42,12 @@ class Command(BaseCommand):
                 correlation_id=current_correlation_id(),
             )
             try:
-                report = import_all_metsaregister(organization_id=str(organization.id), page_size=options["page_size"], fetch_notifications=not options["without_notifications"])
+                report = import_all_metsaregister(
+                    organization_id=str(organization.id),
+                    page_size=options["page_size"],
+                    fetch_notifications=not options["without_notifications"],
+                    run=run,
+                )
             except Exception as exc:
                 run.status, run.error_message, run.finished_at = DataSyncRun.Status.FAILED, str(exc)[:4000], timezone.now()
                 run.save(update_fields=("status", "error_message", "finished_at", "correlation_id"))

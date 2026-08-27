@@ -193,14 +193,16 @@ class WfsClient:
         cql_filter: str | None = None,
         headers: Mapping[str, str] | None = None,
         max_features: int | None = None,
+        start_index: int = 0,
     ) -> Iterator[list[dict[str, Any]]]:
-        """Yield consecutive WFS pages and stop at the configured aggregate feature budget."""
+        """Yield consecutive WFS pages from a validated cursor within the feature budget."""
 
         feature_budget = self.policy.max_features if max_features is None else max_features
         if feature_budget < 1:
             raise WfsClientError("WFS feature budget must be positive.")
+        if start_index < 0:
+            raise WfsClientError("WFS startIndex must not be negative.")
         fetched = 0
-        start_index = 0
         while True:
             requested_count = min(page_size, feature_budget - fetched)
             page = self.feature_page(

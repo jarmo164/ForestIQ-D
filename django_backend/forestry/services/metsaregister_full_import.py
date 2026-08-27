@@ -15,7 +15,7 @@ from django.db import transaction
 from django.utils.dateparse import parse_datetime
 
 from accounts.organization_context import current_organization_id
-from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, ForestRegistryFeature
+from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, ImportCheckpoint
 from forestry.services.external_sync import ExternalSourceError, geometry_from_geojson
 from forestry.services.wfs_client import WfsClient, WfsClientError
 
@@ -89,8 +89,14 @@ def _feature_page(
         raise ExternalSourceError(str(exc)) from exc
 
 
-def _pages(*, layer: str, page_size: int, cql_filter: str | None = None) -> Iterator[list[dict[str, Any]]]:
-    """Yield client-bounded pages while sharing one rate limiter across the import."""
+def _pages(
+    *,
+    layer: str,
+    page_size: int,
+    cql_filter: str | None = None,
+    start_index: int = 0,
+) -> Iterator[list[dict[str, Any]]]:
+    """Yield client-bounded pages from a cursor with one shared rate limiter."""
 
     try:
         yield from WfsClient(request_get=requests.get).iter_feature_pages(
@@ -99,6 +105,7 @@ def _pages(*, layer: str, page_size: int, cql_filter: str | None = None) -> Iter
             page_size=page_size,
             cql_filter=cql_filter,
             headers=_headers(),
+            start_index=start_index,
         )
     except WfsClientError as exc:
         raise ExternalSourceError(str(exc)) from exc
@@ -120,9 +127,61 @@ class FullImportReport:
     updated_subparts: int = 0
     notifications: int = 0
     skipped_features: int = 0
+    resumed_from: int = 0
+    checkpoint_cursor: int = 0
+    checkpoint_pages: int = 0
 
     def data(self) -> dict[str, int]:
         return asdict(self)
+
+
+def _open_full_import_checkpoint(*, layer: str, run: DataSyncRun | None) -> ImportCheckpoint:
+    """Reuse the last incomplete import cursor, or begin a separately auditable run."""
+
+    checkpoint = (
+        ImportCheckpoint.objects.filter(
+            source="metsaregister-full",
+            source_layer=layer,
+            completed=False,
+        )
+        .order_by("-checkpointed_at", "-id")
+        .first()
+    )
+    if checkpoint is None:
+        return ImportCheckpoint.objects.create(
+            source="metsaregister-full",
+            source_layer=layer,
+            last_run=run,
+        )
+    checkpoint.last_run = run
+    checkpoint.last_error = ""
+    checkpoint.save(update_fields=("last_run", "last_error", "checkpointed_at"))
+    return checkpoint
+
+
+def _confirm_checkpoint_page(
+    checkpoint: ImportCheckpoint,
+    *,
+    page_size: int,
+    run: DataSyncRun | None,
+) -> None:
+    """Persist only a completely stored page as the next safe restart cursor."""
+
+    checkpoint.cursor += page_size
+    checkpoint.pages_completed += 1
+    checkpoint.rows_completed += page_size
+    checkpoint.last_run = run
+    checkpoint.last_error = ""
+    checkpoint.save(
+        update_fields=(
+            "cursor",
+            "pages_completed",
+            "rows_completed",
+            "last_run",
+            "last_error",
+            "checkpointed_at",
+        )
+    )
 
 
 def _upsert_notification(*, cadastre: Cadastre, subpart_code: int, feature: dict[str, Any]) -> bool:
@@ -187,17 +246,47 @@ def import_all_metsaregister(
     organization_id: str,
     page_size: int | None = None,
     fetch_notifications: bool = True,
+    run: DataSyncRun | None = None,
 ) -> FullImportReport:
-    """Import every configured Metsaregister allocation; notifications are fetched only for new allocations."""
+    """Import every allocation from the last confirmed page, then close its checkpoint.
+
+    Entity writes are idempotent `update_or_create` operations. If a worker stops
+    before a page is confirmed, the prior cursor remains durable and the entire
+    page can safely be requested and stored again on the next controlled run.
+    """
 
     _require_organization_context(organization_id)
     layer = settings.FORESTIQ_METSAREGISTER_FULL_WFS_LAYER
     if not settings.FORESTIQ_METSAREGISTER_WFS_URL or not layer:
         raise ExternalSourceError("Metsaregister WFS URL and full-import layer must be configured")
-    report = FullImportReport()
-    for page in _pages(layer=layer, page_size=page_size or settings.FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE):
-        for feature in page:
-            _store_allocation(report=report, layer=layer, feature=feature, fetch_notifications=fetch_notifications)
+    effective_page_size = page_size or settings.FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE
+    checkpoint = _open_full_import_checkpoint(layer=layer, run=run)
+    report = FullImportReport(
+        resumed_from=checkpoint.cursor,
+        checkpoint_cursor=checkpoint.cursor,
+        checkpoint_pages=checkpoint.pages_completed,
+    )
+    try:
+        for page in _pages(
+            layer=layer,
+            page_size=effective_page_size,
+            start_index=checkpoint.cursor,
+        ):
+            for feature in page:
+                _store_allocation(report=report, layer=layer, feature=feature, fetch_notifications=fetch_notifications)
+            _confirm_checkpoint_page(checkpoint, page_size=len(page), run=run)
+            report.checkpoint_cursor = checkpoint.cursor
+            report.checkpoint_pages = checkpoint.pages_completed
+    except Exception as exc:
+        checkpoint.completed = False
+        checkpoint.last_run = run
+        checkpoint.last_error = str(exc)[:4000]
+        checkpoint.save(update_fields=("completed", "last_run", "last_error", "checkpointed_at"))
+        raise
+    checkpoint.completed = True
+    checkpoint.last_run = run
+    checkpoint.last_error = ""
+    checkpoint.save(update_fields=("completed", "last_run", "last_error", "checkpointed_at"))
     return report
 
 
