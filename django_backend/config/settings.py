@@ -273,6 +273,8 @@ FORESTIQ_MAP_FEATURE_LIMIT = int(os.getenv("FORESTIQ_MAP_FEATURE_LIMIT", "1500")
 FORESTIQ_MAP_MAX_FEATURE_LIMIT = int(os.getenv("FORESTIQ_MAP_MAX_FEATURE_LIMIT", "3000"))
 # Tile-cache is private and short-lived; model changes bump an organization/layer version immediately.
 FORESTIQ_MVT_CACHE_TTL_SECONDS = int(os.getenv("FORESTIQ_MVT_CACHE_TTL_SECONDS", "60"))
+# Fixed-corpus p95 budget for uncached MVT tiles and cadastre summary API tests.
+FORESTIQ_GIS_PERFORMANCE_P95_MS = int(os.getenv("FORESTIQ_GIS_PERFORMANCE_P95_MS", "500"))
 FORESTIQ_SOOS_WFS_URL = os.getenv("FORESTIQ_SOOS_WFS_URL", "")
 FORESTIQ_SOOS_WFS_LAYER = os.getenv("FORESTIQ_SOOS_WFS_LAYER", "")
 FORESTIQ_SOOS_WFS_CADASTRE_FIELD = os.getenv("FORESTIQ_SOOS_WFS_CADASTRE_FIELD", "katastri_nr")

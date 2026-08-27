@@ -107,6 +107,7 @@ class Cadastre(OrganizationScopedModel):
         ordering = ("id",)
         indexes = [
             models.Index(fields=("organization", "county", "municipality"), name="cad_org_location_idx"),
+            models.Index(fields=("organization", "id"), name="cad_org_id_idx"),
         ]
         constraints = [models.UniqueConstraint(fields=("organization", "id"), name="unique_cadastre_organization_id")]
 
@@ -178,6 +179,7 @@ class CadastreSubPart(OrganizationScopedModel):
 
     class Meta:
         db_table = "cadastre_sub_parts"
+        indexes = [models.Index(fields=("organization", "cadastre"), name="subpart_org_cad_idx")]
         constraints = [models.UniqueConstraint(fields=("organization", "cadastre", "sub_part_code"), name="unique_organization_cadastre_subpart")]
 
 
@@ -201,7 +203,10 @@ class CadastreNotification(OrganizationScopedModel):
     class Meta:
         db_table = "cadastre_notifications"
         ordering = ("-registration_date", "-id")
-        indexes = [models.Index(fields=("organization", "cadastre", "archived"), name="notif_org_archive_idx")]
+        indexes = [
+            models.Index(fields=("organization", "cadastre", "archived"), name="notif_org_archive_idx"),
+            models.Index(fields=("organization", "cadastre"), name="notif_org_cad_idx"),
+        ]
 
 
 class ForestRegistryFeature(OrganizationScopedModel):

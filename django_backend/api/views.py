@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.db import connection, transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 from django.contrib.gis.geos import Polygon
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
@@ -648,6 +648,48 @@ def cadastre_detail(request, cadastre_id: str):
     if not any(can_access_owner(request, owner) for owner in owners):
         return _detail("You do not have access to this cadastre.", status.HTTP_403_FORBIDDEN)
     return Response(cadastre_data(cadastre))
+
+
+@api_view(["GET"])
+@permission_classes([CanUseAssignedOwners])
+def cadastre_summary(request, cadastre_id: str):
+    """Return compact, access-controlled counters for a cadastral unit.
+
+    The endpoint deliberately avoids the expensive activity and object payloads used by
+    the map workspace. It is therefore appropriate for map side-panels and performance
+    budgets that must remain predictable at portfolio scale.
+    """
+
+    cadastre = get_object_or_404(Cadastre.objects, id=cadastre_id)
+    owners = [owner for owner in cadastre.owners.all() if can_access_owner(request, owner)]
+    if not owners:
+        return _detail("You do not have access to this cadastre.", status.HTTP_403_FORBIDDEN)
+
+    owner_ids = [owner.id for owner in owners]
+    deals = Deal.objects.filter(owner_id__in=owner_ids, parcels=cadastre).distinct()
+    closed_stages = [DealStage.WON, DealStage.LOST, DealStage.CANCELLED]
+    subpart_totals = cadastre.sub_parts.aggregate(count=Count("id"), area=Sum("area"))
+    notification_totals = cadastre.notifications.aggregate(
+        count=Count("id"),
+        active_count=Count("id", filter=Q(archived=False)),
+    )
+    stage_counts = {item["stage"]: item["count"] for item in deals.values("stage").annotate(count=Count("id"))}
+    customer_owners = [owner for owner in owners if deals.filter(owner=owner, stage=DealStage.WON).exists()]
+
+    return Response(
+        {
+            "cadastre": {"id": cadastre.id, "name": cadastre.name, "area": json_value(cadastre.area)},
+            "owners": {"count": len(owners), "customerCount": len(customer_owners)},
+            "subparts": {"count": subpart_totals["count"], "area": json_value(subpart_totals["area"])},
+            "notifications": {"count": notification_totals["count"], "activeCount": notification_totals["active_count"]},
+            "customerRelationship": {
+                "isCustomer": bool(customer_owners),
+                "activeDealCount": deals.exclude(stage__in=closed_stages).count(),
+                "wonDealCount": deals.filter(stage=DealStage.WON).count(),
+                "dealStages": stage_counts,
+            },
+        }
+    )
 
 
 @api_view(["GET"])
