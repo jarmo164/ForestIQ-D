@@ -27,6 +27,7 @@ from forestry.models import (
     Owner,
     OwnerCadastre,
 )
+from forestry.services.wfs_client import WfsClient, WfsClientError, wfs_client
 
 
 class ExternalSourceError(RuntimeError):
@@ -102,35 +103,34 @@ def _safe_cql_equals(field: str, value: str) -> str:
     return f"{field}='{value.replace("'", "''")}'"
 
 
-def wfs_features(base_url: str, layer: str, *, field: str, value: str) -> list[dict[str, Any]]:
-    """Return a bounded GeoJSON feature list for one exact cadastral identifier."""
+def wfs_features(
+    base_url: str,
+    layer: str,
+    *,
+    field: str,
+    value: str,
+    client: WfsClient | None = None,
+) -> list[dict[str, Any]]:
+    """Return paginated, policy-bounded GeoJSON features for one exact identifier."""
 
     if not base_url or not layer:
         return []
-    response = requests.get(
-        base_url,
-        params={
-            "service": "WFS",
-            "version": "2.0.0",
-            "request": "GetFeature",
-            "typeNames": layer,
-            "outputFormat": "application/json",
-            "srsName": "EPSG:3301",
-            "count": 10000,
-            "CQL_FILTER": _safe_cql_equals(field, value),
-        },
-        headers=_headers(),
-        timeout=settings.FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
     try:
-        payload = response.json()
-    except ValueError as exc:
-        raise ExternalSourceError(f"{layer} returned non-JSON data") from exc
-    features = payload.get("features") if isinstance(payload, dict) else None
-    if not isinstance(features, list):
-        raise ExternalSourceError(f"{layer} returned an invalid WFS FeatureCollection")
-    return [feature for feature in features if isinstance(feature, dict)]
+        client = client or wfs_client()
+        page_size = min(settings.FORESTIQ_WFS_PAGE_SIZE, settings.FORESTIQ_WFS_MAX_FEATURES)
+        return [
+            feature
+            for page in client.iter_feature_pages(
+                base_url=base_url,
+                layer=layer,
+                page_size=page_size,
+                cql_filter=_safe_cql_equals(field, value),
+                headers=_headers(),
+            )
+            for feature in page
+        ]
+    except WfsClientError as exc:
+        raise ExternalSourceError(str(exc)) from exc
 
 
 def _iter_xy(value: Any) -> Iterable[tuple[float, float]]:
@@ -201,12 +201,14 @@ def sync_metsaregister_wfs(cadastre_id: str, *, organization_id: str) -> int:
     cadastre = Cadastre.objects.get(id=cadastre_id)
     saved = 0
     source_layers = list(settings.FORESTIQ_METSAREGISTER_WFS_LAYERS)
+    client = wfs_client()
     for layer in source_layers:
         features = wfs_features(
             settings.FORESTIQ_METSAREGISTER_WFS_URL,
             layer,
             field="katastri_nr",
             value=cadastre.id,
+            client=client,
         )
         retained_ids: list[str] = []
         for feature in features:

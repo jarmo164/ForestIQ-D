@@ -1,7 +1,10 @@
 """Tests for the externally sourced forestry data synchronisation layer."""
 
 from datetime import timedelta
+import json
 from unittest.mock import MagicMock, Mock, patch
+
+import requests
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -16,10 +19,11 @@ from api.auth import token_pair
 from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, Owner, OwnerLog
 from operations.models import Deal, DealStage
 from forestry.services import import_runner
-from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance
+from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance, wfs_features
 from forestry.services.metsaregister_full_import import FullImportReport, import_metsaregister_delta
 from forestry.tasks import enqueue_cadastre_sync, run_cadastre_sync, run_metsaregister_delta_check
 from forestry.services.single_flight import SingleFlightLock
+from forestry.services.wfs_client import WfsClient, WfsClientError, WfsClientPolicy
 
 
 def authenticated_client(user: User) -> APIClient:
@@ -521,3 +525,101 @@ class SingleFlightDispatchTests(TestCase):
         self.assertEqual(second.data["code"], "already_running")
         self.assertEqual(second.data["run"]["id"], first.data["id"])
         self.assertEqual(DataSyncRun.objects.count(), 1)
+
+
+class WfsClientTests(SimpleTestCase):
+    @staticmethod
+    def _response(status_code: int, payload: dict[str, object], *, content: bytes | None = None, retry_after: str = "") -> Mock:
+        response = Mock()
+        response.status_code = status_code
+        response.headers = {"Retry-After": retry_after} if retry_after else {}
+        response.content = content if content is not None else json.dumps(payload).encode()
+        response.json.return_value = payload
+        if status_code >= 400:
+            response.raise_for_status.side_effect = requests.HTTPError(f"HTTP {status_code}")
+        return response
+
+    @staticmethod
+    def _policy(**overrides) -> WfsClientPolicy:
+        values = {
+            "max_features": 10,
+            "max_payload_bytes": 1024,
+            "max_retries": 2,
+            "retry_backoff_seconds": 1,
+            "min_request_interval_seconds": 0,
+        }
+        values.update(overrides)
+        return WfsClientPolicy(**values)
+
+    def test_retries_rate_limit_server_errors_and_temporary_network_failure(self):
+        response = self._response(200, {"features": [{"id": "one"}]})
+        request_get = Mock(
+            side_effect=[
+                self._response(429, {"features": []}, retry_after="3"),
+                self._response(503, {"features": []}),
+                requests.ConnectionError("temporary socket failure"),
+                response,
+            ]
+        )
+        sleep = Mock()
+        client = WfsClient(policy=self._policy(max_retries=3), request_get=request_get, sleep=sleep)
+
+        features = client.feature_page(base_url="https://wfs.example.test", layer="registry:layer", page_size=10)
+
+        self.assertEqual(features, [{"id": "one"}])
+        self.assertEqual(request_get.call_count, 4)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [3.0, 2.0, 4.0])
+
+    @override_settings(FORESTIQ_WFS_PAGE_SIZE=2, FORESTIQ_WFS_MAX_FEATURES=10)
+    @patch("forestry.services.external_sync.requests.get")
+    def test_existing_wfs_adapter_uses_the_shared_paginated_client(self, request_get):
+        request_get.side_effect = [
+            self._response(200, {"features": [{"id": "one"}, {"id": "two"}]}),
+            self._response(200, {"features": [{"id": "three"}]}),
+        ]
+
+        features = wfs_features(
+            "https://wfs.example.test",
+            "registry:layer",
+            field="katastri_nr",
+            value="79501:001:0001",
+        )
+
+        self.assertEqual([feature["id"] for feature in features], ["one", "two", "three"])
+        self.assertEqual([call.kwargs["params"]["startIndex"] for call in request_get.call_args_list], [0, 2])
+
+    def test_iterates_wfs_pages_with_consecutive_start_indexes(self):
+        request_get = Mock(
+            side_effect=[
+                self._response(200, {"features": [{"id": "one"}, {"id": "two"}]}),
+                self._response(200, {"features": [{"id": "three"}, {"id": "four"}]}),
+                self._response(200, {"features": [{"id": "five"}]}),
+            ]
+        )
+        client = WfsClient(policy=self._policy(), request_get=request_get)
+
+        pages = list(client.iter_feature_pages(base_url="https://wfs.example.test", layer="registry:layer", page_size=2))
+
+        self.assertEqual([[feature["id"] for feature in page] for page in pages], [["one", "two"], ["three", "four"], ["five"]])
+        self.assertEqual([call.kwargs["params"]["startIndex"] for call in request_get.call_args_list], [0, 2, 4])
+
+    def test_rejects_oversized_and_malformed_feature_collections(self):
+        client = WfsClient(
+            policy=self._policy(max_payload_bytes=8),
+            request_get=Mock(return_value=self._response(200, {"features": []}, content=b"too-large-payload")),
+        )
+        with self.assertRaisesRegex(WfsClientError, "payload policy"):
+            client.feature_page(base_url="https://wfs.example.test", layer="registry:layer", page_size=1)
+
+        malformed = WfsClient(
+            policy=self._policy(),
+            request_get=Mock(return_value=self._response(200, {"features": ["not-an-object"]})),
+        )
+        with self.assertRaisesRegex(WfsClientError, "malformed feature collection"):
+            malformed.feature_page(base_url="https://wfs.example.test", layer="registry:layer", page_size=1)
+
+        bad_request_get = Mock(return_value=self._response(400, {"features": []}))
+        bad_request = WfsClient(policy=self._policy(max_retries=3), request_get=bad_request_get)
+        with self.assertRaisesRegex(WfsClientError, "without retry"):
+            bad_request.feature_page(base_url="https://wfs.example.test", layer="registry:layer", page_size=1)
+        bad_request_get.assert_called_once()
