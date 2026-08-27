@@ -1248,7 +1248,7 @@ def sales_management_overview(request):
         if owner and owner["assignee_id"] in team:
             team[owner["assignee_id"]]["workload"]["overdueReminders"] += 1
         if owner:
-            interventions.append({"kind": "OVERDUE_REMINDER", "reminderId": str(reminder["id"]), "ownerId": str(reminder["owner_id"]), "ownerName": owner["name"], "assigneeId": owner["assignee_id"], "dueAt": json_value(reminder["due_time"])})
+            interventions.append({"kind": "OVERDUE_REMINDER", "reminderId": str(reminder["id"]), "ownerId": str(reminder["owner_id"]), "ownerName": owner["name"], "assigneeId": owner["assignee_id"], "dueAt": reminder["due_time"].isoformat()})
 
     for contact in OwnerLog.objects.filter(organization_id=organization_id, created_at__gte=recent_at, message__startswith="Sales outcome:").values("creator_id", "message"):
         if contact["creator_id"] not in team:
