@@ -231,7 +231,7 @@ def map_vector_tile(request, layer: str, z: int, x: int, y: int):
     """Return an organization-scoped Mapbox Vector Tile from PostGIS geometry."""
 
     layer = layer.lower()
-    if layer not in {"cadastres", "subparts"}:
+    if layer not in {"cadastres", "subparts", "registry"}:
         return _detail("Unknown vector tile layer.", status.HTTP_404_NOT_FOUND)
     coordinates, error = _map_tile_coordinates(z, x, y)
     if error:
@@ -243,11 +243,17 @@ def map_vector_tile(request, layer: str, z: int, x: int, y: int):
     if layer == "cadastres":
         queryset = cadastres.exclude(boundary__isnull=True)
         properties = ("id", "name", "county", "municipality", "area")
-    else:
+        geometry_field = "boundary"
+    elif layer == "subparts":
         queryset = CadastreSubPart.objects.exclude(boundary__isnull=True).filter(cadastre__in=cadastres)
         properties = ("id", "cadastre_id", "sub_part_code", "tree_type_code", "area")
+        geometry_field = "boundary"
+    else:
+        queryset = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).filter(cadastre__in=cadastres)
+        properties = ("id", "cadastre_id", "subpart_code", "title", "work_code", "decision", "area", "volume")
+        geometry_field = "spatial_geometry"
 
-    tile = _map_vector_tile_bytes(queryset, properties, "boundary", layer, *coordinates)
+    tile = _map_vector_tile_bytes(queryset, properties, geometry_field, layer, *coordinates)
     response = HttpResponse(tile, content_type="application/vnd.mapbox-vector-tile")
     response["Cache-Control"] = "private, max-age=60"
     return response
