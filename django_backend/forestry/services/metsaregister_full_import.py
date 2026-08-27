@@ -17,6 +17,7 @@ from django.utils.dateparse import parse_datetime
 from accounts.organization_context import current_organization_id
 from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, ForestRegistryFeature
 from forestry.services.external_sync import ExternalSourceError, geometry_from_geojson
+from forestry.services.wfs_client import WfsClient, WfsClientError
 
 
 def _safe_field(name: str) -> str:
@@ -65,32 +66,42 @@ def _headers() -> dict[str, str]:
     return {"Accept": "application/json", "User-Agent": settings.FORESTIQ_SYNC_USER_AGENT}
 
 
-def _feature_page(*, layer: str, start_index: int, page_size: int, cql_filter: str | None = None) -> list[dict[str, Any]]:
-    params: dict[str, Any] = {"service": "WFS", "version": "2.0.0", "request": "GetFeature", "typeNames": layer, "outputFormat": "application/json", "srsName": "EPSG:3301", "count": page_size, "startIndex": start_index}
-    if cql_filter:
-        params["CQL_FILTER"] = cql_filter
-    response = requests.get(settings.FORESTIQ_METSAREGISTER_WFS_URL, params=params, headers=_headers(), timeout=settings.FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS)
-    response.raise_for_status()
+def _feature_page(
+    *,
+    layer: str,
+    start_index: int,
+    page_size: int,
+    cql_filter: str | None = None,
+    client: WfsClient | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch one policy-validated Metsaregister WFS page."""
+
     try:
-        payload = response.json()
-    except ValueError as exc:
-        raise ExternalSourceError(f"{layer} returned non-JSON data") from exc
-    features = payload.get("features") if isinstance(payload, dict) else None
-    if not isinstance(features, list):
-        raise ExternalSourceError(f"{layer} returned an invalid WFS FeatureCollection")
-    return [feature for feature in features if isinstance(feature, dict)]
+        return (client or WfsClient(request_get=requests.get)).feature_page(
+            base_url=settings.FORESTIQ_METSAREGISTER_WFS_URL,
+            layer=layer,
+            start_index=start_index,
+            page_size=page_size,
+            cql_filter=cql_filter,
+            headers=_headers(),
+        )
+    except WfsClientError as exc:
+        raise ExternalSourceError(str(exc)) from exc
 
 
 def _pages(*, layer: str, page_size: int, cql_filter: str | None = None) -> Iterator[list[dict[str, Any]]]:
-    start_index = 0
-    while True:
-        page = _feature_page(layer=layer, start_index=start_index, page_size=page_size, cql_filter=cql_filter)
-        if not page:
-            return
-        yield page
-        if len(page) < page_size:
-            return
-        start_index += len(page)
+    """Yield client-bounded pages while sharing one rate limiter across the import."""
+
+    try:
+        yield from WfsClient(request_get=requests.get).iter_feature_pages(
+            base_url=settings.FORESTIQ_METSAREGISTER_WFS_URL,
+            layer=layer,
+            page_size=page_size,
+            cql_filter=cql_filter,
+            headers=_headers(),
+        )
+    except WfsClientError as exc:
+        raise ExternalSourceError(str(exc)) from exc
 
 
 def _source_id(feature: dict[str, Any]) -> str:
