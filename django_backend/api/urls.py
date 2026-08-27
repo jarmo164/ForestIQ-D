@@ -20,6 +20,7 @@ urlpatterns = [
     path("services/admin/userstatistics/prep-data", views.user_statistics_prep),
     path("services/admin/userstatistics/owner-status-change", views.user_statistics),
     path("services/admin/dashboard-stats", views.dashboard_stats),
+    path("services/admin/sales-management-overview", views.sales_management_overview),
     path("services/admin/sync-runs", views.sync_runs),
     path("services/admin/sync-runs/<int:run_id>/retry", views.retry_sync_run),
     path("services/admin/cadastres/<str:cadastre_id>/sync", views.cadastre_sync),

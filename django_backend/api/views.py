@@ -43,6 +43,7 @@ from .organization import organization_user_or_404, organization_users, request_
 from .permissions import (
     CanEvaluate,
     CanManageOwners,
+    CanManageSales,
     CanUseAssignedOwners,
     CanUsePhones,
     CanViewOrganizationData,
@@ -1196,5 +1197,70 @@ def dashboard_stats(request):
             },
             "dealStages": deal_stage_counts,
             "generatedAt": now,
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([CanManageSales])
+def sales_management_overview(request):
+    """Return tenant-scoped operational sales workload and intervention signals."""
+
+    organization_id = request_organization_id(request)
+    now = timezone.now()
+    today = timezone.localdate(now)
+    recent_at = now - timedelta(days=30)
+    closed_stages = (DealStage.WON, DealStage.LOST, DealStage.CANCELLED)
+    team = {
+        member.id: {
+            "member": user_data(member),
+            "workload": {"assignedOwners": 0, "activeDeals": 0, "evaluationDeals": 0, "overdueReminders": 0},
+            "contactOutcomes": {outcome: 0 for outcome in ("CALLBACK", "NO_ANSWER", "INTERESTED", "NOT_INTERESTED", "DECLINED", "FOLLOW_UP")},
+            "deals": {stage: 0 for stage, _label in DealStage.choices},
+        }
+        for member in organization_users(request, active_only=True).only("id", "full_name")
+    }
+    owner_rows = list(Owner.objects.filter(organization_id=organization_id).values("id", "name", "assignee_id"))
+    owners_by_id = {str(item["id"]): item for item in owner_rows}
+    active_owner_scope = Q(out_of_admin_search_from__isnull=True) | Q(out_of_admin_search_to__lte=now)
+    for frame in Owner.objects.filter(organization_id=organization_id).filter(active_owner_scope).values("assignee_id").annotate(count=Count("id")):
+        if frame["assignee_id"] in team:
+            team[frame["assignee_id"]]["workload"]["assignedOwners"] = frame["count"]
+
+    interventions = []
+    deals = Deal.objects.filter(organization_id=organization_id)
+    for deal in deals.values("id", "owner_id", "owner__assignee_id", "evaluator_id", "stage", "offer_valid_until"):
+        assignee_id = deal["owner__assignee_id"]
+        if assignee_id in team:
+            team[assignee_id]["deals"][deal["stage"]] += 1
+            if deal["stage"] not in closed_stages:
+                team[assignee_id]["workload"]["activeDeals"] += 1
+        if deal["stage"] == DealStage.EVALUATION and deal["evaluator_id"] in team:
+            team[deal["evaluator_id"]]["workload"]["evaluationDeals"] += 1
+        owner = owners_by_id.get(str(deal["owner_id"]))
+        if deal["stage"] == DealStage.EVALUATION and not deal["evaluator_id"] and owner:
+            interventions.append({"kind": "UNASSIGNED_EVALUATION", "dealId": str(deal["id"]), "ownerId": str(deal["owner_id"]), "ownerName": owner["name"], "assigneeId": assignee_id, "dueAt": None})
+        if deal["stage"] not in closed_stages and deal["offer_valid_until"] and deal["offer_valid_until"] < today and owner:
+            interventions.append({"kind": "EXPIRED_OFFER", "dealId": str(deal["id"]), "ownerId": str(deal["owner_id"]), "ownerName": owner["name"], "assigneeId": assignee_id, "dueAt": deal["offer_valid_until"].isoformat()})
+
+    for reminder in Reminder.objects.filter(organization_id=organization_id, due_time__lt=now).values("id", "owner_id", "due_time"):
+        owner = owners_by_id.get(str(reminder["owner_id"]))
+        if owner and owner["assignee_id"] in team:
+            team[owner["assignee_id"]]["workload"]["overdueReminders"] += 1
+        if owner:
+            interventions.append({"kind": "OVERDUE_REMINDER", "reminderId": str(reminder["id"]), "ownerId": str(reminder["owner_id"]), "ownerName": owner["name"], "assigneeId": owner["assignee_id"], "dueAt": reminder["due_time"].isoformat()})
+
+    for contact in OwnerLog.objects.filter(organization_id=organization_id, created_at__gte=recent_at, message__startswith="Sales outcome:").values("creator_id", "message"):
+        if contact["creator_id"] not in team:
+            continue
+        outcome = contact["message"].split(" ", 2)[2].split(".", 1)[0]
+        if outcome in team[contact["creator_id"]]["contactOutcomes"]:
+            team[contact["creator_id"]]["contactOutcomes"][outcome] += 1
+
+    return Response(
+        {
+            "period": {"contactOutcomesSince": json_value(recent_at), "generatedAt": json_value(now)},
+            "team": list(team.values()),
+            "interventions": sorted(interventions, key=lambda item: (item["dueAt"] is None, item["dueAt"] or "", item["kind"]))[:100],
         }
     )

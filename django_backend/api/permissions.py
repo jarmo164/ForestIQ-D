@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from rest_framework.permissions import BasePermission
 
-from accounts.models import PrivilegeCode
+from accounts.models import OrganizationRole, PrivilegeCode
 from accounts.organization_context import current_organization_id
 
 
@@ -56,6 +56,19 @@ class IsAdmin(HasForestIQPrivilege):
 
 class CanManageOwners(HasForestIQPrivilege):
     required_privileges = (PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE, PrivilegeCode.ASSIGNED_OWNERS)
+
+
+class CanManageSales(HasOrganizationMembership):
+    """Allow operational sales overview only for confirmed management roles."""
+
+    management_roles = frozenset((OrganizationRole.OWNER, OrganizationRole.ADMIN, OrganizationRole.CRM_MANAGER))
+
+    def has_permission(self, request, view) -> bool:
+        membership = current_membership(request)
+        return bool(
+            super().has_permission(request, view)
+            and (request.user.is_superuser or set(membership.role_codes).intersection(self.management_roles))
+        )
 
 
 class CanUseAssignedOwners(HasForestIQPrivilege):
