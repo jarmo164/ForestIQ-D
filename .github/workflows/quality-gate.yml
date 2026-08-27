@@ -125,6 +125,14 @@ jobs:
         working-directory: forestiq-ui
         run: pnpm test
 
+      - name: Install Playwright Chromium
+        working-directory: forestiq-ui
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run deterministic critical E2E workflows
+        working-directory: forestiq-ui
+        run: pnpm test:e2e
+
       - name: Build
         working-directory: forestiq-ui
         run: pnpm build
