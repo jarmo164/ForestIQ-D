@@ -1,0 +1,1640 @@
+openapi: 3.0.3
+info:
+  title: ForestIQ-D API
+  version: 1.0.0
+  description: Versioned compatibility API for the ForestIQ Django rewrite.
+paths:
+  /api/v1/oidc/config:
+    get:
+      operationId: oidc_config_retrieve
+      description: Expose only browser-safe Keycloak Authorization Code + PKCE metadata.
+      tags:
+      - oidc
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/oidc/exchange:
+    post:
+      operationId: oidc_exchange_create
+      description: Exchange a PKCE authorization code and create the internal tenant
+        JWT.
+      tags:
+      - oidc
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/password-login:
+    post:
+      operationId: password_login_create
+      tags:
+      - password-login
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin-workdesk/assign:
+    post:
+      operationId: services_admin_workdesk_assign_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin-workdesk/owners-search:
+    get:
+      operationId: services_admin_workdesk_owners_search_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin-workdesk/prepare:
+    get:
+      operationId: services_admin_workdesk_prepare_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/cadastres/{cadastre_id}/sync:
+    post:
+      operationId: services_admin_cadastres_sync_create
+      description: Queue one cadastral unit's source refresh through Celery.
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/integrations:
+    get:
+      operationId: services_admin_integrations_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/integrations/{key}/runs:
+    get:
+      operationId: services_admin_integrations_runs_retrieve_2
+      parameters:
+      - in: path
+        name: key
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_admin_integrations_runs_create
+      parameters:
+      - in: path
+        name: key
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/integrations/{key}/runs/recent:
+    get:
+      operationId: services_admin_integrations_runs_recent_retrieve
+      parameters:
+      - in: path
+        name: key
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/integrations/runs/{run_id}:
+    get:
+      operationId: services_admin_integrations_runs_retrieve
+      parameters:
+      - in: path
+        name: run_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/sync-runs:
+    get:
+      operationId: services_admin_sync_runs_retrieve
+      description: Return the recent audit trail for administrator-initiated source
+        refreshes.
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/users:
+    get:
+      operationId: services_admin_users_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_admin_users_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/users/{user_id}:
+    post:
+      operationId: services_admin_users_create_2
+      parameters:
+      - in: path
+        name: user_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_admin_users_destroy
+      parameters:
+      - in: path
+        name: user_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/admin/userstatistics/owner-status-change:
+    get:
+      operationId: services_admin_userstatistics_owner_status_change_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/userstatistics/prep-data:
+    get:
+      operationId: services_admin_userstatistics_prep_data_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}:
+    get:
+      operationId: services_cadastres_retrieve
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/areas:
+    get:
+      operationId: services_cadastres_areas_retrieve
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/evaluation:
+    get:
+      operationId: services_cadastres_evaluation_retrieve
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_cadastres_evaluation_create
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/labels:
+    get:
+      operationId: services_cadastres_labels_retrieve
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_cadastres_labels_create
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_cadastres_labels_destroy
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/labels/{label}:
+    get:
+      operationId: services_cadastres_labels_retrieve_2
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: label
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_cadastres_labels_create_2
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: label
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_cadastres_labels_destroy_2
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: label
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/mkdata:
+    get:
+      operationId: services_cadastres_mkdata_retrieve
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/notifications:
+    get:
+      operationId: services_cadastres_notifications_retrieve
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/registry-features:
+    get:
+      operationId: services_cadastres_registry_features_retrieve
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/workspace:
+    get:
+      operationId: services_cadastres_workspace_retrieve
+      description: Return an access-controlled, map-first workspace payload for one
+        cadastral unit.
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/caller-workdesk-prep-data:
+    get:
+      operationId: services_caller_workdesk_prep_data_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/change-my-password:
+    post:
+      operationId: services_change_my_password_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contract-starter:
+    get:
+      operationId: services_contract_starter_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts:
+    get:
+      operationId: services_contracts_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_contracts_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts/{contract_id}:
+    get:
+      operationId: services_contracts_retrieve_2
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_contracts_destroy
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/contracts/{contract_id}/document:
+    post:
+      operationId: services_contracts_document_create
+      description: Store an uploaded contract under the configured local media directory.
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts/{contract_id}/pdf:
+    get:
+      operationId: services_contracts_pdf_retrieve
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts/cadastre-details/{cadastre_id}:
+    get:
+      operationId: services_contracts_cadastre_details_retrieve
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts/deals/{deal_id}/draft:
+    get:
+      operationId: services_contracts_deals_draft_retrieve
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts/generate-from-deal:
+    post:
+      operationId: services_contracts_generate_from_deal_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts/owner-details/{owner_id}:
+    get:
+      operationId: services_contracts_owner_details_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_contracts_owner_details_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts/suggestors/cadastre/{cadastre_id}:
+    get:
+      operationId: services_contracts_suggestors_cadastre_retrieve
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts/suggestors/owner/{owner_id}:
+    get:
+      operationId: services_contracts_suggestors_owner_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/commercial:
+    get:
+      operationId: services_deals_commercial_retrieve
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/commercial/cancelled:
+    post:
+      operationId: services_deals_commercial_cancelled_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/commercial/counteroffers:
+    post:
+      operationId: services_deals_commercial_counteroffers_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/commercial/lost:
+    post:
+      operationId: services_deals_commercial_lost_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/commercial/offers:
+    post:
+      operationId: services_deals_commercial_offers_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/commercial/offers/send:
+    post:
+      operationId: services_deals_commercial_offers_send_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/commercial/won:
+    post:
+      operationId: services_deals_commercial_won_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/evaluation-assignment:
+    put:
+      operationId: services_deals_evaluation_assignment_update
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/evaluation-assignment/claim:
+    post:
+      operationId: services_deals_evaluation_assignment_claim_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_deals_evaluation_assignment_claim_destroy
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/evaluations:
+    post:
+      operationId: services_deals_evaluations_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/evaluation-queue:
+    get:
+      operationId: services_deals_evaluation_queue_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/owners/{owner_id}:
+    get:
+      operationId: services_deals_owners_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_deals_owners_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/owners/{owner_id}/brief:
+    get:
+      operationId: services_deals_owners_brief_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/inheritance/cases:
+    get:
+      operationId: services_inheritance_cases_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/inheritance/cases/{case_id}:
+    get:
+      operationId: services_inheritance_cases_retrieve_2
+      parameters:
+      - in: path
+        name: case_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/inheritance/cases/{case_id}/assignment:
+    patch:
+      operationId: services_inheritance_cases_assignment_partial_update
+      parameters:
+      - in: path
+        name: case_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/inheritance/cases/{case_id}/events:
+    post:
+      operationId: services_inheritance_cases_events_create
+      parameters:
+      - in: path
+        name: case_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/inheritance/cases/{case_id}/heirs:
+    post:
+      operationId: services_inheritance_cases_heirs_create
+      parameters:
+      - in: path
+        name: case_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/inheritance/cases/{case_id}/heirs/{heir_id}:
+    put:
+      operationId: services_inheritance_cases_heirs_update
+      parameters:
+      - in: path
+        name: case_id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: heir_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/inheritance/cases/{case_id}/status:
+    patch:
+      operationId: services_inheritance_cases_status_partial_update
+      parameters:
+      - in: path
+        name: case_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/inheritance/owners/{owner_id}:
+    get:
+      operationId: services_inheritance_owners_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_inheritance_owners_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/inheritance/owners/{owner_id}/official-notices/{notice_number}/import:
+    post:
+      operationId: services_inheritance_owners_official_notices_import_create
+      parameters:
+      - in: path
+        name: notice_number
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/inheritance/owners/{owner_id}/official-notices/check:
+    post:
+      operationId: services_inheritance_owners_official_notices_check_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/cadastres:
+    get:
+      operationId: services_map_cadastres_retrieve
+      description: Return validated cadastral geometries as WGS84 GeoJSON for MapLibre.
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/layers/{layer}:
+    get:
+      operationId: services_map_layers_retrieve
+      description: Return validated GeoDjango layers as WGS84 GeoJSON for the MapLibre
+        client.
+      parameters:
+      - in: path
+        name: layer
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/tiles/{layer}/{z}/{x}/{y}.pbf:
+    get:
+      operationId: services_map_tiles_.pbf_retrieve
+      description: Return an organization-scoped Mapbox Vector Tile from PostGIS geometry.
+      parameters:
+      - in: path
+        name: layer
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: x
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: y
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: z
+        schema:
+          type: integer
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/messages/new-count:
+    get:
+      operationId: services_messages_new_count_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/messages/new/count:
+    get:
+      operationId: services_messages_new_count_retrieve_2
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/messages/read:
+    post:
+      operationId: services_messages_read_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/messages/received:
+    get:
+      operationId: services_messages_received_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/messages/received/mark-as-read:
+    post:
+      operationId: services_messages_received_mark_as_read_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/messages/send:
+    post:
+      operationId: services_messages_send_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/messages/sent:
+    get:
+      operationId: services_messages_sent_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/messages/usernames:
+    get:
+      operationId: services_messages_usernames_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/messages/users:
+    get:
+      operationId: services_messages_users_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/metsis-portfolio/status:
+    get:
+      operationId: services_metsis_portfolio_status_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/metsis-portfolio/sync:
+    post:
+      operationId: services_metsis_portfolio_sync_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/my-work:
+    get:
+      operationId: services_my_work_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/my-work/next-owner:
+    get:
+      operationId: services_my_work_next_owner_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owner-statuses:
+    get:
+      operationId: services_owner_statuses_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_owner_statuses_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owner-statuses/{status_id}:
+    delete:
+      operationId: services_owner_statuses_destroy
+      parameters:
+      - in: path
+        name: status_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/owner/{owner_id}/assignee:
+    post:
+      operationId: services_owner_assignee_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owner/{owner_id}/followings:
+    get:
+      operationId: services_owner_followings_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owner/{owner_id}/followings/{user_id}:
+    post:
+      operationId: services_owner_followings_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: user_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_owner_followings_destroy
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: user_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/owner/{owner_id}/status:
+    get:
+      operationId: services_owner_status_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_owner_status_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners:
+    get:
+      operationId: services_owners_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners-in-need-of-evaluation:
+    get:
+      operationId: services_owners_in_need_of_evaluation_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/{owner_id}:
+    get:
+      operationId: services_owners_retrieve_2
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_owners_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/{owner_id}/add:
+    post:
+      operationId: services_owners_add_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/{owner_id}/change-status:
+    get:
+      operationId: services_owners_change_status_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_owners_change_status_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/{owner_id}/log:
+    get:
+      operationId: services_owners_log_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_owners_log_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/{owner_id}/mark-cadastres:
+    post:
+      operationId: services_owners_mark_cadastres_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/imports/batches:
+    get:
+      operationId: services_owners_imports_batches_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/imports/batches/{batch_id}/errors.csv:
+    get:
+      operationId: services_owners_imports_batches_errors.csv_retrieve
+      parameters:
+      - in: path
+        name: batch_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/imports/commit:
+    post:
+      operationId: services_owners_imports_commit_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/imports/inspect:
+    post:
+      operationId: services_owners_imports_inspect_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/imports/preview:
+    post:
+      operationId: services_owners_imports_preview_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/ownership-transitions/owners/{owner_id}:
+    get:
+      operationId: services_ownership_transitions_owners_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/ownership-transitions/sync:
+    post:
+      operationId: services_ownership_transitions_sync_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/persons-dump:
+    get:
+      operationId: services_persons_dump_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_persons_dump_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/persons-dump/{person_id}:
+    delete:
+      operationId: services_persons_dump_destroy
+      parameters:
+      - in: path
+        name: person_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/registry/cadastres/{cadastre_id}/maaamet/refresh:
+    post:
+      operationId: services_registry_cadastres_maaamet_refresh_create
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/registry/cadastres/{cadastre_id}/metsaregister/notifications/refresh:
+    post:
+      operationId: services_registry_cadastres_metsaregister_notifications_refresh_create
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/registry/cadastres/{cadastre_id}/metsaregister/plan/refresh:
+    post:
+      operationId: services_registry_cadastres_metsaregister_plan_refresh_create
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/registry/cadastres/{cadastre_id}/refresh-all:
+    post:
+      operationId: services_registry_cadastres_refresh_all_create
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/registry/freshness:
+    get:
+      operationId: services_registry_freshness_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/registry/freshness/recover:
+    post:
+      operationId: services_registry_freshness_recover_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/registry/health:
+    get:
+      operationId: services_registry_health_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/registry/rik/cadastre-count:
+    post:
+      operationId: services_registry_rik_cadastre_count_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/reminders:
+    get:
+      operationId: services_reminders_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_reminders_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/reminders-dashboard:
+    get:
+      operationId: services_reminders_dashboard_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/reminders/{reminder_id}:
+    delete:
+      operationId: services_reminders_destroy
+      parameters:
+      - in: path
+        name: reminder_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/sales-workspace/owners/{owner_id}/outcome:
+    post:
+      operationId: services_sales_workspace_owners_outcome_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/sales-workspace/queue:
+    get:
+      operationId: services_sales_workspace_queue_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/status:
+    get:
+      operationId: services_status_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/token-refresh:
+    post:
+      operationId: services_token_refresh_create
+      tags:
+      - services
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/totp:
+    post:
+      operationId: services_totp_create
+      tags:
+      - services
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+components: {}

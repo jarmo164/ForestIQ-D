@@ -78,6 +78,13 @@ jobs:
         working-directory: django_backend
         run: python manage.py check
 
+      - name: Generate and verify the versioned OpenAPI contract
+        working-directory: django_backend
+        run: |
+          python manage.py spectacular --file ../api_contracts/openapi-v1.generated.yaml --validate --urlconf config.api_v1_urls
+          diff --unified=3 ../api_contracts/openapi-v1.yaml ../api_contracts/openapi-v1.generated.yaml
+          rm ../api_contracts/openapi-v1.generated.yaml
+
       - name: Run Django test suite
         working-directory: django_backend
         run: python manage.py test --verbosity 2

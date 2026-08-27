@@ -1,12 +1,19 @@
 """Root URL configuration for the ForestIQ Django service."""
 
-from django.contrib import admin
 from django.conf import settings
 from django.conf.urls.static import static
+from django.contrib import admin
 from django.urls import include, path
+from drf_spectacular.views import SpectacularAPIView
 
 urlpatterns = [
     path("django-admin/", admin.site.urls),
+    path(
+        "api/v1/schema/",
+        SpectacularAPIView.as_view(urlconf="config.api_v1_urls"),
+        name="openapi-v1-schema",
+    ),
+    path("api/v1/", include("api.urls")),
     path("api/", include("api.urls")),
 ]
 
