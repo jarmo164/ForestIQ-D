@@ -52,6 +52,8 @@ export interface Reminder {
   dueTime: number;
   owner?: Owner | null;
   creator?: string;
+  cadastre?: string | null;
+  propertyName?: string | null;
 }
 export interface Message {
   id: string;
