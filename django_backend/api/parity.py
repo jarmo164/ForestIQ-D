@@ -26,6 +26,7 @@ from forestry.tasks import enqueue_cadastre_sync, enqueue_portfolio_sync
 from operations.models import (
     Contract,
     ContractHistory,
+    ContractTemplate,
     Deal,
     DealOffer,
     DealStage,
@@ -1018,6 +1019,19 @@ def contract_generate_from_deal(request):
     contract_number = str(request.data.get("contractNumber", "")).strip()
     if not contract_number:
         return _detail("contractNumber is required.")
+    template = None
+    template_snapshot = {}
+    template_id = request.data.get("templateId")
+    if template_id:
+        template = get_object_or_404(
+            ContractTemplate.objects.select_related("company_profile"),
+            id=template_id,
+            organization_id=request_organization_id(request),
+            is_active=True,
+        )
+        from .contract_templates import template_snapshot as build_template_snapshot
+
+        template_snapshot = build_template_snapshot(template)
     if Contract.objects.filter(id=contract_id).exists() or ContractHistory.objects.filter(id=contract_id).exists():
         return _detail("A contract with this identifier already exists.", status.HTTP_409_CONFLICT)
     with transaction.atomic():
@@ -1028,8 +1042,20 @@ def contract_generate_from_deal(request):
             id=contract_id,
             sellers=draft["seller"]["name"], buyer=str(request.data.get("buyer", "ForestIQ buyer")),
             contract_number=contract_number, created_at=timezone.now(),
-            data={"deal": draft, "terms": request.data.get("terms", draft["acceptedTerms"]), "contractNumber": contract_number},
+            data={
+                "deal": draft,
+                "terms": request.data.get("terms", draft["acceptedTerms"]),
+                "contractNumber": contract_number,
+                "template": template_snapshot,
+            },
             cadastres=", ".join(item["cadastralCode"] for item in draft["parcels"]),
         )
-        contract = Contract.objects.create(id=contract_id, base_id=str(request.data.get("baseId", "")), source_deal=updated_deal, source_offer_id=draft["offerEntryId"])
-    return Response({"contractId": contract.id, "version": contract.version, "historyId": history.id, "dealId": str(updated_deal.id), "offerEntryId": draft["offerEntryId"], "pdf": f"/api/services/contracts/{contract.id}/pdf"}, status=status.HTTP_201_CREATED)
+        contract = Contract.objects.create(
+            id=contract_id,
+            base_id=str(request.data.get("baseId", "")),
+            source_deal=updated_deal,
+            source_offer_id=draft["offerEntryId"],
+            template_version=template,
+            template_snapshot=template_snapshot,
+        )
+    return Response({"contractId": contract.id, "version": contract.version, "historyId": history.id, "dealId": str(updated_deal.id), "offerEntryId": draft["offerEntryId"], "templateVersionId": str(template.id) if template else None, "pdf": f"/api/services/contracts/{contract.id}/pdf"}, status=status.HTTP_201_CREATED)
