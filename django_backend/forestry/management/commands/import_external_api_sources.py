@@ -34,7 +34,7 @@ class Command(BaseCommand):
         source_names = ", ".join(source.key for source in sources)
         forestek_selected = any(source.key == "forestek" for source in sources)
         with organization_scope(organization.id):
-            forestek_completed = DataSyncRun.objects.filter(source__icontains="forestek", status=DataSyncRun.Status.SUCCEEDED).exists()
+            forestek_completed = DataSyncRun.objects.filter(source__icontains="forestek", status=DataSyncRun.Status.SUCCESS).exists()
         if forestek_selected and forestek_completed:
             raise CommandError("Forestek initial import has already completed and is intentionally one-time only.")
         if options["dry_run"]:

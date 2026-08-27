@@ -783,6 +783,30 @@ def ownership_transition_events(request, owner_id: str):
     return Response([{"id": str(item.id), "cadastreId": item.cadastre_id, "type": item.event_type, "occurredAt": json_value(item.occurred_at), "sourceReference": item.source_reference or None, "payload": item.payload, "recordedAt": json_value(item.recorded_at)} for item in owner.ownership_transitions.select_related("cadastre").all()])
 
 
+def _integration_run_data(item: DataSyncRun) -> dict:
+    """Serialize the complete durable integration audit without hidden retry state."""
+
+    return {
+        "id": item.id,
+        "cadastreId": item.cadastre_id,
+        "source": item.source,
+        "status": item.status,
+        "taskId": item.task_id,
+        "correlationId": item.correlation_id or None,
+        "pagesProcessed": item.pages_processed,
+        "rowsProcessed": item.rows_processed,
+        "retryCount": item.retry_count,
+        "backlogSize": item.backlog_size,
+        "cursor": item.cursor,
+        "lagSeconds": item.lag_seconds,
+        "retryOf": item.retry_of_id,
+        "startedAt": json_value(item.started_at),
+        "finishedAt": json_value(item.finished_at),
+        "result": item.result,
+        "error": item.error_message or None,
+    }
+
+
 def _integration_rows() -> list[dict]:
     rows = []
     for key, label, configured in [("CADASTRE", "Cadastre and forest registry", True), ("FORESTEK", "Forestek ownership relations", bool(settings.FORESTEK_API_URL and settings.FORESTEK_API_TOKEN)), ("PARIMUS", "Pärimus official notices", bool(settings.PARIMUS_API_URL and settings.PARIMUS_API_TOKEN))]:
@@ -806,7 +830,7 @@ def integration_start(request, key: str):
     if request.method == "GET":
         limit = min(max(int(request.query_params.get("limit", "10")), 1), 100)
         records = DataSyncRun.objects.filter(source__icontains=key.lower()).order_by("-id")[:limit]
-        return Response([{"id": item.id, "cadastreId": item.cadastre_id, "source": item.source, "status": item.status, "taskId": item.task_id, "correlationId": item.correlation_id or None, "startedAt": json_value(item.started_at), "finishedAt": json_value(item.finished_at), "result": item.result, "error": item.error_message or None} for item in records])
+        return Response([_integration_run_data(item) for item in records])
     if key == "FORESTEK":
         return _detail("Forestek is a one-time initial import. Run the controlled management command only before its first successful import.", status.HTTP_409_CONFLICT)
     cadastre_id = request.data.get("cadastreId") or request.data.get("parameters", {}).get("cadastreId")
@@ -832,7 +856,7 @@ def integration_start(request, key: str):
         return Response({"key": key, "status": dispatch.run.status, "runId": dispatch.run.id, "taskId": dispatch.run.task_id, "correlationId": dispatch.run.correlation_id or None}, status=status.HTTP_202_ACCEPTED)
     if settings.FORESTIQ_TASKS_INLINE:
         result = enqueue_portfolio_sync(str(request_organization_id(request)))
-        return Response({"key": key, "status": "SUCCEEDED", "result": result})
+        return Response({"key": key, "status": "SUCCESS", "result": result})
     task = enqueue_portfolio_sync.delay(str(request_organization_id(request)))
     return Response({"key": key, "status": "QUEUED", "taskId": task.id}, status=status.HTTP_202_ACCEPTED)
 
@@ -842,19 +866,19 @@ def integration_start(request, key: str):
 def integration_runs(request, key: str):
     limit = min(max(int(request.query_params.get("limit", "10")), 1), 100)
     records = DataSyncRun.objects.filter(source__icontains=key.lower()).order_by("-id")[:limit]
-    return Response([{"id": item.id, "cadastreId": item.cadastre_id, "source": item.source, "status": item.status, "taskId": item.task_id, "correlationId": item.correlation_id or None, "startedAt": json_value(item.started_at), "finishedAt": json_value(item.finished_at), "result": item.result, "error": item.error_message or None} for item in records])
+    return Response([_integration_run_data(item) for item in records])
 
 
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def integration_run(request, run_id: int):
     item = get_object_or_404(DataSyncRun, id=run_id)
-    return Response({"id": item.id, "cadastreId": item.cadastre_id, "source": item.source, "status": item.status, "taskId": item.task_id, "correlationId": item.correlation_id or None, "startedAt": json_value(item.started_at), "finishedAt": json_value(item.finished_at), "result": item.result, "error": item.error_message or None})
+    return Response(_integration_run_data(item))
 
 
 def _stale_cadastres(days: int = 30):
     threshold = timezone.now() - timedelta(days=days)
-    fresh_ids = set(DataSyncRun.objects.filter(status=DataSyncRun.Status.SUCCEEDED, finished_at__gte=threshold).values_list("cadastre_id", flat=True))
+    fresh_ids = set(DataSyncRun.objects.filter(status=DataSyncRun.Status.SUCCESS, finished_at__gte=threshold).values_list("cadastre_id", flat=True))
     return Cadastre.objects.exclude(id__in=fresh_ids)
 
 
@@ -953,7 +977,7 @@ def registry_rik_cadastre_count(request):
 @permission_classes([IsAdmin])
 def portfolio_status(request):
     latest = DataSyncRun.objects.filter(source__icontains="forestek").order_by("-id").first()
-    return Response({"configured": bool(settings.FORESTEK_API_URL and settings.FORESTEK_API_TOKEN), "mode": "ONE_TIME_INITIAL_IMPORT", "initialImportCompleted": bool(latest and latest.status == DataSyncRun.Status.SUCCEEDED), "cadastreCount": Cadastre.objects.count(), "latestRun": {"id": latest.id, "status": latest.status, "finishedAt": json_value(latest.finished_at), "error": latest.error_message or None} if latest else None})
+    return Response({"configured": bool(settings.FORESTEK_API_URL and settings.FORESTEK_API_TOKEN), "mode": "ONE_TIME_INITIAL_IMPORT", "initialImportCompleted": bool(latest and latest.status == DataSyncRun.Status.SUCCESS), "cadastreCount": Cadastre.objects.count(), "latestRun": {"id": latest.id, "status": latest.status, "finishedAt": json_value(latest.finished_at), "error": latest.error_message or None} if latest else None})
 
 
 @api_view(["POST"])

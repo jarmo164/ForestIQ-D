@@ -250,8 +250,10 @@ class DataSyncRun(OrganizationScopedModel):
     class Status(models.TextChoices):
         QUEUED = "QUEUED", "Queued"
         RUNNING = "RUNNING", "Running"
-        SUCCEEDED = "SUCCEEDED", "Succeeded"
+        SUCCESS = "SUCCESS", "Success"
+        PARTIAL = "PARTIAL", "Partial"
         FAILED = "FAILED", "Failed"
+        SKIPPED = "SKIPPED", "Skipped"
 
     id = models.BigAutoField(primary_key=True)
     cadastre = models.ForeignKey(
@@ -274,6 +276,19 @@ class DataSyncRun(OrganizationScopedModel):
     correlation_id = models.CharField(max_length=128, blank=True, db_index=True)
     source = models.CharField(max_length=100, default="all")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
+    pages_processed = models.PositiveIntegerField(default=0)
+    rows_processed = models.PositiveIntegerField(default=0)
+    retry_count = models.PositiveIntegerField(default=0)
+    backlog_size = models.PositiveIntegerField(default=0)
+    cursor = models.JSONField(default=dict, blank=True)
+    lag_seconds = models.PositiveIntegerField(null=True, blank=True)
+    retry_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="retry_runs",
+    )
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     result = models.JSONField(default=dict, blank=True)
@@ -283,7 +298,10 @@ class DataSyncRun(OrganizationScopedModel):
     class Meta:
         db_table = "data_sync_runs"
         ordering = ("-id",)
-        indexes = [models.Index(fields=("organization", "cadastre", "status"), name="sync_run_org_cad_idx")]
+        indexes = [
+            models.Index(fields=("organization", "cadastre", "status"), name="sync_run_org_cad_idx"),
+            models.Index(fields=("organization", "source", "status"), name="sync_run_org_source_idx"),
+        ]
 
 
 class ImportCheckpoint(OrganizationScopedModel):

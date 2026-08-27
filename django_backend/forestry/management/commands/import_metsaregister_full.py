@@ -54,6 +54,6 @@ class Command(BaseCommand):
                 if isinstance(exc, ExternalSourceError):
                     raise CommandError(str(exc)) from exc
                 raise
-            run.status, run.finished_at, run.result = DataSyncRun.Status.SUCCEEDED, timezone.now(), report.data()
+            run.status, run.finished_at, run.result = DataSyncRun.Status.SUCCESS, timezone.now(), report.data()
             run.save(update_fields=("status", "finished_at", "result", "correlation_id"))
         self.stdout.write(self.style.SUCCESS(f"Metsaregister full import completed: {report.data()}"))
