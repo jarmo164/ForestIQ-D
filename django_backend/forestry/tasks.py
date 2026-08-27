@@ -9,6 +9,8 @@ from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
 
+from config.observability import current_correlation_id
+
 from accounts.models import Organization
 from accounts.organization_context import organization_scope
 from forestry.models import Cadastre, DataSyncRun
@@ -123,7 +125,12 @@ def enqueue_cadastre_sync(
                 lock.release()
                 return CadastreSyncDispatch(run=run, already_running=True)
             if run is None:
-                run = DataSyncRun.objects.create(cadastre=cadastre, requested_by_id=requested_by_id, source=source)
+                run = DataSyncRun.objects.create(
+                    cadastre=cadastre,
+                    requested_by_id=requested_by_id,
+                    source=source,
+                    correlation_id=current_correlation_id(),
+                )
             run_inline = settings.FORESTIQ_TASKS_INLINE if inline is None else inline
             if run_inline:
                 run_cadastre_sync(run.id, str(organization_id), lock.token)
@@ -176,7 +183,12 @@ def run_metsaregister_delta_check(self, organization_id: str) -> dict[str, objec
             now = timezone.now()
             previous = DataSyncRun.objects.filter(source="celery:metsaregister-cql-delta", status=DataSyncRun.Status.SUCCEEDED, finished_at__isnull=False).order_by("-finished_at").first()
             since = (previous.finished_at - timedelta(minutes=settings.FORESTIQ_METSAREGISTER_DELTA_OVERLAP_MINUTES)) if previous else now - timedelta(hours=settings.FORESTIQ_METSAREGISTER_DELTA_LOOKBACK_HOURS)
-            run = DataSyncRun.objects.create(source="celery:metsaregister-cql-delta", status=DataSyncRun.Status.RUNNING, started_at=now)
+            run = DataSyncRun.objects.create(
+                source="celery:metsaregister-cql-delta",
+                status=DataSyncRun.Status.RUNNING,
+                started_at=now,
+                correlation_id=current_correlation_id(),
+            )
             try:
                 report = import_metsaregister_delta(since=since, organization_id=organization_id)
                 result = {**report.data(), "since": since.isoformat()}

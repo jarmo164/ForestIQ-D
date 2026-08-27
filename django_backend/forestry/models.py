@@ -271,6 +271,7 @@ class DataSyncRun(OrganizationScopedModel):
         db_column="requested_by",
     )
     task_id = models.CharField(max_length=100, blank=True)
+    correlation_id = models.CharField(max_length=128, blank=True, db_index=True)
     source = models.CharField(max_length=100, default="all")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
     started_at = models.DateTimeField(null=True, blank=True)

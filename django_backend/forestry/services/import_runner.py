@@ -9,6 +9,8 @@ from typing import Any, Callable
 from django.conf import settings
 from django.utils import timezone
 
+from config.observability import current_correlation_id
+
 from accounts.organization_context import organization_scope
 from forestry.models import Cadastre, DataSyncRun
 from forestry.services.external_sync import (
@@ -88,7 +90,13 @@ def run_cadastre_import(
 
     with organization_scope(organization_id):
         scoped_cadastre = Cadastre.objects.get(id=cadastre.id)
-        run = DataSyncRun.objects.create(cadastre=scoped_cadastre, source=f"cli:{category}:{','.join(source.key for source in sources)}", status=DataSyncRun.Status.RUNNING, started_at=timezone.now())
+        run = DataSyncRun.objects.create(
+            cadastre=scoped_cadastre,
+            source=f"cli:{category}:{','.join(source.key for source in sources)}",
+            status=DataSyncRun.Status.RUNNING,
+            started_at=timezone.now(),
+            correlation_id=current_correlation_id(),
+        )
         result: dict[str, Any] = {}
         errors: dict[str, str] = {}
         for source in sources:
@@ -106,5 +114,5 @@ def run_cadastre_import(
         else:
             run.status = DataSyncRun.Status.SUCCEEDED
             run.error_message = ""
-        run.save(update_fields=("status", "started_at", "finished_at", "result", "error_message"))
+        run.save(update_fields=("status", "started_at", "finished_at", "result", "error_message", "correlation_id"))
         return run

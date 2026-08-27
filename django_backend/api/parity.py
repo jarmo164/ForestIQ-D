@@ -806,7 +806,7 @@ def integration_start(request, key: str):
     if request.method == "GET":
         limit = min(max(int(request.query_params.get("limit", "10")), 1), 100)
         records = DataSyncRun.objects.filter(source__icontains=key.lower()).order_by("-id")[:limit]
-        return Response([{"id": item.id, "cadastreId": item.cadastre_id, "source": item.source, "status": item.status, "taskId": item.task_id, "startedAt": json_value(item.started_at), "finishedAt": json_value(item.finished_at), "result": item.result, "error": item.error_message or None} for item in records])
+        return Response([{"id": item.id, "cadastreId": item.cadastre_id, "source": item.source, "status": item.status, "taskId": item.task_id, "correlationId": item.correlation_id or None, "startedAt": json_value(item.started_at), "finishedAt": json_value(item.finished_at), "result": item.result, "error": item.error_message or None} for item in records])
     if key == "FORESTEK":
         return _detail("Forestek is a one-time initial import. Run the controlled management command only before its first successful import.", status.HTTP_409_CONFLICT)
     cadastre_id = request.data.get("cadastreId") or request.data.get("parameters", {}).get("cadastreId")
@@ -825,10 +825,11 @@ def integration_start(request, key: str):
                     "code": "already_running",
                     "runId": dispatch.run.id if dispatch.run else None,
                     "taskId": dispatch.run.task_id if dispatch.run else "",
+                    "correlationId": dispatch.run.correlation_id if dispatch.run else None,
                 },
                 status=status.HTTP_409_CONFLICT,
             )
-        return Response({"key": key, "status": dispatch.run.status, "runId": dispatch.run.id, "taskId": dispatch.run.task_id}, status=status.HTTP_202_ACCEPTED)
+        return Response({"key": key, "status": dispatch.run.status, "runId": dispatch.run.id, "taskId": dispatch.run.task_id, "correlationId": dispatch.run.correlation_id or None}, status=status.HTTP_202_ACCEPTED)
     if settings.FORESTIQ_TASKS_INLINE:
         result = enqueue_portfolio_sync(str(request_organization_id(request)))
         return Response({"key": key, "status": "SUCCEEDED", "result": result})
@@ -841,14 +842,14 @@ def integration_start(request, key: str):
 def integration_runs(request, key: str):
     limit = min(max(int(request.query_params.get("limit", "10")), 1), 100)
     records = DataSyncRun.objects.filter(source__icontains=key.lower()).order_by("-id")[:limit]
-    return Response([{"id": item.id, "cadastreId": item.cadastre_id, "source": item.source, "status": item.status, "taskId": item.task_id, "startedAt": json_value(item.started_at), "finishedAt": json_value(item.finished_at), "result": item.result, "error": item.error_message or None} for item in records])
+    return Response([{"id": item.id, "cadastreId": item.cadastre_id, "source": item.source, "status": item.status, "taskId": item.task_id, "correlationId": item.correlation_id or None, "startedAt": json_value(item.started_at), "finishedAt": json_value(item.finished_at), "result": item.result, "error": item.error_message or None} for item in records])
 
 
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def integration_run(request, run_id: int):
     item = get_object_or_404(DataSyncRun, id=run_id)
-    return Response({"id": item.id, "cadastreId": item.cadastre_id, "source": item.source, "status": item.status, "taskId": item.task_id, "startedAt": json_value(item.started_at), "finishedAt": json_value(item.finished_at), "result": item.result, "error": item.error_message or None})
+    return Response({"id": item.id, "cadastreId": item.cadastre_id, "source": item.source, "status": item.status, "taskId": item.task_id, "correlationId": item.correlation_id or None, "startedAt": json_value(item.started_at), "finishedAt": json_value(item.finished_at), "result": item.result, "error": item.error_message or None})
 
 
 def _stale_cadastres(days: int = 30):
@@ -904,11 +905,11 @@ def _registry_refresh(request, cadastre_id: str, source: str):
             {
                 "code": "already_running",
                 "detail": "A synchronization run is already active for this cadastre.",
-                "run": {"id": dispatch.run.id, "status": dispatch.run.status, "taskId": dispatch.run.task_id} if dispatch.run else None,
+                "run": {"id": dispatch.run.id, "status": dispatch.run.status, "taskId": dispatch.run.task_id, "correlationId": dispatch.run.correlation_id or None} if dispatch.run else None,
             },
             status=status.HTTP_409_CONFLICT,
         )
-    return Response({"id": dispatch.run.id, "cadastreId": cadastre_id, "source": source, "status": dispatch.run.status, "taskId": dispatch.run.task_id}, status=status.HTTP_202_ACCEPTED)
+    return Response({"id": dispatch.run.id, "cadastreId": cadastre_id, "source": source, "status": dispatch.run.status, "taskId": dispatch.run.task_id, "correlationId": dispatch.run.correlation_id or None}, status=status.HTTP_202_ACCEPTED)
 
 
 @api_view(["POST"])

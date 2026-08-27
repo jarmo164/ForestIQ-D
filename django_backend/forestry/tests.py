@@ -126,6 +126,25 @@ class SyncEndpointTests(TestCase):
         self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
         self.assertEqual(run.requested_by_id, self.admin.id)
 
+    @override_settings(FORESTIQ_TASKS_INLINE=True)
+    def test_correlation_id_is_saved_on_api_sync_audit_run(self):
+        redis_client = FakeRedis()
+        with (
+            patch("forestry.services.single_flight.redis.from_url", return_value=redis_client),
+            patch("forestry.tasks.sync_cadastre_wfs", return_value=0),
+            patch("forestry.tasks.sync_metsaregister_wfs", return_value=0),
+            patch("forestry.tasks.sync_optional_soos_wfs", return_value=0),
+            patch("forestry.tasks.sync_parimus_inheritance", return_value=0),
+        ):
+            response = self.client.post(
+                f"/api/services/admin/cadastres/{self.cadastre.id}/sync",
+                HTTP_X_CORRELATION_ID="support-trace-100",
+            )
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(response.data["correlationId"], "support-trace-100")
+        self.assertEqual(DataSyncRun.objects.get(id=response.data["id"]).correlation_id, "support-trace-100")
+
     def test_non_admin_cannot_submit_a_sync_run(self):
         caller = User.objects.create_user("caller", "Caller", "very-secure-password")
         client = authenticated_client(caller)
