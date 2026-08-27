@@ -187,18 +187,53 @@ class ContractConfigurationTests(TestCase):
 
     def test_admin_can_revise_html_template_without_losing_prior_version(self):
         profile = CompanyProfile.objects.create(organization=self.organization, legal_name="ForestIQ OÜ")
-        created = self.client.post("/api/services/contract-templates", {"companyProfileId": str(profile.id), "templateKey": "forest-sale", "name": "Müügileping", "html": "<h1>Version 1</h1>"}, format="json")
+        created = self.client.post("/api/services/contract-templates", {"companyProfileId": str(profile.id), "templateKey": "forest-sale", "name": "Müügileping", "html": "<h1>Version 1 {{ company.legalName }} {{ deal.id }} {{ deal.ownerName }} {{ deal.saleSubject }}</h1>"}, format="json")
         self.assertEqual(created.status_code, 201, created.data)
-        successor = self.client.patch(f"/api/services/contract-templates/{created.data['id']}", {"version": 1, "html": "<h1>Version 2</h1>"}, format="json")
+        successor = self.client.patch(f"/api/services/contract-templates/{created.data['id']}", {"version": 1, "html": "<h1>Version 2 {{ company.legalName }} {{ deal.id }} {{ deal.ownerName }} {{ deal.saleSubject }}</h1>"}, format="json")
         self.assertEqual(successor.status_code, 201, successor.data)
         self.assertEqual(successor.data["version"], 2)
         original = ContractTemplate.objects.get(id=created.data["id"])
         self.assertFalse(original.is_active)
-        self.assertEqual(original.html, "<h1>Version 1</h1>")
+        self.assertEqual(original.html, "<h1>Version 1 {{ company.legalName }} {{ deal.id }} {{ deal.ownerName }} {{ deal.saleSubject }}</h1>")
         self.assertEqual(successor.data["supersedesId"], created.data["id"])
         active = self.client.get("/api/services/contract-templates?active=true")
         self.assertEqual(active.status_code, 200, active.data)
         self.assertEqual([item["id"] for item in active.data], [successor.data["id"]])
+
+
+    def test_placeholder_catalog_and_validation_prevent_invalid_activation(self):
+        catalog = self.client.get("/api/services/contract-templates/placeholders")
+        self.assertEqual(catalog.status_code, 200, catalog.data)
+        required = {item["key"] for item in catalog.data["placeholders"] if item["required"]}
+        self.assertEqual(required, {"company.legalName", "deal.id", "deal.ownerName", "deal.saleSubject"})
+        unknown = self.client.post("/api/services/contract-templates", {"templateKey": "unknown", "name": "Unknown", "html": "{{ company.legalName }} {{ deal.id }} {{ deal.ownerName }} {{ deal.saleSubject }} {{ deal.secret }}"}, format="json")
+        self.assertEqual(unknown.status_code, 400, unknown.data)
+        self.assertIn("unknown placeholders", unknown.data["detail"])
+        incomplete = self.client.post("/api/services/contract-templates", {"templateKey": "incomplete", "name": "Incomplete", "html": "{{ company.legalName }} {{ deal.id }}"}, format="json")
+        self.assertEqual(incomplete.status_code, 400, incomplete.data)
+        self.assertIn("missing required placeholders", incomplete.data["detail"])
+
+    def test_preview_renders_selected_deal_without_creating_a_contract(self):
+        profile = CompanyProfile.objects.create(organization=self.organization, legal_name="ForestIQ & Sons OÜ")
+        template = ContractTemplate.objects.create(
+            organization=self.organization,
+            company_profile=profile,
+            template_key="preview",
+            name="Preview template",
+            html="<p>{{ company.legalName }} / {{ deal.ownerName }} / {{ deal.saleSubject }} / {{ deal.ownerName }}</p>",
+            version=1,
+            created_by=self.admin,
+        )
+        owner = Owner.objects.create(id="55555:001:0001", name="Owner <script>", organization=self.organization)
+        deal = Deal.objects.create(owner=owner, sale_subject="FOREST", organization=self.organization)
+        before_contracts = Contract.objects.count()
+        preview = self.client.post(f"/api/services/contract-templates/{template.id}/preview", {"dealId": str(deal.id)}, format="json")
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["templateId"], str(template.id))
+        self.assertIn("ForestIQ &amp; Sons OÜ", preview.data["html"])
+        self.assertIn("Owner &lt;script&gt;", preview.data["html"])
+        self.assertEqual(preview.data["html"].count("Owner &lt;script&gt;"), 2)
+        self.assertEqual(Contract.objects.count(), before_contracts)
 
 
 class MainParityWorkflowTests(TestCase):

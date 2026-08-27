@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from html import escape
+import re
+
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator, validate_email, validate_slug
 from django.db import IntegrityError, transaction
@@ -12,7 +15,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from accounts.models import Organization
-from operations.models import CompanyProfile, ContractTemplate
+from operations.models import CompanyProfile, ContractTemplate, Deal
 
 from .concurrency import missing_version_response, requested_version, version_conflict_response
 from .organization import request_organization_id
@@ -20,6 +23,70 @@ from .permissions import IsAdmin
 
 
 MAX_TEMPLATE_HTML_BYTES = 512_000
+PLACEHOLDER_PATTERN = re.compile(r"{{\s*([a-zA-Z][a-zA-Z0-9_.]*)\s*}}")
+PLACEHOLDER_CATALOG = (
+    {"key": "company.legalName", "label": "Ettevõtte juriidiline nimi", "required": True},
+    {"key": "company.registryCode", "label": "Ettevõtte registrikood", "required": False},
+    {"key": "company.vatNumber", "label": "Ettevõtte käibemaksukohustuslase number", "required": False},
+    {"key": "company.address", "label": "Ettevõtte aadress", "required": False},
+    {"key": "company.email", "label": "Ettevõtte e-post", "required": False},
+    {"key": "company.phone", "label": "Ettevõtte telefon", "required": False},
+    {"key": "company.iban", "label": "Ettevõtte IBAN", "required": False},
+    {"key": "company.signatoryName", "label": "Allkirjastaja nimi", "required": False},
+    {"key": "deal.id", "label": "Tehingu ID", "required": True},
+    {"key": "deal.ownerName", "label": "Omaniku nimi", "required": True},
+    {"key": "deal.saleSubject", "label": "Müügiobjekt", "required": True},
+    {"key": "deal.stage", "label": "Tehingu etapp", "required": False},
+    {"key": "deal.priceExpectation", "label": "Omaniku hinnaootus", "required": False},
+    {"key": "deal.recommendedPurchasePrice", "label": "Soovituslik ostuhind", "required": False},
+    {"key": "deal.offerValidUntil", "label": "Pakkumise kehtivus", "required": False},
+)
+PLACEHOLDER_KEYS = {item["key"] for item in PLACEHOLDER_CATALOG}
+REQUIRED_PLACEHOLDER_KEYS = {item["key"] for item in PLACEHOLDER_CATALOG if item["required"]}
+
+
+def _template_placeholders(html: str) -> set[str]:
+    matches = list(PLACEHOLDER_PATTERN.finditer(html))
+    placeholders = {match.group(1) for match in matches}
+    if html.count("{{") != len(matches) or html.count("}}") != len(matches):
+        raise ValueError("html contains an unclosed or malformed placeholder.")
+    unknown = sorted(placeholders - PLACEHOLDER_KEYS)
+    if unknown:
+        raise ValueError(f"html contains unknown placeholders: {', '.join(unknown)}.")
+    missing = sorted(REQUIRED_PLACEHOLDER_KEYS - placeholders)
+    if missing:
+        raise ValueError(f"html is missing required placeholders: {', '.join(missing)}.")
+    return placeholders
+
+
+def _display(value) -> str:
+    return "" if value in {None, ""} else str(value)
+
+
+def _preview_values(template: ContractTemplate, deal: Deal) -> dict[str, str]:
+    company = template.company_profile
+    return {
+        "company.legalName": _display(company.legal_name if company else None),
+        "company.registryCode": _display(company.registry_code if company else None),
+        "company.vatNumber": _display(company.vat_number if company else None),
+        "company.address": _display(company.address if company else None),
+        "company.email": _display(company.email if company else None),
+        "company.phone": _display(company.phone if company else None),
+        "company.iban": _display(company.iban if company else None),
+        "company.signatoryName": _display(company.signatory_name if company else None),
+        "deal.id": str(deal.id),
+        "deal.ownerName": deal.owner.name,
+        "deal.saleSubject": deal.sale_subject,
+        "deal.stage": deal.stage,
+        "deal.priceExpectation": _display(deal.price_expectation),
+        "deal.recommendedPurchasePrice": _display(deal.recommended_purchase_price),
+        "deal.offerValidUntil": _display(deal.offer_valid_until),
+    }
+
+
+def _render_preview(template: ContractTemplate, deal: Deal) -> str:
+    values = _preview_values(template, deal)
+    return PLACEHOLDER_PATTERN.sub(lambda match: escape(values[match.group(1)]), template.html)
 
 
 def _detail(message: str, http_status: int = status.HTTP_400_BAD_REQUEST) -> Response:
@@ -118,6 +185,7 @@ def _template_values(data, organization: Organization, *, fallback: ContractTemp
         raise ValueError("html is required.")
     if len(html.encode("utf-8")) > MAX_TEMPLATE_HTML_BYTES:
         raise ValueError(f"html exceeds the {MAX_TEMPLATE_HTML_BYTES} byte safety limit.")
+    _template_placeholders(html)
     try:
         validate_slug(template_key)
     except ValidationError as exc:
@@ -213,6 +281,23 @@ def contract_templates(request):
         next_version = (templates.filter(template_key=values["template_key"]).aggregate(highest=Max("version"))["highest"] or 0) + 1
         template = ContractTemplate.objects.create(organization=organization, version=next_version, created_by=request.user, **values)
     return Response(_template_data(template), status=status.HTTP_201_CREATED)
+
+
+@api_view(["GET"])
+@permission_classes([IsAdmin])
+def contract_template_placeholders(request):
+    return Response({"placeholders": PLACEHOLDER_CATALOG})
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def contract_template_preview(request, template_id: str):
+    template = get_object_or_404(_template_queryset(request).filter(is_active=True), id=template_id)
+    deal_id = request.data.get("dealId")
+    if not deal_id:
+        return _detail("dealId is required.")
+    deal = get_object_or_404(Deal.objects.select_related("owner").filter(organization=_organization(request)), id=deal_id)
+    return Response({"templateId": str(template.id), "dealId": str(deal.id), "html": _render_preview(template, deal)})
 
 
 @api_view(["GET", "PATCH", "DELETE"])
