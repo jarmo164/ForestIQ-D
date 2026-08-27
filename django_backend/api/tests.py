@@ -19,7 +19,7 @@ from api.auth import token_pair
 from api.urls import urlpatterns
 from accounts.models import Organization, OrganizationMembership, OrganizationRole, Privilege, PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, Owner, OwnerStatus
-from operations.models import CompanyProfile, Contract, ContractTemplate, Deal, DealOffer, InheritanceCase, Reminder
+from operations.models import CompanyProfile, Contract, ContractTemplate, Deal, DealOffer, DealStage, InheritanceCase, Reminder
 
 
 class RenderCorsTests(TestCase):
