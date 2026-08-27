@@ -10,7 +10,7 @@ ForestIQ on metsaostjate töölaud. Haru `rewrite` server on ümber ehitatud **P
 | API | Django + Django REST Framework | REST liides, domeeniloogika, õigused ja JWT autentimine |
 | Andmebaas | PostgreSQL 16 + PostGIS 3.4 | Omanikud, katastriüksused, ruumiandmed, töölogid, sõnumid, lepingud ja muu püsiv domeeniinfo |
 | Tausttööd | Celery + Redis + Celery Beat | Auditiga WFS-i, metsaregistri ja volitatud välisallikate sünkroniseerimine |
-| Kaart | GeoDjango + MapLibre | Geomeetria valideerimine, PostGIS-i ristumispäringud ja interaktiivsed GeoJSON-kihid |
+| Kaart | GeoDjango + MapLibre | Geomeetria valideerimine, PostGIS-i MVT-vektorplaadid, ETag-cache ja väikesed GeoJSON fallback-kihid |
 | Käitus | Docker Compose + Gunicorn + Nginx | Korratav kasutajaliidese, API, workeri ja andmebaasi ühtne käivitus |
 
 Django rakendused on jagatud selgete domeenipiiridega: `accounts` haldab identiteeti ja õigusi, `forestry` metsaomanike ning katastri domeeni, `operations` meeldetuletusi, sõnumeid ja lepinguid ning `api` säilitab REST-liidese ühilduvuse.
@@ -127,7 +127,7 @@ Ajastust saab muuta keskkonnamuutujaga `FORESTIQ_METSAREGISTER_DELTA_INTERVAL_SE
 
 ### MapLibre ja GeoDjango kaardikihid
 
-Reacti kaarditööruum aadressil `/map` kasutab MapLibre’i ning laeb ruumiandmed ainult autoriseeritud Django REST-liidese kaudu. Katastriüksused tulevad otspunktist `GET /api/services/map/cadastres`; GeoDjango eraldised, metsaregistri objektid ja teatiste markerid tulevad vastavalt otspunktidest `GET /api/services/map/layers/subparts`, `registry` ja `notifications`. Kõik geomeetriad teisendatakse serveris EPSG:4326 GeoJSON-iks ning MapLibre ei pöördu otse välise WFS-teenuse poole.
+Reacti kaarditööruum aadressil `/map` kasutab MapLibre’i ning laeb ruumiandmed ainult autoriseeritud Django REST-liidese kaudu. Suured katastri-, metsaeraldiste ja Metsaregistri kihid tulevad nähtava ala MVT-vektorplaatidena otspunktist `GET /api/services/map/tiles/{layer}/{z}/{x}/{y}.pbf`; MapLibre ei pöördu otse välise WFS-teenuse poole. Väikese mahuga uute eraldiste ja teatiste kihid kasutavad teadlikult GeoJSON fallback-otspunkte.
 
 Kihipaneeliga saab katastriüksused, metsaeraldised, metsaregistri objektid ja teatised eraldi sisse või välja lülitada. Kaardilt valitud objekti atribuudid kuvatakse samas tööruumis. Teatis markerina paikneb seotud eraldise tsentroidil, sest teatisel endal ei ole eraldi geomeetriavälja.
 
@@ -137,7 +137,7 @@ Katastriüksuse klõpsamine avab kaardikeskse tervikvaate. Klient laadib selleks
 
 ### Suurte kaardikihtide jõudlus
 
-MapLibre ei lae enam kõiki katastri- ja polügooniobjekte korraga. Pärast kaardi liikumise lõppu uuendatakse kihte ühe debounced päringutsükliga ning API saab ainult nähtava kaardiala `bbox`-i. Katastriüksused ning uued eraldised ilmuvad alates suumist 8, teatised suumist 9 ning polügoonitihedad eraldiste ja metsaregistri kihid suumist 10. Iga serverivastus on piiratud konfigureeritava `limit`-iga; serveri vaikimisi piirid on `FORESTIQ_MAP_CADASTRE_LIMIT=750`, `FORESTIQ_MAP_FEATURE_LIMIT=1500` ja absoluutne ülempiir `FORESTIQ_MAP_MAX_FEATURE_LIMIT=3000`.
+MapLibre ei lae enam kõiki katastri- ja polügooniobjekte korraga. Katastriüksused, metsaeraldised ja Metsaregistri objektid tulevad suumitasemepõhiste MVT-paanidena; katastrid ilmuvad alates suumist 8 ning polügoonitihedad eraldised ja Metsaregistri kihid alates suumist 10. MVT vastuseid hoitakse organisatsiooni-, kasutaja-, filtri-, kihi- ja paaniskoobiga private cache’is `FORESTIQ_MVT_CACHE_TTL_SECONDS` jooksul. Vastus sisaldab `ETag` väärtust ning toetab `If-None-Match` tingimuspäringut (`304`), samas geomeetria või omaniku-katastri seose muutus tõstab ainult mõjutatud organisatsiooni kihiversiooni ning muudab vanad paanid kohe kättesaamatuks. Uued eraldised ja teatised kasutavad endiselt debounced, nähtava ala `bbox`-iga piiratud GeoJSON päringuid.
 
 Kaarditööruumi filtrid piiravad kõiki nähtaval alal laetavaid kihte samade õiguspõhiste katastriüksustega. Filtreid saab kombineerida **võidetud tehingu/kliendisuhte**, **aktiivse tehingu**, kindla **tehinguetapi** ja viimase 7, 30, 90 või 365 päeva **tegevusajaloo** järgi. Filtri muutmine käivitab sama debounced vaatealapõhise päringutsükli ega lae kogu ruumiandmestikku uuesti.
 
