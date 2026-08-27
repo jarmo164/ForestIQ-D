@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from time import monotonic
 
 from config.observability import reset_correlation_id, safe_correlation_id, set_correlation_id
+from config.prometheus import observe_http_request
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +26,18 @@ class TraceContextMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        started_at = monotonic()
         correlation_id = safe_correlation_id(request.headers.get(self.header_name))
         correlation_token = set_correlation_id(correlation_id)
         request.correlation_id = correlation_id
         try:
             response = self.get_response(request)
             response[self.header_name] = correlation_id
+            observe_http_request(
+                request,
+                status_code=response.status_code,
+                duration_seconds=monotonic() - started_at,
+            )
             logger.info(
                 "api.request.completed",
                 extra={
@@ -40,6 +48,7 @@ class TraceContextMiddleware:
             )
             return response
         except Exception:
+            observe_http_request(request, status_code=500, duration_seconds=monotonic() - started_at)
             logger.error(
                 "api.request.unhandled_error",
                 extra={"http_method": request.method, "path": request.path},

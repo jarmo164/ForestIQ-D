@@ -21,6 +21,7 @@ from config.observability import (
     reset_correlation_id,
     set_correlation_id,
 )
+from config.prometheus import CELERY_TASKS
 
 
 class TraceContextMiddlewareTests(SimpleTestCase):
@@ -89,6 +90,14 @@ class CeleryTracePropagationTests(SimpleTestCase):
         clear_task_correlation_id(task_id="celery-01", task=task, state="SUCCESS")
 
         self.assertEqual(current_correlation_id(), "")
+        samples = CELERY_TASKS.collect()[0].samples
+        self.assertTrue(
+            any(
+                sample.name == "forestiq_celery_tasks_total"
+                and sample.labels == {"task": "cadastre_sync", "state": "SUCCESS"}
+                for sample in samples
+            )
+        )
 
     def test_inline_task_preserves_active_request_trace_when_no_header_exists(self):
         request_token = set_correlation_id("trace-inline-request-01")

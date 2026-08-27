@@ -218,6 +218,12 @@ Server rakendab muudatuse ühe tingimusliku andmebaasivärskendusena: muudatus �
 | `Contract` | Olemasoleva lepingu andmed, fail ja kustutamine | Laadi lepingu detail uuesti; failimuudatust ei rakendata vanale versioonile. |
 | `InheritanceCase` | Staatus, määramine, pärijad ja märkmed | Värskenda juhtum koos sündmuste ja pärijate viimase seisuga. |
 
+### Prometheuse mõõdikud (OPS-01)
+
+Django protsess ekspordib Prometheuse vormingus mõõdikud aadressil `GET /metrics`. Mõõdikud hõlmavad API päringute kestust, staatuseklasside vealoendureid, Celery tööde kestust ja tulemust ning `DataSyncRun` auditi põhjal viimase edukuse aega, tõrkeseeriat, backlog’i ja cursor lag’i. HTTP marsruudi, töö ja integratsiooniallika sildid on tahtlikult piiratud väikese nimekirjaga; need ei sisalda katastri-, kasutaja-, taski- ega correlation ID-sid.
+
+Tootmises määra `FORESTIQ_METRICS_BEARER_TOKEN` tugevale eraldi saladusele ja anna Prometheusele scrape’iks päis `Authorization: Bearer <token>`. Tühja väärtuse korral jääb endpoint arendus- ja sisemise võrgu kasutuseks avatuks.
+
 ## Turve
 
 Django API kasutab organisatsiooniga seotud sisemist Bearer JWT-d. Reacti töölaud kasutab tootmises Keycloak’i Authorization Code + PKCE voogu; kohalik parooli/TOTP voog on ainult arenduseks. Õigused `ADMIN`, `OWNER_PROFILE`, `ASSIGNED_OWNERS`, `PHONES` ja `EVALUATION` tulenevad aktiivse organisatsiooniliikmesuse rollidest ning pärandõigused sünkroniseeritakse endiselt vastavatesse Django gruppidesse. Seega töötavad tavapärased Django `Group` ja `Permission` kontrollid paralleelselt liikmesusepõhise ressursiõigusega, kuid tenantide vahelist pääsu ei saa globaalne grupp anda.
