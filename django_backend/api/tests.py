@@ -2,10 +2,15 @@
 
 import base64
 import json
+import time
+from datetime import timedelta
 from unittest.mock import Mock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 from rest_framework.permissions import AllowAny
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -14,7 +19,7 @@ from api.auth import token_pair
 from api.urls import urlpatterns
 from accounts.models import Organization, OrganizationMembership, OrganizationRole, Privilege, PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, Owner, OwnerStatus
-from operations.models import CompanyProfile, Contract, ContractTemplate, Deal, DealOffer, InheritanceCase, Reminder
+from operations.models import CompanyProfile, Contract, ContractTemplate, Deal, DealOffer, DealStage, InheritanceCase, Reminder
 
 
 class RenderCorsTests(TestCase):
@@ -115,6 +120,50 @@ class AdminWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         owner.refresh_from_db()
         self.assertEqual(owner.status, "ASSIGNED")
+
+
+class DashboardStatsTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(slug="dashboard-org", name="Dashboard organization")
+        self.other_organization = Organization.objects.create(slug="dashboard-other", name="Other dashboard organization")
+        self.admin = User.objects.create_user("dashboard-admin", "Dashboard administrator", "very-secure-admin-password", default_organization=self.organization)
+        Privilege.objects.create(user=self.admin, code=PrivilegeCode.ADMIN)
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.admin)['actualToken']['token']}")
+        now = timezone.now()
+        self.new_owner = Owner.objects.create(id="11111:001:0001", name="New lead", status="NEW", organization=self.organization)
+        self.evaluation_owner = Owner.objects.create(id="11111:001:0002", name="Evaluation lead", status="WAITS_FOR_EVALUATION", organization=self.organization)
+        Owner.objects.create(id="11111:001:0003", name="Out of search", status="NEW", organization=self.organization, out_of_admin_search_from=now, out_of_admin_search_to=now + timedelta(days=1))
+        Owner.objects.create(id="22222:001:0001", name="Other organization lead", status="NEW", organization=self.other_organization)
+        Deal.objects.create(owner=self.new_owner, sale_subject="FOREST", stage=DealStage.NEGOTIATION, offer_valid_until=timezone.localdate() + timedelta(days=2))
+        Deal.objects.create(owner=self.evaluation_owner, sale_subject="LAND", stage=DealStage.EVALUATION, offer_valid_until=timezone.localdate() - timedelta(days=1))
+        Reminder.objects.create(owner=self.new_owner, creator=self.admin, text="Follow up", due_time=now + timedelta(days=2), organization=self.organization)
+        Reminder.objects.create(owner=self.evaluation_owner, creator=self.admin, text="Overdue", due_time=now - timedelta(days=1), organization=self.organization)
+        InheritanceCase.objects.create(owner=self.new_owner, status=InheritanceCase.Status.IN_PROGRESS, certification_deadline=timezone.localdate() + timedelta(days=1), organization=self.organization)
+
+    def test_dashboard_stats_is_organization_scoped_and_compact(self):
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get("/api/services/admin/dashboard-stats")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["activeOwners"], 2)
+        self.assertEqual(response.data["newLeads"], 1)
+        self.assertEqual(response.data["evaluationPending"], 1)
+        self.assertEqual(response.data["deadlines"]["overdue"], 2)
+        self.assertEqual(response.data["deadlines"]["nextSevenDays"], 3)
+        self.assertEqual(response.data["dealStages"][DealStage.NEGOTIATION], 1)
+        self.assertEqual(response.data["dealStages"][DealStage.EVALUATION], 1)
+        self.assertLessEqual(len(queries), 12, [query["sql"] for query in queries])
+
+    def test_dashboard_stats_fixed_corpus_p95_stays_within_budget(self):
+        samples = []
+        for _ in range(15):
+            started = time.perf_counter()
+            response = self.client.get("/api/services/admin/dashboard-stats")
+            samples.append((time.perf_counter() - started) * 1000)
+            self.assertEqual(response.status_code, 200, response.data)
+        p95_ms = sorted(samples)[-1]  # nearest-rank p95 for the fixed 15-request corpus
+        print(f"DashboardStats fixed corpus: samples={len(samples)}, p95_ms={p95_ms:.2f}, query_budget=12")
+        self.assertLessEqual(p95_ms, 500, f"DashboardStats p95 {p95_ms:.2f}ms exceeded the 500ms budget")
 
 
 class ContractConfigurationTests(TestCase):
