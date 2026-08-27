@@ -225,6 +225,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "forestry.tasks.enqueue_all_organizations_metsaregister_delta_check",
         "schedule": float(os.getenv("FORESTIQ_METSAREGISTER_DELTA_INTERVAL_SECONDS", "3600")),
     },
+    "forestiq-parimus-official-notices": {
+        "task": "forestry.tasks.enqueue_all_organizations_parimus_official_notice_import",
+        "schedule": float(os.getenv("FORESTIQ_PARIMUS_NOTICE_INTERVAL_SECONDS", "21600")),
+    },
 }
 FORESTIQ_TASKS_INLINE = env_bool("FORESTIQ_TASKS_INLINE", False)
 FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS = int(os.getenv("FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS", "30"))

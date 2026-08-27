@@ -21,7 +21,12 @@ from operations.models import Deal, DealStage
 from forestry.services import import_runner
 from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance, wfs_features
 from forestry.services.metsaregister_full_import import FullImportReport, import_metsaregister_delta
-from forestry.tasks import enqueue_cadastre_sync, run_cadastre_sync, run_metsaregister_delta_check
+from forestry.tasks import (
+    enqueue_cadastre_sync,
+    run_cadastre_sync,
+    run_metsaregister_delta_check,
+    run_parimus_official_notice_import,
+)
 from forestry.services.single_flight import SingleFlightLock
 from forestry.services.wfs_client import WfsClient, WfsClientError, WfsClientPolicy
 
@@ -106,6 +111,28 @@ class InheritanceApiTests(TestCase):
         self.assertEqual(signal.cadastre_id, self.cadastre.id)
         self.assertEqual(signal.source_notice_number, "123456")
         self.assertEqual(get.call_args.kwargs["params"], {"personal_code": self.owner.id})
+
+    @override_settings(PARIMUS_API_URL="https://parimus.example.test", PARIMUS_API_TOKEN="unit-test-token")
+    @patch("forestry.services.external_sync.requests.get")
+    def test_parimus_source_notice_key_updates_instead_of_creating_duplicates(self, get):
+        get.return_value.json.return_value = {
+            "results": [
+                {
+                    "notice_number": "deduplicated-123",
+                    "announcement_date": "2026-08-20",
+                    "certification_deadline": "2026-10-20",
+                    "deceased_name": "Pärandaja",
+                    "source_url": "https://example.test/notice/deduplicated-123",
+                }
+            ]
+        }
+
+        with organization_scope(self.cadastre.organization_id):
+            sync_parimus_inheritance(self.cadastre.id, organization_id=str(self.cadastre.organization_id))
+            sync_parimus_inheritance(self.cadastre.id, organization_id=str(self.cadastre.organization_id))
+
+        self.assertEqual(self.owner.inheritance_signals.filter(source_notice_number="deduplicated-123").count(), 1)
+        self.assertEqual(get.call_count, 2)
 
 
 class SyncEndpointTests(TestCase):
@@ -642,3 +669,42 @@ class WfsClientTests(SimpleTestCase):
         with self.assertRaisesRegex(WfsClientError, "without retry"):
             bad_request.feature_page(base_url="https://wfs.example.test", layer="registry:layer", page_size=1)
         bad_request_get.assert_called_once()
+
+
+class ScheduledParimusNoticeImportTests(TestCase):
+    def setUp(self):
+        self.cadastre = Cadastre.objects.create(id="79501:001:0028")
+        self.organization = self.cadastre.organization
+
+    @override_settings(PARIMUS_API_URL="https://parimus.example.test", PARIMUS_API_TOKEN="unit-test-token")
+    def test_periodic_notice_import_creates_an_audited_organization_run(self):
+        redis_client = FakeRedis()
+        with (
+            patch("forestry.services.single_flight.redis.from_url", return_value=redis_client),
+            patch("forestry.tasks.sync_parimus_inheritance", return_value=2) as sync,
+        ):
+            result = run_parimus_official_notice_import.run(str(self.organization.id))
+
+        self.assertEqual(result, {"cadastres": 1, "notices": 2})
+        sync.assert_called_once_with(self.cadastre.id, organization_id=str(self.organization.id))
+        run = DataSyncRun.objects.get(source="celery:parimus-official-notices")
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(run.result, result)
+        self.assertIsNone(run.cadastre)
+
+    def test_concurrent_periodic_notice_import_is_skipped_by_single_flight_lock(self):
+        redis_client = FakeRedis()
+        with patch("forestry.services.single_flight.redis.from_url", return_value=redis_client):
+            existing = SingleFlightLock.for_sync("parimus-official-notices", str(self.organization.id))
+            self.assertTrue(existing.acquire())
+            result = run_parimus_official_notice_import.run(str(self.organization.id))
+
+        self.assertEqual(result, {"status": "already_running"})
+        self.assertFalse(DataSyncRun.objects.filter(source="celery:parimus-official-notices").exists())
+
+    def test_beat_schedule_registers_the_periodic_notice_import(self):
+        from django.conf import settings
+
+        schedule = settings.CELERY_BEAT_SCHEDULE["forestiq-parimus-official-notices"]
+        self.assertEqual(schedule["task"], "forestry.tasks.enqueue_all_organizations_parimus_official_notice_import")
+        self.assertGreater(schedule["schedule"], 0)

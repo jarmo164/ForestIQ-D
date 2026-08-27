@@ -209,3 +209,51 @@ def enqueue_all_organizations_metsaregister_delta_check() -> dict[str, int]:
         result = run_metsaregister_delta_check.delay(str(organization_id))
         queued += 1 if result else 0
     return {"organizations": queued}
+
+
+@shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=3)
+def run_parimus_official_notice_import(self, organization_id: str) -> dict[str, object]:
+    """Refresh Pärimus notices for one organization, even without a cadastre delta.
+
+    `InheritanceSignal` uses the provider's notice number together with the
+    organization and cadastre as its source key, so repeated polls update the
+    same projection instead of creating duplicate notices.
+    """
+
+    lock = SingleFlightLock.for_sync("parimus-official-notices", organization_id)
+    if not lock.acquire():
+        return {"status": "already_running"}
+    try:
+        with organization_scope(organization_id):
+            now = timezone.now()
+            run = DataSyncRun.objects.create(
+                source="celery:parimus-official-notices",
+                status=DataSyncRun.Status.RUNNING,
+                started_at=now,
+                task_id=self.request.id or "",
+                correlation_id=current_correlation_id(),
+            )
+            try:
+                cadastres = Cadastre.objects.order_by("id")
+                notices = sum(
+                    sync_parimus_inheritance(cadastre.id, organization_id=organization_id)
+                    for cadastre in cadastres.iterator()
+                )
+                result = {"cadastres": cadastres.count(), "notices": notices}
+            except Exception as exc:
+                _fail(run, exc)
+                raise
+            return _succeed(run, result)
+    finally:
+        lock.release()
+
+
+@shared_task
+def enqueue_all_organizations_parimus_official_notice_import() -> dict[str, int]:
+    """Beat entry point for auditable Pärimus official-notice refreshes."""
+
+    queued = 0
+    for organization_id in Organization.objects.filter(is_active=True).values_list("id", flat=True):
+        result = run_parimus_official_notice_import.delay(str(organization_id))
+        queued += 1 if result else 0
+    return {"organizations": queued}

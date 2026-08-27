@@ -10,5 +10,5 @@ class Command(BaseCommand):
         parser.add_argument("--check", action="store_true", help="Exit successfully after printing the configured scheduler.")
 
     def handle(self, *args, **options):
-        self.stdout.write(self.style.SUCCESS("Celery Beat schedules ForestIQ portfolio and Forestek refreshes from CELERY_BEAT_SCHEDULE."))
+        self.stdout.write(self.style.SUCCESS("Celery Beat schedules ForestIQ portfolio, Metsaregister delta and Pärimus official-notice refreshes from CELERY_BEAT_SCHEDULE."))
         self.stdout.write("Start the scheduler with: celery -A config beat --loglevel=INFO")
