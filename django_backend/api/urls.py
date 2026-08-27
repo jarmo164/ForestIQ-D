@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from . import auth, parity, views
+from . import auth, health, parity, views
 
 urlpatterns = [
     path("oidc/config", auth.oidc_configuration),
@@ -12,6 +12,9 @@ urlpatterns = [
     path("services/token-refresh", auth.refresh_token),
     path("services/change-my-password", auth.change_my_password),
     path("services/status", views.service_status),
+    path("health/live", health.liveness),
+    path("health/ready", health.readiness),
+    path("services/admin/integrations/health", health.integrations_health),
     path("services/admin/users", views.admin_users),
     path("services/admin/users/<str:user_id>", views.admin_user_detail),
     path("services/admin/userstatistics/prep-data", views.user_statistics_prep),

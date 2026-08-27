@@ -224,6 +224,12 @@ Django protsess ekspordib Prometheuse vormingus mõõdikud aadressil `GET /metri
 
 Tootmises määra `FORESTIQ_METRICS_BEARER_TOKEN` tugevale eraldi saladusele ja anna Prometheusele scrape’iks päis `Authorization: Bearer <token>`. Tühja väärtuse korral jääb endpoint arendus- ja sisemise võrgu kasutuseks avatuks.
 
+### Liveness, readiness ja SLO-alarmid (OPS-03)
+
+`GET /api/health/live` kinnitab ainult Django protsessi elusolekut ega pöördu andmebaasi, Redise ega välise integratsiooni poole; Render kasutab seda protsessi restart’i tervisekontrollina. `GET /api/health/ready` kontrollib enne liikluse lubamist PostgreSQL-i ja Redise ühendust. Administraatori `GET /api/services/admin/integrations/health` kuvab eraldi püsivast `DataSyncRun` auditist tuletatud integratsioonide värskuse, tõrkeseeria, backlog’i ja cursor lag’i, ilma välis-API-sid probe’imata.
+
+Prometheuse alarmifail asub `observability/prometheus/forestiq-alerts.yml`. See sisaldab hoiatuse aegunud sünkroonimisandmete, kolme järjestikuse tõrke, kasvava sünkroonimisbacklog’i ja üle viieprotsendise API veamäära kohta. Paigalda fail Prometheuse `rule_files` konfiguratsiooni ning suuna teavitused Alertmanagerisse. `FORESTIQ_INTEGRATION_STALE_AFTER_SECONDS` määrab health-vaate värskusläve; alarmireegli vaikimisi lävi on kaheksa tundi.
+
 ## Turve
 
 Django API kasutab organisatsiooniga seotud sisemist Bearer JWT-d. Reacti töölaud kasutab tootmises Keycloak’i Authorization Code + PKCE voogu; kohalik parooli/TOTP voog on ainult arenduseks. Õigused `ADMIN`, `OWNER_PROFILE`, `ASSIGNED_OWNERS`, `PHONES` ja `EVALUATION` tulenevad aktiivse organisatsiooniliikmesuse rollidest ning pärandõigused sünkroniseeritakse endiselt vastavatesse Django gruppidesse. Seega töötavad tavapärased Django `Group` ja `Permission` kontrollid paralleelselt liikmesusepõhise ressursiõigusega, kuid tenantide vahelist pääsu ei saa globaalne grupp anda.

@@ -1,0 +1,42 @@
+groups:
+  - name: forestiq-service-slo
+    rules:
+      - alert: ForestIQIntegrationDataStale
+        expr: time() - forestiq_sync_last_success_timestamp_seconds > 28800
+        for: 30m
+        labels:
+          severity: warning
+          service: forestiq-django
+        annotations:
+          summary: "ForestIQ integration data is stale"
+          description: "{{ $labels.source }} has not completed successfully for more than eight hours."
+
+      - alert: ForestIQIntegrationFailureStreak
+        expr: forestiq_sync_failure_streak >= 3
+        for: 15m
+        labels:
+          severity: critical
+          service: forestiq-django
+        annotations:
+          summary: "ForestIQ integration is repeatedly failing"
+          description: "{{ $labels.source }} has {{ $value }} consecutive terminal non-success runs."
+
+      - alert: ForestIQSyncBacklogGrowing
+        expr: forestiq_sync_backlog_runs >= 10
+        for: 15m
+        labels:
+          severity: warning
+          service: forestiq-django
+        annotations:
+          summary: "ForestIQ synchronization backlog is growing"
+          description: "{{ $labels.source }} has {{ $value }} queued or running audit rows."
+
+      - alert: ForestIQApiErrorRatioHigh
+        expr: sum(rate(forestiq_http_errors_total[5m])) / clamp_min(sum(rate(forestiq_http_requests_total[5m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: forestiq-django
+        annotations:
+          summary: "ForestIQ API error ratio is above the SLO"
+          description: "The five-minute API error ratio has exceeded five percent."
