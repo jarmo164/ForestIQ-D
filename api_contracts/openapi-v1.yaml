@@ -4,6 +4,29 @@ info:
   version: 1.0.0
   description: Versioned compatibility API for the ForestIQ Django rewrite.
 paths:
+  /api/v1/health/live:
+    get:
+      operationId: health_live_retrieve
+      description: Report only whether this Django process can answer a request.
+      tags:
+      - health
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/health/ready:
+    get:
+      operationId: health_ready_retrieve
+      description: Report whether local serving dependencies (database and broker)
+        are usable.
+      tags:
+      - health
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
   /api/v1/oidc/config:
     get:
       operationId: oidc_config_retrieve
@@ -120,6 +143,16 @@ paths:
         schema:
           type: string
         required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/integrations/health:
+    get:
+      operationId: services_admin_integrations_health_retrieve
+      description: Report data freshness and sync health from the audit trail, never
+        by probing providers.
       tags:
       - services
       responses:

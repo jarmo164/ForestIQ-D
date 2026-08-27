@@ -10,7 +10,7 @@ services:
     dockerContext: .
     dockerCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3 --access-logfile - --error-logfile -
     preDeployCommand: sh scripts/render-predeploy.sh
-    healthCheckPath: /api/services/status
+    healthCheckPath: /api/health/live
     plan: starter
     autoDeployTrigger: commit
     disk:
