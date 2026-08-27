@@ -62,13 +62,11 @@ test("owner import inspects, previews and commits one seeded CSV row", async ({
 }) => {
   await authenticateSeededUser(page);
   await page.goto("/owners/import");
-  await page
-    .locator('input[type="file"]')
-    .setInputFiles({
-      name: "owners.csv",
-      mimeType: "text/csv",
-      buffer: Buffer.from("id,name\nowner-2,Seed owner\n"),
-    });
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "owners.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("id,name\nowner-2,Seed owner\n"),
+  });
   await page.getByRole("button", { name: "Kontrolli faili" }).click();
 
   await expect(page.getByText("1 valmis · 0 tagasi lükatud")).toBeVisible();
@@ -104,5 +102,42 @@ test("map workspace renders its interactive map and cadastre guidance", async ({
   await expect(
     page.getByLabel("Interaktiivne ForestIQ GeoDjango kaart"),
   ).toBeVisible();
-  await expect(page.getByText("Suured katastri- ja registrikihid laetakse MVT-paanidena")).toBeVisible();
+  await expect(
+    page.getByText("Suured katastri- ja registrikihid laetakse MVT-paanidena"),
+  ).toBeVisible();
+});
+
+test("admin sees integration freshness, opens sync-run detail and triggers recovery", async ({
+  page,
+}) => {
+  const recoveryRequests: string[] = [];
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === "/api/services/registry/freshness/recover")
+      recoveryRequests.push(pathname);
+  });
+  await authenticateSeededUser(page);
+  await page.goto("/integrations");
+
+  await expect(
+    page.getByRole("heading", {
+      name: "Andmete värskus ja integratsioonide tervis",
+    }),
+  ).toBeVisible();
+  await expect(page.getByLabel("cadastre tervis")).toContainText(
+    "VAJAB TÄHELEPANU",
+  );
+  await expect(page.getByLabel("parimus tervis")).toContainText("TÖÖKORRAS");
+
+  await page.getByRole("button", { name: "Ava jooksu detail" }).first().click();
+  await expect(
+    page.getByRole("dialog", { name: "cadastre_wfs" }),
+  ).toContainText("Jooks #321");
+  await expect(
+    page.getByText("Metsaregistri lähteallikas vastas ajutise tõrkega."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Sulge detail" }).click();
+
+  await page.getByRole("button", { name: "Taasta aegunud" }).click();
+  await expect.poll(() => recoveryRequests.length).toBe(1);
 });

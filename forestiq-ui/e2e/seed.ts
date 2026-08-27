@@ -80,11 +80,86 @@ export async function installSeededApi(page: Page) {
       heirs: [],
     },
   ];
+  const syncRuns = [
+    {
+      id: 321,
+      cadastre: owner.cadastres[0].id,
+      taskId: "qa-task-321",
+      correlationId: "qa-correlation-321",
+      source: "cadastre_wfs",
+      status: "PARTIAL",
+      pagesProcessed: 3,
+      rowsProcessed: 120,
+      retryCount: 0,
+      backlogSize: 2,
+      cursor: "startIndex=150",
+      lagSeconds: 7200,
+      retryOf: null,
+      startedAt: "2026-08-27T08:00:00Z",
+      finishedAt: "2026-08-27T08:01:00Z",
+      result: { failed_sources: { metsaregister_wfs: "Ajutine tõrge" } },
+      error: "Metsaregistri lähteallikas vastas ajutise tõrkega.",
+    },
+  ];
+  const integrationsHealth = {
+    status: "DEGRADED",
+    check: "integrations",
+    integrations: [
+      {
+        source: "cadastre",
+        health: "DEGRADED",
+        lastStatus: "PARTIAL",
+        lastSuccessAt: "2026-08-27T06:00:00Z",
+        failureStreak: 1,
+        backlogSize: 2,
+        lagSeconds: 7200,
+      },
+      {
+        source: "parimus",
+        health: "OK",
+        lastStatus: "SUCCESS",
+        lastSuccessAt: "2026-08-27T09:00:00Z",
+        failureStreak: 0,
+        backlogSize: 0,
+        lagSeconds: 180,
+      },
+    ],
+    degradedSources: ["cadastre"],
+  };
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const { pathname } = new URL(request.url());
     const method = request.method();
+    if (
+      pathname === "/api/services/admin/integrations/health" &&
+      method === "GET"
+    )
+      return json(route, integrationsHealth);
+    if (pathname === "/api/services/admin/sync-runs" && method === "GET")
+      return json(route, { results: syncRuns });
+    if (
+      pathname === "/api/services/registry/freshness/recover" &&
+      method === "POST"
+    )
+      return json(route, { queued: 1 }, 202);
+    if (
+      pathname === "/api/services/admin/sync-runs/321/retry" &&
+      method === "POST"
+    )
+      return json(
+        route,
+        {
+          ...syncRuns[0],
+          id: 322,
+          status: "QUEUED",
+          retryCount: 1,
+          retryOf: 321,
+          error: null,
+          finishedAt: null,
+        },
+        202,
+      );
     if (pathname === "/api/oidc/config")
       return json(route, { enabled: false, localLoginEnabled: true });
     if (pathname === "/api/password-login" && method === "POST")
