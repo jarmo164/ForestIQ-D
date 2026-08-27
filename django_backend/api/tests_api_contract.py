@@ -26,3 +26,6 @@ class ApiV1CompatibilityTests(SimpleTestCase):
         self.assertEqual(schema["openapi"], "3.0.3")
         self.assertEqual(schema["info"]["version"], "1.0.0")
         self.assertIn("/api/v1/services/status", schema["paths"])
+        retry_path = "/api/v1/services/admin/sync-runs/{run_id}/retry"
+        self.assertIn(retry_path, schema["paths"])
+        self.assertIn("post", schema["paths"][retry_path])
