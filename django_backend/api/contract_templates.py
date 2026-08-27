@@ -89,6 +89,13 @@ def _render_preview(template: ContractTemplate, deal: Deal) -> str:
     return PLACEHOLDER_PATTERN.sub(lambda match: escape(values[match.group(1)]), template.html)
 
 
+def render_template_preview_html(template: ContractTemplate, deal: Deal) -> str:
+    """Render the same escaped organization-scoped template used by the preview API."""
+
+    _template_placeholders(template.html)
+    return _render_preview(template, deal)
+
+
 def _detail(message: str, http_status: int = status.HTTP_400_BAD_REQUEST) -> Response:
     return Response({"detail": message}, status=http_status)
 

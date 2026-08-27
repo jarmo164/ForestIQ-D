@@ -20,6 +20,7 @@ from api.urls import urlpatterns
 from accounts.models import Organization, OrganizationMembership, OrganizationRole, Privilege, PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, Owner, OwnerStatus
 from operations.models import CompanyProfile, Contract, ContractTemplate, Deal, DealOffer, DealStage, InheritanceCase, Reminder
+from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
 
 
 class RenderCorsTests(TestCase):
@@ -236,6 +237,20 @@ class ContractConfigurationTests(TestCase):
         self.assertEqual(Contract.objects.count(), before_contracts)
 
 
+class ContractPdfServiceTests(SimpleTestCase):
+    def test_estonian_html_with_page_break_has_deterministic_pdf_bytes(self):
+        html = "<h1>Metsamüügi leping ÕÄÖÜ</h1><p>Esimene lehekülg.</p><div class='page-break'></div><p>Teine lehekülg: täpitähed õäöü.</p>"
+        first, first_hash = render_contract_pdf(html=html)
+        second, second_hash = render_contract_pdf(html=html)
+        self.assertTrue(first.startswith(b"%PDF-"))
+        self.assertEqual(first, second)
+        self.assertEqual(first_hash, second_hash)
+
+    def test_empty_html_does_not_produce_a_pdf(self):
+        with self.assertRaises(ContractPdfRenderError):
+            render_contract_pdf(html="")
+
+
 class MainParityWorkflowTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser("parity-admin", "Parity administrator", "very-secure-admin-password")
@@ -266,11 +281,13 @@ class MainParityWorkflowTests(TestCase):
         self.assertEqual(Deal.objects.get(id=deal_id).offers.get(id=offer_id).status, DealOffer.Status.ACCEPTED)
         draft = self.client.get(f"/api/services/contracts/deals/{deal_id}/draft")
         self.assertEqual(draft.status_code, 200, draft.data)
+        company = CompanyProfile.objects.create(organization=self.admin.default_organization, legal_name="ForestIQ ÕÄÖÜ OÜ")
         template = ContractTemplate.objects.create(
             organization=self.admin.default_organization,
+            company_profile=company,
             template_key="forest-sale",
             name="Metsamüügi leping",
-            html="<h1>{{ buyer }}</h1>",
+            html="<h1>{{ company.legalName }}</h1><p>{{ deal.id }} {{ deal.ownerName }} {{ deal.saleSubject }}</p><div class='page-break'></div><p>ÕÄÖÜ</p>",
             version=1,
             created_by=self.admin,
         )
@@ -280,11 +297,16 @@ class MainParityWorkflowTests(TestCase):
         self.assertEqual(str(saved_contract.source_offer_id), offer_id)
         self.assertEqual(saved_contract.template_version, template)
         self.assertEqual(saved_contract.template_snapshot["version"], 1)
-        self.assertEqual(saved_contract.template_snapshot["html"], "<h1>{{ buyer }}</h1>")
+        self.assertTrue(bytes(saved_contract.document).startswith(b"%PDF-"))
+        self.assertEqual(saved_contract.template_snapshot["html"], "<h1>{{ company.legalName }}</h1><p>{{ deal.id }} {{ deal.ownerName }} {{ deal.saleSubject }}</p><div class='page-break'></div><p>ÕÄÖÜ</p>")
         detail = self.client.get(f"/api/services/contracts/{contract.data['contractId']}")
         self.assertEqual(detail.status_code, 200, detail.data)
         self.assertEqual(detail.data["template"]["templateId"], str(template.id))
-        self.assertEqual(detail.data["template"]["html"], "<h1>{{ buyer }}</h1>")
+        self.assertEqual(detail.data["template"]["html"], "<h1>{{ company.legalName }}</h1><p>{{ deal.id }} {{ deal.ownerName }} {{ deal.saleSubject }}</p><div class='page-break'></div><p>ÕÄÖÜ</p>")
+        pdf = self.client.get(contract.data["pdf"])
+        self.assertEqual(pdf.status_code, 200)
+        self.assertTrue(b"".join(pdf.streaming_content).startswith(b"%PDF-"))
+        self.assertEqual(len(contract.data["pdfSha256"]), 64)
 
     def test_inheritance_case_supports_heir_and_status_workflow(self):
         created = self.client.post(
