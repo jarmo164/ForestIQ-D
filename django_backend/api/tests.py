@@ -18,7 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from api.auth import token_pair
 from api.urls import urlpatterns
 from accounts.models import Organization, OrganizationMembership, OrganizationRole, Privilege, PrivilegeCode, User
-from forestry.models import Cadastre, DataSyncRun, Owner, OwnerStatus
+from forestry.models import Cadastre, DataSyncRun, Owner, OwnerLog, OwnerStatus
 from operations.models import CompanyProfile, Contract, ContractTemplate, Deal, DealOffer, DealStage, InheritanceCase, Reminder
 from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
 
