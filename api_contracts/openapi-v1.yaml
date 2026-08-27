@@ -626,6 +626,28 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/v1/services/contract-templates/{template_id}/preview:
+    post:
+      operationId: services_contract_templates_preview_create
+      parameters:
+      - in: path
+        name: template_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contract-templates/placeholders:
+    get:
+      operationId: services_contract_templates_placeholders_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/contracts:
     get:
       operationId: services_contracts_retrieve

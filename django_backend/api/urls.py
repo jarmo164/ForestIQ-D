@@ -81,6 +81,8 @@ urlpatterns = [
     path("services/company-profiles", contract_templates.company_profiles),
     path("services/company-profiles/<str:profile_id>", contract_templates.company_profile_detail),
     path("services/contract-templates", contract_templates.contract_templates),
+    path("services/contract-templates/placeholders", contract_templates.contract_template_placeholders),
+    path("services/contract-templates/<str:template_id>/preview", contract_templates.contract_template_preview),
     path("services/contract-templates/<str:template_id>", contract_templates.contract_template_detail),
     path("services/contracts", views.contracts),
     path("services/contracts/generate-from-deal", parity.contract_generate_from_deal),
