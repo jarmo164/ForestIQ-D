@@ -85,7 +85,7 @@ jobs:
           diff --unified=3 ../api_contracts/openapi-v1.yaml ../api_contracts/openapi-v1.generated.yaml
           rm ../api_contracts/openapi-v1.generated.yaml
 
-      - name: Run Django test suite
+      - name: Run Django test suite, including PostGIS, Redis and Celery integrations
         working-directory: django_backend
         run: python manage.py test --verbosity 2
 
