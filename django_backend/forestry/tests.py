@@ -16,11 +16,11 @@ from rest_framework.test import APIClient
 from accounts.organization_context import organization_scope
 from accounts.models import Organization, User
 from api.auth import token_pair
-from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, Owner, OwnerLog
+from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, ImportCheckpoint, Owner, OwnerLog
 from operations.models import Deal, DealStage
 from forestry.services import import_runner
 from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance, wfs_features
-from forestry.services.metsaregister_full_import import FullImportReport, import_metsaregister_delta
+from forestry.services.metsaregister_full_import import FullImportReport, import_all_metsaregister, import_metsaregister_delta
 from forestry.tasks import (
     enqueue_cadastre_sync,
     run_cadastre_sync,
@@ -272,6 +272,10 @@ class MetsaregisterFullImportTests(TestCase):
         self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
         self.assertEqual(run.result["new_subparts"], 1)
         self.assertEqual(run.result["notifications"], 1)
+        checkpoint = ImportCheckpoint.objects.get(source="metsaregister-full")
+        self.assertEqual(checkpoint.last_run_id, run.id)
+        self.assertTrue(checkpoint.completed)
+        self.assertEqual(checkpoint.cursor, 2)
 
     @override_settings(FORESTIQ_METSAREGISTER_FULL_WFS_LAYER="metsaregister:eraldis")
     @patch("forestry.services.metsaregister_full_import.requests.get")
@@ -279,6 +283,82 @@ class MetsaregisterFullImportTests(TestCase):
         call_command("import_metsaregister_full", "--dry-run", "--organization", str(self.organization.id))
         get.assert_not_called()
         self.assertFalse(DataSyncRun.objects.exists())
+
+    @override_settings(
+        FORESTIQ_METSAREGISTER_WFS_URL="https://metsaregister.example.test/ows",
+        FORESTIQ_METSAREGISTER_FULL_WFS_LAYER="metsaregister:eraldis",
+        FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER="",
+        FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE=1,
+    )
+    def test_interrupted_full_import_resumes_at_the_last_confirmed_page_cursor(self):
+        geometry = {"type": "Polygon", "coordinates": [[[500000, 6500000], [500100, 6500000], [500000, 6500100], [500000, 6500000]]]}
+        first = {"id": "checkpoint-20", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 20, "pindala": "1.0"}, "geometry": geometry}
+        second = {"id": "checkpoint-21", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 21, "pindala": "2.0"}, "geometry": geometry}
+
+        def interrupted_pages(**_kwargs):
+            yield [first]
+            raise ConnectionError("WFS connection interrupted after the first page")
+
+        with organization_scope(self.organization.id):
+            with patch("forestry.services.metsaregister_full_import._pages", side_effect=interrupted_pages):
+                with self.assertRaises(ConnectionError):
+                    import_all_metsaregister(organization_id=str(self.organization.id), page_size=1, fetch_notifications=False)
+
+        checkpoint = ImportCheckpoint.objects.get(source="metsaregister-full")
+        self.assertEqual(checkpoint.cursor, 1)
+        self.assertEqual(checkpoint.pages_completed, 1)
+        self.assertEqual(checkpoint.rows_completed, 1)
+        self.assertFalse(checkpoint.completed)
+
+        def resumed_pages(**kwargs):
+            self.assertEqual(kwargs["start_index"], 1)
+            yield [second]
+
+        with organization_scope(self.organization.id):
+            with patch("forestry.services.metsaregister_full_import._pages", side_effect=resumed_pages):
+                report = import_all_metsaregister(organization_id=str(self.organization.id), page_size=1, fetch_notifications=False)
+
+        checkpoint.refresh_from_db()
+        self.assertEqual(report.resumed_from, 1)
+        self.assertEqual(report.checkpoint_cursor, 2)
+        self.assertTrue(checkpoint.completed)
+        self.assertEqual(checkpoint.cursor, 2)
+        self.assertEqual(CadastreSubPart.objects.filter(cadastre=self.cadastre, sub_part_code__in=(20, 21)).count(), 2)
+
+    @override_settings(
+        FORESTIQ_METSAREGISTER_WFS_URL="https://metsaregister.example.test/ows",
+        FORESTIQ_METSAREGISTER_FULL_WFS_LAYER="metsaregister:eraldis",
+        FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER="",
+        FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE=1,
+    )
+    def test_unconfirmed_page_replay_is_idempotent(self):
+        geometry = {"type": "Polygon", "coordinates": [[[500000, 6500000], [500100, 6500000], [500000, 6500100], [500000, 6500000]]]}
+        feature = {"id": "checkpoint-replay-22", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 22, "pindala": "3.0"}, "geometry": geometry}
+
+        def one_page(**_kwargs):
+            yield [feature]
+
+        with organization_scope(self.organization.id):
+            with (
+                patch("forestry.services.metsaregister_full_import._pages", side_effect=one_page),
+                patch("forestry.services.metsaregister_full_import._confirm_checkpoint_page", side_effect=RuntimeError("checkpoint storage interrupted")),
+            ):
+                with self.assertRaises(RuntimeError):
+                    import_all_metsaregister(organization_id=str(self.organization.id), page_size=1, fetch_notifications=False)
+
+        checkpoint = ImportCheckpoint.objects.get(source="metsaregister-full")
+        self.assertEqual(checkpoint.cursor, 0)
+        self.assertFalse(checkpoint.completed)
+
+        with organization_scope(self.organization.id):
+            with patch("forestry.services.metsaregister_full_import._pages", side_effect=one_page):
+                import_all_metsaregister(organization_id=str(self.organization.id), page_size=1, fetch_notifications=False)
+
+        checkpoint.refresh_from_db()
+        self.assertTrue(checkpoint.completed)
+        self.assertEqual(checkpoint.cursor, 1)
+        self.assertEqual(CadastreSubPart.objects.filter(cadastre=self.cadastre, sub_part_code=22).count(), 1)
+        self.assertEqual(ForestRegistryFeature.objects.filter(source_id="checkpoint-replay-22").count(), 1)
 
     @override_settings(
         FORESTIQ_METSAREGISTER_WFS_URL="https://metsaregister.example.test/ows",
@@ -648,6 +728,27 @@ class WfsClientTests(SimpleTestCase):
 
         self.assertEqual([[feature["id"] for feature in page] for page in pages], [["one", "two"], ["three", "four"], ["five"]])
         self.assertEqual([call.kwargs["params"]["startIndex"] for call in request_get.call_args_list], [0, 2, 4])
+
+    def test_iterates_wfs_pages_from_a_saved_cursor(self):
+        request_get = Mock(
+            side_effect=[
+                self._response(200, {"features": [{"id": "resumed-three"}, {"id": "resumed-four"}]}),
+                self._response(200, {"features": []}),
+            ]
+        )
+        client = WfsClient(policy=self._policy(), request_get=request_get)
+
+        pages = list(
+            client.iter_feature_pages(
+                base_url="https://wfs.example.test",
+                layer="registry:layer",
+                page_size=2,
+                start_index=2,
+            )
+        )
+
+        self.assertEqual([[feature["id"] for feature in page] for page in pages], [["resumed-three", "resumed-four"]])
+        self.assertEqual([call.kwargs["params"]["startIndex"] for call in request_get.call_args_list], [2, 4])
 
     def test_rejects_oversized_and_malformed_feature_collections(self):
         client = WfsClient(

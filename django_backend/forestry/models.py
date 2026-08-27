@@ -286,6 +286,37 @@ class DataSyncRun(OrganizationScopedModel):
         indexes = [models.Index(fields=("organization", "cadastre", "status"), name="sync_run_org_cad_idx")]
 
 
+class ImportCheckpoint(OrganizationScopedModel):
+    """Durable per-page progress marker for a resumable external full import."""
+
+    source = models.CharField(max_length=100)
+    source_layer = models.CharField(max_length=200)
+    cursor = models.PositiveIntegerField(default=0)
+    pages_completed = models.PositiveIntegerField(default=0)
+    rows_completed = models.PositiveIntegerField(default=0)
+    completed = models.BooleanField(default=False)
+    last_error = models.TextField(blank=True)
+    last_run = models.ForeignKey(
+        DataSyncRun,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="import_checkpoints",
+    )
+    checkpointed_at = models.DateTimeField(auto_now=True)
+    organization_parent_fields = ("last_run",)
+
+    class Meta:
+        db_table = "import_checkpoints"
+        ordering = ("-checkpointed_at", "-id")
+        indexes = [
+            models.Index(
+                fields=("organization", "source", "source_layer", "completed"),
+                name="import_checkpoint_lookup_idx",
+            )
+        ]
+
+
 class InheritanceSignal(OrganizationScopedModel):
     """Read-only notice projection received from the authorised Pärimus API."""
 
