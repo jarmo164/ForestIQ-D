@@ -122,9 +122,9 @@ class LastOwnersCadastresUpdateAdmin(admin.ModelAdmin):
 
 @admin.register(DataSyncRun)
 class DataSyncRunAdmin(admin.ModelAdmin):
-    list_display = ("id", "cadastre", "source", "status", "requested_by", "started_at", "finished_at")
+    list_display = ("id", "cadastre", "source", "status", "correlation_id", "requested_by", "started_at", "finished_at")
     list_filter = ("status", "source")
-    search_fields = ("cadastre__id", "task_id", "error_message")
+    search_fields = ("cadastre__id", "task_id", "correlation_id", "error_message")
     autocomplete_fields = ("cadastre", "requested_by")
     readonly_fields = ("started_at", "finished_at")
 

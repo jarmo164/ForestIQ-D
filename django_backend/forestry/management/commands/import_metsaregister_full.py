@@ -4,6 +4,8 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
+from config.observability import current_correlation_id
+
 from accounts.organization_selection import active_organization
 from accounts.organization_context import organization_scope
 from forestry.models import DataSyncRun
@@ -33,15 +35,20 @@ class Command(BaseCommand):
             self.stdout.write(f"Dry run: would import all allocations from {settings.FORESTIQ_METSAREGISTER_FULL_WFS_LAYER} in pages of {options['page_size']}; notification import is {notice_state}.")
             return
         with organization_scope(organization.id):
-            run = DataSyncRun.objects.create(source="cli:metsaregister-full", status=DataSyncRun.Status.RUNNING, started_at=timezone.now())
+            run = DataSyncRun.objects.create(
+                source="cli:metsaregister-full",
+                status=DataSyncRun.Status.RUNNING,
+                started_at=timezone.now(),
+                correlation_id=current_correlation_id(),
+            )
             try:
                 report = import_all_metsaregister(organization_id=str(organization.id), page_size=options["page_size"], fetch_notifications=not options["without_notifications"])
             except Exception as exc:
                 run.status, run.error_message, run.finished_at = DataSyncRun.Status.FAILED, str(exc)[:4000], timezone.now()
-                run.save(update_fields=("status", "error_message", "finished_at"))
+                run.save(update_fields=("status", "error_message", "finished_at", "correlation_id"))
                 if isinstance(exc, ExternalSourceError):
                     raise CommandError(str(exc)) from exc
                 raise
             run.status, run.finished_at, run.result = DataSyncRun.Status.SUCCEEDED, timezone.now(), report.data()
-            run.save(update_fields=("status", "finished_at", "result"))
+            run.save(update_fields=("status", "finished_at", "result", "correlation_id"))
         self.stdout.write(self.style.SUCCESS(f"Metsaregister full import completed: {report.data()}"))

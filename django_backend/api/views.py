@@ -74,6 +74,7 @@ def _sync_run_data(run: DataSyncRun) -> dict:
         "id": run.id,
         "cadastre": run.cadastre_id,
         "taskId": run.task_id,
+        "correlationId": run.correlation_id or None,
         "source": run.source,
         "status": run.status,
         "startedAt": run.started_at,
