@@ -167,6 +167,46 @@ class DashboardStatsTests(TestCase):
         self.assertLessEqual(p95_ms, 500, f"DashboardStats p95 {p95_ms:.2f}ms exceeded the 500ms budget")
 
 
+class SalesManagementOverviewTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(slug="sales-overview", name="Sales overview organization")
+        self.manager = User.objects.create_user("sales-manager", "Sales manager", "very-secure-password", default_organization=self.organization)
+        membership = OrganizationMembership.objects.get(user=self.manager, organization=self.organization)
+        membership.roles = [OrganizationRole.CRM_MANAGER]
+        membership.save(update_fields=["roles"])
+        self.caller = User.objects.create_user("sales-caller", "Sales caller", "very-secure-password", default_organization=self.organization)
+        caller_membership = OrganizationMembership.objects.get(user=self.caller, organization=self.organization)
+        caller_membership.roles = [OrganizationRole.CALLER]
+        caller_membership.save(update_fields=["roles"])
+        self.owner = Owner.objects.create(id="33333:001:0001", name="Managed owner", organization=self.organization, assignee=self.manager)
+        self.evaluation_owner = Owner.objects.create(id="33333:001:0002", name="Evaluation owner", organization=self.organization, assignee=self.manager)
+        now = timezone.now()
+        Deal.objects.create(owner=self.owner, organization=self.organization, sale_subject="FOREST", stage=DealStage.NEGOTIATION, offer_valid_until=timezone.localdate() - timedelta(days=1))
+        Deal.objects.create(owner=self.evaluation_owner, organization=self.organization, sale_subject="LAND", stage=DealStage.EVALUATION)
+        Reminder.objects.create(owner=self.owner, creator=self.manager, organization=self.organization, text="Overdue callback", due_time=now - timedelta(days=1))
+        OwnerLog.objects.create(owner=self.owner, creator=self.manager, organization=self.organization, message="Sales outcome: CALLBACK. Customer asked to call back.")
+        self.client = APIClient()
+
+    def _authenticate(self, user):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(user)['actualToken']['token']}")
+
+    def test_crm_manager_receives_team_workload_contacts_deals_and_interventions(self):
+        self._authenticate(self.manager)
+        response = self.client.get("/api/services/admin/sales-management-overview")
+        self.assertEqual(response.status_code, 200, response.data)
+        member = next(item for item in response.data["team"] if item["member"]["id"] == self.manager.id)
+        self.assertEqual(member["workload"], {"assignedOwners": 2, "activeDeals": 2, "evaluationDeals": 0, "overdueReminders": 1})
+        self.assertEqual(member["contactOutcomes"]["CALLBACK"], 1)
+        self.assertEqual(member["deals"][DealStage.NEGOTIATION], 1)
+        self.assertEqual(member["deals"][DealStage.EVALUATION], 1)
+        self.assertEqual({item["kind"] for item in response.data["interventions"]}, {"EXPIRED_OFFER", "OVERDUE_REMINDER", "UNASSIGNED_EVALUATION"})
+
+    def test_caller_role_cannot_access_management_overview(self):
+        self._authenticate(self.caller)
+        response = self.client.get("/api/services/admin/sales-management-overview")
+        self.assertEqual(response.status_code, 403)
+
+
 class ContractConfigurationTests(TestCase):
     def setUp(self):
         self.organization = Organization.objects.create(slug="contract-config", name="Contract configuration organization")

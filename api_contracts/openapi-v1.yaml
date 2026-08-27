@@ -181,6 +181,16 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/admin/sales-management-overview:
+    get:
+      operationId: services_admin_sales_management_overview_retrieve
+      description: Return tenant-scoped operational sales workload and intervention
+        signals.
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/admin/sync-runs:
     get:
       operationId: services_admin_sync_runs_retrieve
