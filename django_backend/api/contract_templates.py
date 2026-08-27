@@ -203,7 +203,11 @@ def contract_templates(request):
     except ValueError as exc:
         return _detail(str(exc))
     with transaction.atomic():
-        active = templates.select_for_update().filter(template_key=values["template_key"], is_active=True).first()
+        active = (
+            ContractTemplate.objects.select_for_update()
+            .filter(organization=organization, template_key=values["template_key"], is_active=True)
+            .first()
+        )
         if active:
             return _detail("An active version of this templateKey already exists; PATCH it to create the next version.", status.HTTP_409_CONFLICT)
         next_version = (templates.filter(template_key=values["template_key"]).aggregate(highest=Max("version"))["highest"] or 0) + 1
