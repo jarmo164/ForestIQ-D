@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
     "accounts",
     "forestry",
     "operations",
@@ -146,7 +147,18 @@ LOGGING = {
     },
 }
 
+SPECTACULAR_SETTINGS = {
+    "TITLE": "ForestIQ-D API",
+    "DESCRIPTION": "Versioned compatibility API for the ForestIQ Django rewrite.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SCHEMA_PATH_PREFIX": r"/api/v1",
+    "SCHEMA_PATH_PREFIX_TRIM": False,
+    "SORT_OPERATIONS": True,
+}
+
 REST_FRAMEWORK = {
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "api.authentication.OrganizationJWTAuthentication",
     ],
