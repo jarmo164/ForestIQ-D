@@ -37,7 +37,9 @@ def render_contract_pdf(*, html: str) -> tuple[bytes, str]:
 
     The caller must only persist the returned bytes after this function succeeds.
     WeasyPrint's deterministic layout and the fixed local DejaVu font ensure that
-    identical template input produces identical page content and pagination.
+    identical template input produces identical page content and pagination. The
+    output remains uncompressed so renderer-specific stream compression cannot
+    introduce byte-level differences in the auditable artifact.
     """
 
     if not html or not html.strip():
@@ -46,6 +48,7 @@ def render_contract_pdf(*, html: str) -> tuple[bytes, str]:
         pdf = HTML(string=html, base_url=_BASE_URL).write_pdf(
             stylesheets=[CSS(string=_APPROVED_LAYOUT)],
             pdf_identifier=sha256(html.encode("utf-8")).digest(),
+            uncompressed_pdf=True,
         )
     except Exception as exc:  # WeasyPrint exposes several renderer-specific exception classes.
         raise ContractPdfRenderError("Contract PDF rendering failed; no contract was created.") from exc
