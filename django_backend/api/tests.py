@@ -14,7 +14,7 @@ from api.auth import token_pair
 from api.urls import urlpatterns
 from accounts.models import Organization, OrganizationMembership, OrganizationRole, Privilege, PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, Owner, OwnerStatus
-from operations.models import Contract, Deal, DealOffer, InheritanceCase, Reminder
+from operations.models import CompanyProfile, Contract, ContractTemplate, Deal, DealOffer, InheritanceCase, Reminder
 
 
 class RenderCorsTests(TestCase):
@@ -117,6 +117,41 @@ class AdminWorkflowTests(TestCase):
         self.assertEqual(owner.status, "ASSIGNED")
 
 
+class ContractConfigurationTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(slug="contract-config", name="Contract configuration organization")
+        self.other_organization = Organization.objects.create(slug="contract-config-other", name="Other contract configuration organization")
+        self.admin = User.objects.create_user("contract-admin", "Contract administrator", "very-secure-admin-password", default_organization=self.organization)
+        Privilege.objects.create(user=self.admin, code=PrivilegeCode.ADMIN)
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.admin)['actualToken']['token']}")
+
+    def test_admin_can_create_update_and_isolate_company_profiles(self):
+        created = self.client.post("/api/services/company-profiles", {"legalName": "ForestIQ OÜ", "registryCode": "12345678", "email": "legal@example.test", "website": "https://example.test"}, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        updated = self.client.patch(f"/api/services/company-profiles/{created.data['id']}", {"version": created.data["version"], "legalName": "ForestIQ Legal OÜ"}, format="json")
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["legalName"], "ForestIQ Legal OÜ")
+        self.assertEqual(updated.data["version"], 2)
+        foreign = CompanyProfile.objects.create(organization=self.other_organization, legal_name="Other OÜ")
+        self.assertEqual(self.client.get(f"/api/services/company-profiles/{foreign.id}").status_code, 404)
+
+    def test_admin_can_revise_html_template_without_losing_prior_version(self):
+        profile = CompanyProfile.objects.create(organization=self.organization, legal_name="ForestIQ OÜ")
+        created = self.client.post("/api/services/contract-templates", {"companyProfileId": str(profile.id), "templateKey": "forest-sale", "name": "Müügileping", "html": "<h1>Version 1</h1>"}, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        successor = self.client.patch(f"/api/services/contract-templates/{created.data['id']}", {"version": 1, "html": "<h1>Version 2</h1>"}, format="json")
+        self.assertEqual(successor.status_code, 201, successor.data)
+        self.assertEqual(successor.data["version"], 2)
+        original = ContractTemplate.objects.get(id=created.data["id"])
+        self.assertFalse(original.is_active)
+        self.assertEqual(original.html, "<h1>Version 1</h1>")
+        self.assertEqual(successor.data["supersedesId"], created.data["id"])
+        active = self.client.get("/api/services/contract-templates?active=true")
+        self.assertEqual(active.status_code, 200, active.data)
+        self.assertEqual([item["id"] for item in active.data], [successor.data["id"]])
+
+
 class MainParityWorkflowTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser("parity-admin", "Parity administrator", "very-secure-admin-password")
@@ -147,9 +182,25 @@ class MainParityWorkflowTests(TestCase):
         self.assertEqual(Deal.objects.get(id=deal_id).offers.get(id=offer_id).status, DealOffer.Status.ACCEPTED)
         draft = self.client.get(f"/api/services/contracts/deals/{deal_id}/draft")
         self.assertEqual(draft.status_code, 200, draft.data)
-        contract = self.client.post("/api/services/contracts/generate-from-deal", {"dealId": deal_id, "version": won.data["version"], "contractNumber": "C-2026-001", "buyer": "ForestIQ buyer"}, format="json")
+        template = ContractTemplate.objects.create(
+            organization=self.admin.default_organization,
+            template_key="forest-sale",
+            name="Metsamüügi leping",
+            html="<h1>{{ buyer }}</h1>",
+            version=1,
+            created_by=self.admin,
+        )
+        contract = self.client.post("/api/services/contracts/generate-from-deal", {"dealId": deal_id, "version": won.data["version"], "contractNumber": "C-2026-001", "buyer": "ForestIQ buyer", "templateId": str(template.id)}, format="json")
         self.assertEqual(contract.status_code, 201, contract.data)
-        self.assertEqual(str(Contract.objects.get(id=contract.data["contractId"]).source_offer_id), offer_id)
+        saved_contract = Contract.objects.get(id=contract.data["contractId"])
+        self.assertEqual(str(saved_contract.source_offer_id), offer_id)
+        self.assertEqual(saved_contract.template_version, template)
+        self.assertEqual(saved_contract.template_snapshot["version"], 1)
+        self.assertEqual(saved_contract.template_snapshot["html"], "<h1>{{ buyer }}</h1>")
+        detail = self.client.get(f"/api/services/contracts/{contract.data['contractId']}")
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data["template"]["templateId"], str(template.id))
+        self.assertEqual(detail.data["template"]["html"], "<h1>{{ buyer }}</h1>")
 
     def test_inheritance_case_supports_heir_and_status_workflow(self):
         created = self.client.post(

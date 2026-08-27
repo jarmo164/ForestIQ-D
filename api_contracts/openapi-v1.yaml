@@ -499,6 +499,61 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/company-profiles:
+    get:
+      operationId: services_company_profiles_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_company_profiles_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/company-profiles/{profile_id}:
+    get:
+      operationId: services_company_profiles_retrieve_2
+      parameters:
+      - in: path
+        name: profile_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: services_company_profiles_partial_update
+      parameters:
+      - in: path
+        name: profile_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_company_profiles_destroy
+      parameters:
+      - in: path
+        name: profile_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
   /api/v1/services/contract-starter:
     get:
       operationId: services_contract_starter_retrieve
@@ -506,6 +561,61 @@ paths:
       - services
       responses:
         '200':
+          description: No response body
+  /api/v1/services/contract-templates:
+    get:
+      operationId: services_contract_templates_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_contract_templates_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contract-templates/{template_id}:
+    get:
+      operationId: services_contract_templates_retrieve_2
+      parameters:
+      - in: path
+        name: template_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: services_contract_templates_partial_update
+      parameters:
+      - in: path
+        name: template_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_contract_templates_destroy
+      parameters:
+      - in: path
+        name: template_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
           description: No response body
   /api/v1/services/contracts:
     get:

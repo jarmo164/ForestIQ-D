@@ -98,6 +98,86 @@ class PersonDump(OrganizationScopedModel):
         ordering = ("name", "id")
 
 
+class CompanyProfile(OrganizationScopedModel):
+    """Legal entity data selected when drafting a contract."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    legal_name = models.CharField(max_length=255)
+    registry_code = models.CharField(max_length=64, blank=True)
+    vat_number = models.CharField(max_length=64, blank=True)
+    address = models.TextField(blank=True)
+    email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=64, blank=True)
+    iban = models.CharField(max_length=64, blank=True)
+    signatory_name = models.CharField(max_length=255, blank=True)
+    website = models.URLField(max_length=500, blank=True)
+    version = models.PositiveBigIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "company_profiles"
+        ordering = ("legal_name", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("organization", "registry_code"),
+                condition=~Q(registry_code=""),
+                name="unique_organization_company_registry_code",
+            )
+        ]
+
+
+class ContractTemplate(OrganizationScopedModel):
+    """Immutable organization-owned version of an HTML contract template."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company_profile = models.ForeignKey(
+        CompanyProfile,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="contract_templates",
+    )
+    template_key = models.SlugField(max_length=80)
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    html = models.TextField()
+    version = models.PositiveIntegerField()
+    is_active = models.BooleanField(default=True)
+    supersedes = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="successor_versions",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_contract_templates",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    organization_parent_fields = ("company_profile",)
+
+    class Meta:
+        db_table = "contract_templates"
+        ordering = ("template_key", "-version")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("organization", "template_key", "version"),
+                name="unique_organization_contract_template_version",
+            ),
+            models.UniqueConstraint(
+                fields=("organization", "template_key"),
+                condition=Q(is_active=True),
+                name="unique_active_organization_contract_template",
+            ),
+        ]
+
+
 class Contract(OrganizationScopedModel):
     id = models.CharField(primary_key=True, max_length=100)
     document = models.BinaryField(null=True, blank=True, db_column="contract")
@@ -105,6 +185,14 @@ class Contract(OrganizationScopedModel):
     base_id = models.CharField(max_length=50, blank=True)
     source_deal = models.ForeignKey("Deal", null=True, blank=True, on_delete=models.SET_NULL, related_name="contracts")
     source_offer = models.ForeignKey("DealOffer", null=True, blank=True, on_delete=models.SET_NULL, related_name="contracts")
+    template_version = models.ForeignKey(
+        ContractTemplate,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="generated_contracts",
+    )
+    template_snapshot = models.JSONField(default=dict, blank=True)
     version = models.PositiveBigIntegerField(default=1)
     organization_parent_fields = ("source_deal", "source_offer")
 

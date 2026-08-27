@@ -999,10 +999,21 @@ def new_messages_count(request):
 def contracts(request):
     if request.method == "GET":
         records = list(ContractHistory.objects.all())
-        versions = dict(Contract.objects.filter(id__in=[item.id for item in records]).values_list("id", "version"))
+        contracts_by_id = {
+            item.id: item
+            for item in Contract.objects.select_related("template_version").filter(id__in=[record.id for record in records])
+        }
         return Response(
             [
-                {"id": item.id, "version": versions.get(item.id), "sellers": item.sellers, "buyer": item.buyer, "contractNo": item.contract_number, "created": json_value(item.created_at)}
+                {
+                    "id": item.id,
+                    "version": contracts_by_id.get(item.id).version if item.id in contracts_by_id else None,
+                    "sellers": item.sellers,
+                    "buyer": item.buyer,
+                    "contractNo": item.contract_number,
+                    "created": json_value(item.created_at),
+                    "templateVersion": (contracts_by_id[item.id].template_snapshot or None) if item.id in contracts_by_id else None,
+                }
                 for item in records
             ]
         )
@@ -1049,6 +1060,7 @@ def contract_detail(request, contract_id: str):
         return Response(status=status.HTTP_204_NO_CONTENT)
     payload = dict(history.data)
     payload["version"] = contract.version
+    payload["template"] = contract.template_snapshot or payload.get("template") or None
     return Response(payload)
 
 
