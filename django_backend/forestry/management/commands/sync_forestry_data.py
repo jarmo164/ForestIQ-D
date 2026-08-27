@@ -2,10 +2,10 @@
 
 from django.core.management.base import BaseCommand, CommandError
 
-from accounts.organization_selection import active_organization
 from accounts.organization_context import organization_scope
-from forestry.models import Cadastre, DataSyncRun
-from forestry.tasks import enqueue_cadastre_sync, run_cadastre_sync
+from accounts.organization_selection import active_organization
+from forestry.models import Cadastre
+from forestry.tasks import enqueue_cadastre_sync
 
 
 class Command(BaseCommand):
@@ -29,10 +29,14 @@ class Command(BaseCommand):
             for cadastre_id in ids:
                 if not Cadastre.objects.filter(id=cadastre_id).exists():
                     raise CommandError(f"Unknown cadastral unit: {cadastre_id}")
-                if options["inline"]:
-                    run = DataSyncRun.objects.create(cadastre_id=cadastre_id, source="manual-inline")
-                    run_cadastre_sync(run.id, str(organization.id))
-                    run.refresh_from_db()
+                dispatch = enqueue_cadastre_sync(
+                    cadastre_id,
+                    organization_id=str(organization.id),
+                    source="manual-inline" if options["inline"] else "manual",
+                    inline=options["inline"],
+                )
+                if dispatch.already_running:
+                    run_id = dispatch.run.id if dispatch.run else "unknown"
+                    self.stdout.write(self.style.WARNING(f"{cadastre_id}: already running (run {run_id})"))
                 else:
-                    run = enqueue_cadastre_sync(cadastre_id, organization_id=str(organization.id), source="manual")
-                self.stdout.write(f"{cadastre_id}: run {run.id} ({run.status})")
+                    self.stdout.write(f"{cadastre_id}: run {dispatch.run.id} ({dispatch.run.status})")
