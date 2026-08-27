@@ -1,0 +1,10 @@
+title = "ForestIQ-D secret scanning policy"
+
+# Do not add broad regex, path or commit allowlists here. A false positive or
+# accepted risk must be recorded in security-exceptions.json with a tracker
+# reference, rationale and an expiry date; the Quality Gate validates it.
+[allowlist]
+description = "No active secret scanning exceptions"
+paths = []
+regexes = []
+commits = []
