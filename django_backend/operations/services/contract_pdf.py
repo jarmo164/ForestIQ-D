@@ -43,7 +43,10 @@ def render_contract_pdf(*, html: str) -> tuple[bytes, str]:
     if not html or not html.strip():
         raise ContractPdfRenderError("A non-empty HTML contract template is required for PDF rendering.")
     try:
-        pdf = HTML(string=html, base_url=_BASE_URL).write_pdf(stylesheets=[CSS(string=_APPROVED_LAYOUT)])
+        pdf = HTML(string=html, base_url=_BASE_URL).write_pdf(
+            stylesheets=[CSS(string=_APPROVED_LAYOUT)],
+            pdf_identifier=sha256(html.encode("utf-8")).digest(),
+        )
     except Exception as exc:  # WeasyPrint exposes several renderer-specific exception classes.
         raise ContractPdfRenderError("Contract PDF rendering failed; no contract was created.") from exc
     if not pdf.startswith(b"%PDF-") or len(pdf) < 256:
