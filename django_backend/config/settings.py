@@ -233,6 +233,7 @@ CELERY_BEAT_SCHEDULE = {
 FORESTIQ_TASKS_INLINE = env_bool("FORESTIQ_TASKS_INLINE", False)
 FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS = int(os.getenv("FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS", "30"))
 FORESTIQ_SYNC_RUN_MAX_RETRIES = int(os.getenv("FORESTIQ_SYNC_RUN_MAX_RETRIES", "3"))
+FORESTIQ_METRICS_BEARER_TOKEN = os.getenv("FORESTIQ_METRICS_BEARER_TOKEN", "")
 FORESTIQ_SYNC_USER_AGENT = os.getenv("FORESTIQ_SYNC_USER_AGENT", "ForestIQ data synchronizer/1.0")
 # WFS imports are bounded before parsing or persistence to avoid uncontrolled retries,
 # provider throttling and oversized responses in scheduled synchronization work.

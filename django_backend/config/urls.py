@@ -6,7 +6,10 @@ from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView
 
+from .metrics_views import prometheus_metrics
+
 urlpatterns = [
+    path("metrics", prometheus_metrics, name="prometheus-metrics"),
     path("django-admin/", admin.site.urls),
     path(
         "api/v1/schema/",

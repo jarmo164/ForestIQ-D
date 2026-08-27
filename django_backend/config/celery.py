@@ -14,6 +14,7 @@ from config.observability import (
     safe_correlation_id,
     set_correlation_id,
 )
+from config.prometheus import begin_task_observation, observe_task_completion
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
@@ -40,6 +41,7 @@ def bind_task_correlation_id(task_id=None, task=None, **_kwargs) -> None:
     correlation_id = headers.get("correlation_id") or current_correlation_id() or safe_correlation_id(None)
     correlation_token = set_correlation_id(safe_correlation_id(correlation_id))
     task.request._forestiq_correlation_token = correlation_token
+    begin_task_observation(task)
     logger.info("celery.task.started", extra={"task_name": task.name, "celery_task_id": task_id})
 
 
@@ -47,6 +49,7 @@ def bind_task_correlation_id(task_id=None, task=None, **_kwargs) -> None:
 def clear_task_correlation_id(task_id=None, task=None, state=None, **_kwargs) -> None:
     """Log completion and always clear worker-local trace state for the next task."""
 
+    observe_task_completion(task, state=state)
     logger.info(
         "celery.task.finished",
         extra={"task_name": task.name, "celery_task_id": task_id, "task_state": state},
