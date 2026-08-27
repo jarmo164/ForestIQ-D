@@ -811,13 +811,24 @@ def integration_start(request, key: str):
         return _detail("Forestek is a one-time initial import. Run the controlled management command only before its first successful import.", status.HTTP_409_CONFLICT)
     cadastre_id = request.data.get("cadastreId") or request.data.get("parameters", {}).get("cadastreId")
     if cadastre_id:
-        run = enqueue_cadastre_sync(
+        dispatch = enqueue_cadastre_sync(
             str(cadastre_id),
             organization_id=str(request_organization_id(request)),
             requested_by_id=request.user.id,
             source=key.lower(),
         )
-        return Response({"key": key, "status": run.status, "runId": run.id, "taskId": run.task_id}, status=status.HTTP_202_ACCEPTED)
+        if dispatch.already_running:
+            return Response(
+                {
+                    "key": key,
+                    "status": "already_running",
+                    "code": "already_running",
+                    "runId": dispatch.run.id if dispatch.run else None,
+                    "taskId": dispatch.run.task_id if dispatch.run else "",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({"key": key, "status": dispatch.run.status, "runId": dispatch.run.id, "taskId": dispatch.run.task_id}, status=status.HTTP_202_ACCEPTED)
     if settings.FORESTIQ_TASKS_INLINE:
         result = enqueue_portfolio_sync(str(request_organization_id(request)))
         return Response({"key": key, "status": "SUCCEEDED", "result": result})
@@ -858,16 +869,19 @@ def registry_freshness(request):
 def registry_recover(request):
     batch_size = min(max(int(request.data.get("batchSize", 25)), 1), 200)
     queued = []
+    already_running = []
     for cadastre_id in _stale_cadastres().order_by("id").values_list("id", flat=True)[:batch_size]:
-        queued.append(
-            enqueue_cadastre_sync(
-                cadastre_id,
-                organization_id=str(request_organization_id(request)),
-                requested_by_id=request.user.id,
-                source="recovery",
-            ).id
+        dispatch = enqueue_cadastre_sync(
+            cadastre_id,
+            organization_id=str(request_organization_id(request)),
+            requested_by_id=request.user.id,
+            source="recovery",
         )
-    return Response({"queued": len(queued), "runIds": queued}, status=status.HTTP_202_ACCEPTED)
+        if dispatch.already_running:
+            already_running.append({"cadastreId": cadastre_id, "runId": dispatch.run.id if dispatch.run else None})
+        else:
+            queued.append(dispatch.run.id)
+    return Response({"queued": len(queued), "runIds": queued, "alreadyRunning": already_running}, status=status.HTTP_202_ACCEPTED)
 
 
 @api_view(["GET"])
@@ -879,13 +893,22 @@ def registry_health(request):
 
 def _registry_refresh(request, cadastre_id: str, source: str):
     get_object_or_404(Cadastre, id=cadastre_id)
-    run = enqueue_cadastre_sync(
+    dispatch = enqueue_cadastre_sync(
         cadastre_id,
         organization_id=str(request_organization_id(request)),
         requested_by_id=request.user.id,
         source=source,
     )
-    return Response({"id": run.id, "cadastreId": cadastre_id, "source": source, "status": run.status, "taskId": run.task_id}, status=status.HTTP_202_ACCEPTED)
+    if dispatch.already_running:
+        return Response(
+            {
+                "code": "already_running",
+                "detail": "A synchronization run is already active for this cadastre.",
+                "run": {"id": dispatch.run.id, "status": dispatch.run.status, "taskId": dispatch.run.task_id} if dispatch.run else None,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+    return Response({"id": dispatch.run.id, "cadastreId": cadastre_id, "source": source, "status": dispatch.run.status, "taskId": dispatch.run.task_id}, status=status.HTTP_202_ACCEPTED)
 
 
 @api_view(["POST"])

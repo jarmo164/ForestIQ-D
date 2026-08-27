@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 from django.contrib.gis.geos import MultiPolygon, Polygon
 from rest_framework.test import APIClient
@@ -18,7 +18,8 @@ from operations.models import Deal, DealStage
 from forestry.services import import_runner
 from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance
 from forestry.services.metsaregister_full_import import FullImportReport, import_metsaregister_delta
-from forestry.tasks import run_cadastre_sync, run_metsaregister_delta_check
+from forestry.tasks import enqueue_cadastre_sync, run_cadastre_sync, run_metsaregister_delta_check
+from forestry.services.single_flight import SingleFlightLock
 
 
 def authenticated_client(user: User) -> APIClient:
@@ -391,3 +392,132 @@ class MapFeatureTests(TestCase):
         self.assertTrue(active_response.data["features"])
         self.assertEqual(recent.status_code, 200, recent.data)
         self.assertIn(self.cadastre.id, [feature["properties"]["id"] for feature in recent.data["features"]])
+
+
+class FakeRedis:
+    """Minimal Redis replacement for deterministic single-flight lock tests."""
+
+    def __init__(self):
+        self.values = {}
+        self.ttls = {}
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.values:
+            return None
+        self.values[key] = value
+        self.ttls[key] = ex
+        return True
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def eval(self, script, _number_of_keys, key, *args):
+        if len(args) == 1:
+            if self.values.get(key) == args[0]:
+                del self.values[key]
+                self.ttls.pop(key, None)
+                return 1
+            return 0
+        expected, replacement, ttl_seconds = args
+        current = self.values.get(key)
+        if current == expected or current is None:
+            self.values[key] = replacement
+            self.ttls[key] = int(ttl_seconds)
+            return 1
+        return 0
+
+    def expire(self, key):
+        self.values.pop(key, None)
+        self.ttls.pop(key, None)
+
+
+class SingleFlightLockTests(SimpleTestCase):
+    @patch("forestry.services.single_flight.redis.from_url")
+    def test_lock_has_ttl_releases_only_its_owner_and_recovers_after_expiry(self, redis_from_url):
+        redis_client = FakeRedis()
+        redis_from_url.return_value = redis_client
+        first = SingleFlightLock.for_sync("cadastre-sync", "org-1", "79501:001:0001")
+        second = SingleFlightLock.for_sync("cadastre-sync", "org-1", "79501:001:0001")
+
+        self.assertTrue(first.acquire())
+        self.assertEqual(redis_client.ttls[first.key], 900)
+        self.assertFalse(second.acquire())
+        second.release()
+        self.assertEqual(redis_client.get(first.key), first.token)
+
+        redis_client.expire(first.key)
+        self.assertTrue(second.acquire())
+        first.release()
+        self.assertEqual(redis_client.get(second.key), second.token)
+
+    @patch("forestry.services.single_flight.redis.from_url")
+    def test_queued_dispatch_token_can_be_claimed_by_only_one_worker(self, redis_from_url):
+        redis_client = FakeRedis()
+        redis_from_url.return_value = redis_client
+        dispatcher = SingleFlightLock.for_sync("cadastre-sync", "org-1", "79501:001:0001")
+        first_worker = SingleFlightLock.for_sync("cadastre-sync", "org-1", "79501:001:0001")
+        second_worker = SingleFlightLock.for_sync("cadastre-sync", "org-1", "79501:001:0001")
+
+        self.assertTrue(dispatcher.acquire())
+        first_worker.token = dispatcher.token
+        second_worker.token = dispatcher.token
+        self.assertTrue(first_worker.claim_queued_or_recover())
+        self.assertFalse(second_worker.claim_queued_or_recover())
+        self.assertTrue(redis_client.get(first_worker.key).startswith("running:"))
+
+    @patch("forestry.tasks.import_metsaregister_delta")
+    @patch("forestry.services.single_flight.redis.from_url")
+    def test_delta_task_returns_already_running_without_writes(self, redis_from_url, import_delta):
+        redis_client = FakeRedis()
+        redis_from_url.return_value = redis_client
+        existing = SingleFlightLock.for_sync("metsaregister-delta", "org-1")
+        self.assertTrue(existing.acquire())
+
+        result = run_metsaregister_delta_check.run("org-1")
+
+        self.assertEqual(result, {"status": "already_running"})
+        import_delta.assert_not_called()
+
+
+class SingleFlightDispatchTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser("single-flight-admin", "Single flight administrator", "very-secure-admin-password")
+        self.cadastre = Cadastre.objects.create(id="79501:001:0007")
+        self.client = authenticated_client(self.admin)
+
+    @override_settings(FORESTIQ_TASKS_INLINE=False)
+    def test_competing_dispatch_returns_existing_run_and_ttl_allows_recovery(self):
+        redis_client = FakeRedis()
+        with patch("forestry.services.single_flight.redis.from_url", return_value=redis_client), patch("forestry.tasks.run_cadastre_sync.delay") as delay:
+            delay.return_value.id = "celery-single-flight-1"
+            first = enqueue_cadastre_sync(self.cadastre.id, organization_id=str(self.cadastre.organization_id), source="api")
+            second = enqueue_cadastre_sync(self.cadastre.id, organization_id=str(self.cadastre.organization_id), source="daily")
+
+            self.assertFalse(first.already_running)
+            self.assertTrue(second.already_running)
+            self.assertEqual(second.run.id, first.run.id)
+            self.assertEqual(DataSyncRun.objects.count(), 1)
+            delay.assert_called_once()
+
+            redis_client.expire(SingleFlightLock.for_sync("cadastre-sync", str(self.cadastre.organization_id), self.cadastre.id).key)
+            recovered = enqueue_cadastre_sync(self.cadastre.id, organization_id=str(self.cadastre.organization_id), source="recovery")
+
+        self.assertFalse(recovered.already_running)
+        self.assertEqual(recovered.run.id, first.run.id)
+        self.assertEqual(DataSyncRun.objects.count(), 1)
+        self.assertEqual(delay.call_count, 2)
+
+    @override_settings(FORESTIQ_TASKS_INLINE=False)
+    def test_api_returns_already_running_instead_of_creating_a_duplicate_run(self):
+        redis_client = FakeRedis()
+        url = f"/api/services/admin/cadastres/{self.cadastre.id}/sync"
+        with patch("forestry.services.single_flight.redis.from_url", return_value=redis_client), patch("forestry.tasks.run_cadastre_sync.delay") as delay:
+            delay.return_value.id = "celery-single-flight-2"
+            first = self.client.post(url)
+            second = self.client.post(url)
+
+        self.assertEqual(first.status_code, 202, first.data)
+        self.assertEqual(second.status_code, 409, second.data)
+        self.assertEqual(second.data["code"], "already_running")
+        self.assertEqual(second.data["run"]["id"], first.data["id"])
+        self.assertEqual(DataSyncRun.objects.count(), 1)

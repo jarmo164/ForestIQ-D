@@ -96,13 +96,22 @@ def sync_runs(request):
 def cadastre_sync(request, cadastre_id: str):
     """Queue one cadastral unit's source refresh through Celery."""
     cadastre = get_object_or_404(Cadastre, id=cadastre_id)
-    run = enqueue_cadastre_sync(
+    dispatch = enqueue_cadastre_sync(
         cadastre.id,
         organization_id=str(request_organization_id(request)),
         requested_by_id=request.user.id,
         source="api",
     )
-    return Response(_sync_run_data(run), status=status.HTTP_202_ACCEPTED)
+    if dispatch.already_running:
+        return Response(
+            {
+                "code": "already_running",
+                "detail": "A synchronization run is already active for this cadastre.",
+                "run": _sync_run_data(dispatch.run) if dispatch.run else None,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+    return Response(_sync_run_data(dispatch.run), status=status.HTTP_202_ACCEPTED)
 
 
 @api_view(["GET"])

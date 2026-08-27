@@ -170,6 +170,9 @@ CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT_SECONDS", "300"))
 CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT_SECONDS", "270"))
 CELERY_TASK_ACKS_LATE = True
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+# Redis võtme TTL väldib igavest lukku, kui worker või host katkeb keset sünkroonimist.
+# Vaikimisi 15 minutit katab Celery 5-minutilise tööläve koos retry-varuga.
+FORESTIQ_SINGLE_FLIGHT_LOCK_TTL_SECONDS = int(os.getenv("FORESTIQ_SINGLE_FLIGHT_LOCK_TTL_SECONDS", "900"))
 CELERY_BEAT_SCHEDULE = {
     "forestiq-daily-portfolio-sync": {
         "task": "forestry.tasks.enqueue_all_organizations_portfolio_sync",
