@@ -96,9 +96,16 @@ export interface InheritanceCase {
   version: number;
   owner: Owner;
   sourceNoticeNumber?: string | null;
+  sourceUrl?: string | null;
+  announcementDate?: string | null;
+  deathDate?: string | null;
+  certificationDeadline?: string | null;
+  notaryName?: string | null;
+  notaryPhone?: string | null;
   status: string;
   assignedTo?: AppUser | null;
-  certificationDeadline?: string | null;
+  startedAt?: number | null;
+  endedAt?: number | null;
   heirs: InheritanceHeir[];
   events: InheritanceEvent[];
   updatedAt?: number | null;
@@ -106,15 +113,22 @@ export interface InheritanceCase {
 export interface InheritanceHeir {
   id: string;
   displayName: string;
+  personalCode?: string | null;
+  registryCode?: string | null;
+  inheritanceShare?: string | null;
+  relationToDeceased?: string | null;
   phone?: string | null;
   email?: string | null;
   contactStatus?: string | null;
+  assignedTo?: AppUser | null;
+  source?: string | null;
 }
 export interface InheritanceEvent {
   id: string;
   type: string;
   description: string;
   createdAt: number;
+  createdBy?: AppUser | null;
 }
 export interface SalesTask {
   owner: Owner;

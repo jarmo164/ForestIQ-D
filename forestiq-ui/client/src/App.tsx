@@ -12,6 +12,7 @@ import { AccessDenied, AuthenticationRequired } from "@/pages/AccessState";
 import Admin from "@/pages/Admin";
 import Dashboard from "@/pages/Dashboard";
 import Login from "@/pages/Login";
+import InheritanceDetail from "@/pages/InheritanceDetail";
 import Messages from "@/pages/Messages";
 import NotFound from "@/pages/NotFound";
 import OwnerDetail from "@/pages/OwnerDetail";
@@ -112,6 +113,17 @@ function Routes() {
           )}
         >
           <DealsWorkspace />
+        </Protected>
+      </Route>
+      <Route path="/inheritance/:id">
+        <Protected
+          requirement={requirePrivileges(
+            "ADMIN",
+            "OWNER_PROFILE",
+            "ASSIGNED_OWNERS",
+          )}
+        >
+          <InheritanceDetail />
         </Protected>
       </Route>
       <Route path="/inheritance">
