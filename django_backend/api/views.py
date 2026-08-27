@@ -36,7 +36,7 @@ from forestry.models import (
     OwnerStatus,
     OwnerStatusChange,
 )
-from operations.models import ApplicationMessage, Contract, ContractHistory, Deal, DealStage, DirectMessage, PersonDump, Reminder
+from operations.models import ApplicationMessage, Contract, ContractHistory, Deal, DealStage, DirectMessage, InheritanceCase, PersonDump, Reminder
 
 from .concurrency import delete_if_current, missing_version_response, requested_version, update_if_current, version_conflict_response
 from .organization import organization_user_or_404, organization_users, request_organization_id
@@ -1155,3 +1155,46 @@ def user_statistics(request):
         .order_by("user_id")
     )
     return Response([{"userId": frame["user_id"], "statisticsFrames": [{"since": None, "count": frame["count"]}]} for frame in frames])
+
+
+@api_view(["GET"])
+@permission_classes([IsAdmin])
+def dashboard_stats(request):
+    """Return compact organization-scoped management counts for the dashboard."""
+
+    organization_id = request_organization_id(request)
+    now = timezone.now()
+    today = timezone.localdate(now)
+    upcoming_at = now + timedelta(days=7)
+    upcoming_date = today + timedelta(days=7)
+    active_owner_scope = Q(out_of_admin_search_from__isnull=True) | Q(out_of_admin_search_to__lte=now)
+    owners = Owner.objects.filter(organization_id=organization_id).filter(active_owner_scope)
+    deals = Deal.objects.filter(organization_id=organization_id)
+    reminders = Reminder.objects.filter(organization_id=organization_id)
+    inheritance_cases = InheritanceCase.objects.filter(organization_id=organization_id).exclude(status__in=["COMPLETED", "CLOSED"])
+
+    deal_stage_counts = {stage: 0 for stage, _label in DealStage.choices}
+    deal_stage_counts.update({frame["stage"]: frame["count"] for frame in deals.values("stage").annotate(count=Count("id"))})
+    reminder_overdue = reminders.filter(due_time__lt=now).count()
+    reminder_upcoming = reminders.filter(due_time__gte=now, due_time__lte=upcoming_at).count()
+    inheritance_overdue = inheritance_cases.filter(certification_deadline__lt=today).count()
+    inheritance_upcoming = inheritance_cases.filter(certification_deadline__gte=today, certification_deadline__lte=upcoming_date).count()
+    offer_overdue = deals.exclude(stage__in=[DealStage.WON, DealStage.LOST, DealStage.CANCELLED]).filter(offer_valid_until__lt=today).count()
+    offer_upcoming = deals.exclude(stage__in=[DealStage.WON, DealStage.LOST, DealStage.CANCELLED]).filter(offer_valid_until__gte=today, offer_valid_until__lte=upcoming_date).count()
+
+    return Response(
+        {
+            "activeOwners": owners.count(),
+            "newLeads": owners.filter(Q(status="") | Q(status="NEW")).count(),
+            "evaluationPending": owners.filter(status="WAITS_FOR_EVALUATION").count(),
+            "deadlines": {
+                "overdue": reminder_overdue + inheritance_overdue + offer_overdue,
+                "nextSevenDays": reminder_upcoming + inheritance_upcoming + offer_upcoming,
+                "reminders": {"overdue": reminder_overdue, "nextSevenDays": reminder_upcoming},
+                "inheritance": {"overdue": inheritance_overdue, "nextSevenDays": inheritance_upcoming},
+                "offers": {"overdue": offer_overdue, "nextSevenDays": offer_upcoming},
+            },
+            "dealStages": deal_stage_counts,
+            "generatedAt": now,
+        }
+    )

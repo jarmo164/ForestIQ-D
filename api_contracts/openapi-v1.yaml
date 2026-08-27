@@ -99,6 +99,15 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/admin/dashboard-stats:
+    get:
+      operationId: services_admin_dashboard_stats_retrieve
+      description: Return compact organization-scoped management counts for the dashboard.
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/admin/integrations:
     get:
       operationId: services_admin_integrations_retrieve
