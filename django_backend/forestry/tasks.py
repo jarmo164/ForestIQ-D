@@ -39,19 +39,80 @@ def _start(run: DataSyncRun) -> None:
     run.save(update_fields=("status", "started_at", "error_message"))
 
 
-def _fail(run: DataSyncRun, error: Exception) -> None:
-    run.status = DataSyncRun.Status.FAILED
-    run.error_message = str(error)[:4000]
-    run.finished_at = timezone.now()
-    run.save(update_fields=("status", "error_message", "finished_at"))
+def _metric_total(result: dict[str, object]) -> int:
+    """Return an auditable row count from the integer counters in a task result."""
+
+    return sum(value for value in result.values() if isinstance(value, int) and not isinstance(value, bool))
 
 
-def _succeed(run: DataSyncRun, result: dict[str, object]) -> dict[str, object]:
-    run.status = DataSyncRun.Status.SUCCEEDED
+def _complete(
+    run: DataSyncRun,
+    result: dict[str, object],
+    *,
+    status: str = DataSyncRun.Status.SUCCESS,
+    error_message: str = "",
+    pages_processed: int = 0,
+    rows_processed: int | None = None,
+    cursor: dict[str, object] | None = None,
+    lag_seconds: int | None = None,
+    retry_count: int = 0,
+) -> dict[str, object]:
+    """Finish an audit run with normalized outcome and progress metrics."""
+
+    run.status = status
     run.result = result
+    run.error_message = error_message[:4000]
+    run.pages_processed = pages_processed
+    run.rows_processed = _metric_total(result) if rows_processed is None else rows_processed
+    run.cursor = cursor or {}
+    run.lag_seconds = lag_seconds
+    run.retry_count = max(run.retry_count, retry_count)
     run.finished_at = timezone.now()
-    run.save(update_fields=("status", "result", "finished_at"))
+    run.save(
+        update_fields=(
+            "status",
+            "result",
+            "error_message",
+            "pages_processed",
+            "rows_processed",
+            "cursor",
+            "lag_seconds",
+            "retry_count",
+            "finished_at",
+        )
+    )
     return result
+
+
+def _fail(run: DataSyncRun, error: Exception, *, retry_count: int = 0) -> None:
+    _complete(
+        run,
+        run.result,
+        status=DataSyncRun.Status.FAILED,
+        error_message=str(error),
+        retry_count=retry_count,
+    )
+
+
+def _succeed(
+    run: DataSyncRun,
+    result: dict[str, object],
+    *,
+    pages_processed: int = 0,
+    rows_processed: int | None = None,
+    cursor: dict[str, object] | None = None,
+    lag_seconds: int | None = None,
+    retry_count: int = 0,
+) -> dict[str, object]:
+    return _complete(
+        run,
+        result,
+        pages_processed=pages_processed,
+        rows_processed=rows_processed,
+        cursor=cursor,
+        lag_seconds=lag_seconds,
+        retry_count=retry_count,
+    )
 
 
 def _active_cadastre_run(cadastre_id: str) -> DataSyncRun | None:
@@ -68,7 +129,13 @@ def _active_cadastre_run(cadastre_id: str) -> DataSyncRun | None:
 
 
 @shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=3)
-def run_cadastre_sync(self, run_id: int, organization_id: str, lock_token: str = "") -> dict[str, object]:
+def run_cadastre_sync(
+    self,
+    run_id: int,
+    organization_id: str,
+    lock_token: str = "",
+    source_names: tuple[str, ...] | None = None,
+) -> dict[str, object]:
     """Refresh one cadastre while holding the dispatch-created single-flight lock."""
 
     with organization_scope(organization_id):
@@ -77,7 +144,7 @@ def run_cadastre_sync(self, run_id: int, organization_id: str, lock_token: str =
             raise ValueError("The requested cadastre no longer exists")
         if run.status == DataSyncRun.Status.RUNNING:
             return {"status": "already_running", "runId": run.id}
-        if run.status == DataSyncRun.Status.SUCCEEDED:
+        if run.status == DataSyncRun.Status.SUCCESS:
             return {"status": "already_finished", "runId": run.id}
         lock = SingleFlightLock.for_sync("cadastre-sync", organization_id, run.cadastre_id)
         if lock_token:
@@ -89,17 +156,48 @@ def run_cadastre_sync(self, run_id: int, organization_id: str, lock_token: str =
             return {"status": "already_running", "runId": run.id}
         try:
             _start(run)
-            try:
-                result = {
-                    "cadastre_wfs": sync_cadastre_wfs(run.cadastre_id, organization_id=organization_id),
-                    "metsaregister_wfs": sync_metsaregister_wfs(run.cadastre_id, organization_id=organization_id),
-                    "soos_wfs": sync_optional_soos_wfs(run.cadastre_id, organization_id=organization_id),
-                    "parimus_inheritance": sync_parimus_inheritance(run.cadastre_id, organization_id=organization_id),
-                }
-            except Exception as exc:
-                _fail(run, exc)
-                raise
-            return _succeed(run, result)
+            result: dict[str, object] = {}
+            errors: dict[str, str] = {}
+            importers = (
+                ("cadastre_wfs", sync_cadastre_wfs),
+                ("metsaregister_wfs", sync_metsaregister_wfs),
+                ("soos_wfs", sync_optional_soos_wfs),
+                ("parimus_inheritance", sync_parimus_inheritance),
+            )
+            selected_importers = tuple(item for item in importers if source_names is None or item[0] in source_names)
+            if not selected_importers:
+                return _complete(
+                    run,
+                    {"skipped": "No eligible failed source parts were supplied."},
+                    status=DataSyncRun.Status.SKIPPED,
+                    cursor={"cadastreId": run.cadastre_id},
+                    retry_count=self.request.retries,
+                )
+            for source, importer in selected_importers:
+                try:
+                    result[source] = importer(run.cadastre_id, organization_id=organization_id)
+                except Exception as exc:  # Keep successful source parts auditable and retryable.
+                    errors[source] = str(exc)[:4000]
+            if errors:
+                result["failed_sources"] = errors
+                outcome = DataSyncRun.Status.PARTIAL if len(result) > 1 else DataSyncRun.Status.FAILED
+                return _complete(
+                    run,
+                    result,
+                    status=outcome,
+                    error_message="; ".join(f"{source}: {message}" for source, message in errors.items()),
+                    pages_processed=len(selected_importers),
+                    rows_processed=_metric_total({key: value for key, value in result.items() if key != "failed_sources"}),
+                    cursor={"cadastreId": run.cadastre_id},
+                    retry_count=self.request.retries,
+                )
+            return _succeed(
+                run,
+                result,
+                pages_processed=len(selected_importers),
+                cursor={"cadastreId": run.cadastre_id},
+                retry_count=self.request.retries,
+            )
         finally:
             lock.release()
 
@@ -111,6 +209,7 @@ def enqueue_cadastre_sync(
     requested_by_id: str | None = None,
     source: str = "all",
     inline: bool | None = None,
+    source_names: tuple[str, ...] | None = None,
 ) -> CadastreSyncDispatch:
     """Schedule a refresh once per tenant and cadastre, returning an existing run on conflict."""
 
@@ -131,11 +230,15 @@ def enqueue_cadastre_sync(
                     source=source,
                     correlation_id=current_correlation_id(),
                 )
+            run.backlog_size = DataSyncRun.objects.filter(
+                status__in=(DataSyncRun.Status.QUEUED, DataSyncRun.Status.RUNNING)
+            ).count()
+            run.save(update_fields=("backlog_size",))
             run_inline = settings.FORESTIQ_TASKS_INLINE if inline is None else inline
             if run_inline:
-                run_cadastre_sync(run.id, str(organization_id), lock.token)
+                run_cadastre_sync(run.id, str(organization_id), lock.token, source_names)
                 return CadastreSyncDispatch(run=DataSyncRun.objects.get(id=run.id))
-            result = run_cadastre_sync.delay(run.id, str(organization_id), lock.token)
+            result = run_cadastre_sync.delay(run.id, str(organization_id), lock.token, source_names)
             run.task_id = result.id
             run.save(update_fields=("task_id",))
             return CadastreSyncDispatch(run=run)
@@ -181,7 +284,7 @@ def run_metsaregister_delta_check(self, organization_id: str) -> dict[str, objec
     try:
         with organization_scope(organization_id):
             now = timezone.now()
-            previous = DataSyncRun.objects.filter(source="celery:metsaregister-cql-delta", status=DataSyncRun.Status.SUCCEEDED, finished_at__isnull=False).order_by("-finished_at").first()
+            previous = DataSyncRun.objects.filter(source="celery:metsaregister-cql-delta", status=DataSyncRun.Status.SUCCESS, finished_at__isnull=False).order_by("-finished_at").first()
             since = (previous.finished_at - timedelta(minutes=settings.FORESTIQ_METSAREGISTER_DELTA_OVERLAP_MINUTES)) if previous else now - timedelta(hours=settings.FORESTIQ_METSAREGISTER_DELTA_LOOKBACK_HOURS)
             run = DataSyncRun.objects.create(
                 source="celery:metsaregister-cql-delta",
@@ -193,9 +296,17 @@ def run_metsaregister_delta_check(self, organization_id: str) -> dict[str, objec
                 report = import_metsaregister_delta(since=since, organization_id=organization_id)
                 result = {**report.data(), "since": since.isoformat()}
             except Exception as exc:
-                _fail(run, exc)
+                _fail(run, exc, retry_count=self.request.retries)
                 raise
-            return _succeed(run, result)
+            return _succeed(
+                run,
+                result,
+                pages_processed=report.checkpoint_pages,
+                rows_processed=report.features,
+                cursor={"startIndex": report.checkpoint_cursor},
+                lag_seconds=max(0, int((now - since).total_seconds())),
+                retry_count=self.request.retries,
+            )
     finally:
         lock.release()
 
@@ -241,9 +352,16 @@ def run_parimus_official_notice_import(self, organization_id: str) -> dict[str, 
                 )
                 result = {"cadastres": cadastres.count(), "notices": notices}
             except Exception as exc:
-                _fail(run, exc)
+                _fail(run, exc, retry_count=self.request.retries)
                 raise
-            return _succeed(run, result)
+            return _succeed(
+                run,
+                result,
+                pages_processed=cadastres.count(),
+                rows_processed=notices,
+                cursor={"cadastres": cadastres.count()},
+                retry_count=self.request.retries,
+            )
     finally:
         lock.release()
 

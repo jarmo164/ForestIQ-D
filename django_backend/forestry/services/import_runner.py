@@ -108,11 +108,27 @@ def run_cadastre_import(
                     break
         run.finished_at = timezone.now()
         run.result = result
+        run.pages_processed = len(result)
+        run.rows_processed = sum(value for value in result.values() if isinstance(value, int) and not isinstance(value, bool))
+        run.cursor = {"cadastreId": scoped_cadastre.id}
         if errors:
-            run.status = DataSyncRun.Status.FAILED
+            run.status = DataSyncRun.Status.PARTIAL if result else DataSyncRun.Status.FAILED
+            run.result = {**result, "failed_sources": errors}
             run.error_message = "; ".join(f"{key}: {message}" for key, message in errors.items())[:4000]
         else:
-            run.status = DataSyncRun.Status.SUCCEEDED
+            run.status = DataSyncRun.Status.SUCCESS
             run.error_message = ""
-        run.save(update_fields=("status", "started_at", "finished_at", "result", "error_message", "correlation_id"))
+        run.save(
+            update_fields=(
+                "status",
+                "started_at",
+                "finished_at",
+                "result",
+                "error_message",
+                "pages_processed",
+                "rows_processed",
+                "cursor",
+                "correlation_id",
+            )
+        )
         return run

@@ -77,6 +77,13 @@ def _sync_run_data(run: DataSyncRun) -> dict:
         "correlationId": run.correlation_id or None,
         "source": run.source,
         "status": run.status,
+        "pagesProcessed": run.pages_processed,
+        "rowsProcessed": run.rows_processed,
+        "retryCount": run.retry_count,
+        "backlogSize": run.backlog_size,
+        "cursor": run.cursor,
+        "lagSeconds": run.lag_seconds,
+        "retryOf": run.retry_of_id,
         "startedAt": run.started_at,
         "finishedAt": run.finished_at,
         "result": run.result,
@@ -113,6 +120,42 @@ def cadastre_sync(request, cadastre_id: str):
             status=status.HTTP_409_CONFLICT,
         )
     return Response(_sync_run_data(dispatch.run), status=status.HTTP_202_ACCEPTED)
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def retry_sync_run(request, run_id: int):
+    """Requeue only the failed source parts of a terminal cadastre synchronization."""
+
+    run = get_object_or_404(DataSyncRun, id=run_id)
+    if run.status not in (DataSyncRun.Status.PARTIAL, DataSyncRun.Status.FAILED):
+        return _detail("Only PARTIAL or FAILED synchronization runs can be retried.", status.HTTP_409_CONFLICT)
+    if run.cadastre is None:
+        return _detail("This audit run has no cadastre-scoped source part to retry.", status.HTTP_409_CONFLICT)
+    failed_sources = run.result.get("failed_sources", {}) if isinstance(run.result, dict) else {}
+    source_names = tuple(source for source in failed_sources if source in {"cadastre_wfs", "metsaregister_wfs", "soos_wfs", "parimus_inheritance"})
+    if not source_names:
+        return _detail("The audit run has no recorded failed source part to retry.", status.HTTP_409_CONFLICT)
+    if run.retry_count >= settings.FORESTIQ_SYNC_RUN_MAX_RETRIES:
+        return _detail("The synchronization retry limit has been reached.", status.HTTP_409_CONFLICT)
+    dispatch = enqueue_cadastre_sync(
+        run.cadastre_id,
+        organization_id=str(request_organization_id(request)),
+        requested_by_id=request.user.id,
+        source=f"retry:{run.source}",
+        source_names=source_names,
+    )
+    if dispatch.already_running or dispatch.run is None:
+        return Response(
+            {"code": "already_running", "detail": "A synchronization run is already active for this cadastre.", "run": _sync_run_data(dispatch.run) if dispatch.run else None},
+            status=status.HTTP_409_CONFLICT,
+        )
+    retry = dispatch.run
+    retry.retry_of = run
+    retry.retry_count = run.retry_count + 1
+    retry.backlog_size = DataSyncRun.objects.filter(status__in=(DataSyncRun.Status.QUEUED, DataSyncRun.Status.RUNNING)).count()
+    retry.save(update_fields=("retry_of", "retry_count", "backlog_size"))
+    return Response(_sync_run_data(retry), status=status.HTTP_202_ACCEPTED)
 
 
 @api_view(["GET"])

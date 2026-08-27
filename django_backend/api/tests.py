@@ -193,14 +193,14 @@ class MainParityWorkflowTests(TestCase):
         self.assertEqual(response.data["totalCadastres"], 1)
 
     def test_integration_runs_can_be_listed_from_the_main_contract_path(self):
-        DataSyncRun.objects.create(cadastre=self.cadastre, source="cadastre", status=DataSyncRun.Status.SUCCEEDED)
+        DataSyncRun.objects.create(cadastre=self.cadastre, source="cadastre", status=DataSyncRun.Status.SUCCESS)
         response = self.client.get("/api/services/admin/integrations/CADASTRE/runs")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["source"], "cadastre")
 
     def test_scheduled_parimus_notice_run_is_visible_in_integrations_audit(self):
-        DataSyncRun.objects.create(source="celery:parimus-official-notices", status=DataSyncRun.Status.SUCCEEDED, result={"cadastres": 1, "notices": 2})
+        DataSyncRun.objects.create(source="celery:parimus-official-notices", status=DataSyncRun.Status.SUCCESS, result={"cadastres": 1, "notices": 2})
         response = self.client.get("/api/services/admin/integrations/PARIMUS/runs")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(len(response.data), 1)

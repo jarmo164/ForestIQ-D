@@ -150,7 +150,7 @@ class SyncEndpointTests(TestCase):
         response = self.client.post(f"/api/services/admin/cadastres/{self.cadastre.id}/sync")
         self.assertEqual(response.status_code, 202, response.data)
         run = DataSyncRun.objects.get(id=response.data["id"])
-        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCESS)
         self.assertEqual(run.requested_by_id, self.admin.id)
 
     @override_settings(FORESTIQ_TASKS_INLINE=True)
@@ -171,6 +171,56 @@ class SyncEndpointTests(TestCase):
         self.assertEqual(response.status_code, 202, response.data)
         self.assertEqual(response.data["correlationId"], "support-trace-100")
         self.assertEqual(DataSyncRun.objects.get(id=response.data["id"]).correlation_id, "support-trace-100")
+
+    @override_settings(FORESTIQ_TASKS_INLINE=True)
+    def test_partial_sync_persists_source_metrics_and_failed_parts(self):
+        redis_client = FakeRedis()
+        with (
+            patch("forestry.services.single_flight.redis.from_url", return_value=redis_client),
+            patch("forestry.tasks.sync_cadastre_wfs", return_value=2),
+            patch("forestry.tasks.sync_metsaregister_wfs", side_effect=ConnectionError("provider unavailable")),
+            patch("forestry.tasks.sync_optional_soos_wfs", return_value=0),
+            patch("forestry.tasks.sync_parimus_inheritance", return_value=1),
+        ):
+            response = self.client.post(f"/api/services/admin/cadastres/{self.cadastre.id}/sync")
+
+        self.assertEqual(response.status_code, 202, response.data)
+        run = DataSyncRun.objects.get(id=response.data["id"])
+        self.assertEqual(run.status, DataSyncRun.Status.PARTIAL)
+        self.assertEqual(run.pages_processed, 4)
+        self.assertEqual(run.rows_processed, 3)
+        self.assertEqual(run.cursor, {"cadastreId": self.cadastre.id})
+        self.assertIn("metsaregister_wfs", run.result["failed_sources"])
+
+    @override_settings(FORESTIQ_TASKS_INLINE=True)
+    def test_admin_retries_only_the_failed_source_part(self):
+        failed = DataSyncRun.objects.create(
+            cadastre=self.cadastre,
+            source="api",
+            status=DataSyncRun.Status.PARTIAL,
+            result={"cadastre_wfs": 1, "failed_sources": {"metsaregister_wfs": "provider unavailable"}},
+        )
+        redis_client = FakeRedis()
+        with (
+            patch("forestry.services.single_flight.redis.from_url", return_value=redis_client),
+            patch("forestry.tasks.sync_cadastre_wfs") as cadastre_sync,
+            patch("forestry.tasks.sync_metsaregister_wfs", return_value=2) as metsaregister_sync,
+            patch("forestry.tasks.sync_optional_soos_wfs") as soos_sync,
+            patch("forestry.tasks.sync_parimus_inheritance") as parimus_sync,
+        ):
+            response = self.client.post(f"/api/services/admin/sync-runs/{failed.id}/retry")
+
+        self.assertEqual(response.status_code, 202, response.data)
+        retry = DataSyncRun.objects.get(id=response.data["id"])
+        self.assertEqual(retry.retry_of_id, failed.id)
+        self.assertEqual(retry.retry_count, 1)
+        self.assertEqual(retry.status, DataSyncRun.Status.SUCCESS)
+        self.assertEqual(retry.pages_processed, 1)
+        self.assertEqual(retry.rows_processed, 2)
+        metsaregister_sync.assert_called_once_with(self.cadastre.id, organization_id=str(self.cadastre.organization_id))
+        cadastre_sync.assert_not_called()
+        soos_sync.assert_not_called()
+        parimus_sync.assert_not_called()
 
     def test_non_admin_cannot_submit_a_sync_run(self):
         caller = User.objects.create_user("caller", "Caller", "very-secure-password")
@@ -203,7 +253,7 @@ class ImportCommandTests(TestCase):
             call_command("import_wfs_sources", "--cadastre", self.cadastre.id, "--source", "cadastre", "--organization", str(self.organization.id))
         sync.assert_called_once_with(self.cadastre.id, organization_id=str(self.organization.id))
         run = DataSyncRun.objects.get(cadastre=self.cadastre)
-        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCESS)
         self.assertEqual(run.result, {"cadastre": 1})
         self.assertTrue(run.source.startswith("cli:wfs:"))
 
@@ -226,12 +276,12 @@ class ImportCommandTests(TestCase):
             call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek", "--organization", str(self.organization.id))
         sync.assert_called_once_with(self.cadastre.id, organization_id=str(self.organization.id))
         run = DataSyncRun.objects.get(cadastre=self.cadastre)
-        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCESS)
         self.assertEqual(run.result, {"forestek": 2})
 
     @override_settings(FORESTEK_API_URL="https://forestek.example.test", FORESTEK_API_TOKEN="test-token")
     def test_forestek_command_refuses_a_second_successful_initial_import(self):
-        DataSyncRun.objects.create(cadastre=self.cadastre, source="cli:api:forestek", status=DataSyncRun.Status.SUCCEEDED)
+        DataSyncRun.objects.create(cadastre=self.cadastre, source="cli:api:forestek", status=DataSyncRun.Status.SUCCESS)
         with self.assertRaises(CommandError):
             call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek", "--dry-run", "--organization", str(self.organization.id))
 
@@ -269,7 +319,7 @@ class MetsaregisterFullImportTests(TestCase):
         self.assertIn("eraldis_nr=11", notification_params["CQL_FILTER"])
         self.assertNotIn("eraldis_nr=10", notification_params["CQL_FILTER"])
         run = DataSyncRun.objects.get(source="cli:metsaregister-full")
-        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCESS)
         self.assertEqual(run.result["new_subparts"], 1)
         self.assertEqual(run.result["notifications"], 1)
         checkpoint = ImportCheckpoint.objects.get(source="metsaregister-full")
@@ -388,7 +438,7 @@ class MetsaregisterFullImportTests(TestCase):
     def test_celery_delta_task_creates_audited_run(self, import_delta):
         result = run_metsaregister_delta_check.run(str(self.organization.id))
         run = DataSyncRun.objects.get(source="celery:metsaregister-cql-delta")
-        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCESS)
         self.assertEqual(result["new_subparts"], 1)
         self.assertEqual(result["notifications"], 2)
         self.assertIn("since", result)
@@ -789,7 +839,7 @@ class ScheduledParimusNoticeImportTests(TestCase):
         self.assertEqual(result, {"cadastres": 1, "notices": 2})
         sync.assert_called_once_with(self.cadastre.id, organization_id=str(self.organization.id))
         run = DataSyncRun.objects.get(source="celery:parimus-official-notices")
-        self.assertEqual(run.status, DataSyncRun.Status.SUCCEEDED)
+        self.assertEqual(run.status, DataSyncRun.Status.SUCCESS)
         self.assertEqual(run.result, result)
         self.assertIsNone(run.cadastre)
 

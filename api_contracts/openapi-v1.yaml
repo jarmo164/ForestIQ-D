@@ -149,6 +149,21 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/admin/sync-runs/{run_id}/retry:
+    post:
+      operationId: services_admin_sync_runs_retry_create
+      description: Requeue only the failed source parts of a terminal cadastre synchronization.
+      parameters:
+      - in: path
+        name: run_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/admin/users:
     get:
       operationId: services_admin_users_retrieve
