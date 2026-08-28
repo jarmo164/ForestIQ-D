@@ -261,6 +261,36 @@ paths:
   /api/v1/services/admin/userstatistics/owner-status-change:
     get:
       operationId: services_admin_userstatistics_owner_status_change_retrieve
+      description: Return tenant-scoped owner-status changes grouped at the requested
+        cadence.
+      parameters:
+      - in: query
+        name: from
+        schema:
+          type: string
+          format: date-time
+        description: Inclusive ISO-8601 start date or datetime.
+      - in: query
+        name: fromStatus
+        schema:
+          type: string
+        description: Filter by the previous owner status.
+      - in: query
+        name: granularity
+        schema:
+          type: string
+        description: 'Aggregation cadence: hour, day, week, or month.'
+      - in: query
+        name: to
+        schema:
+          type: string
+          format: date-time
+        description: Inclusive ISO-8601 end date or datetime.
+      - in: query
+        name: toStatus
+        schema:
+          type: string
+        description: Filter by the new owner status.
       tags:
       - services
       responses:
