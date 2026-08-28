@@ -12,6 +12,7 @@ from uuid import uuid4
 from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Count, Q, Sum
+from django.db.models.functions import TruncDay, TruncHour, TruncMonth, TruncWeek
 from django.contrib.gis.geos import Polygon
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
@@ -20,6 +21,7 @@ from django.utils.dateparse import parse_datetime
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 
 from accounts.models import Privilege, PrivilegeCode, User
 from accounts.authorization import sync_user_groups
@@ -71,6 +73,22 @@ from forestry.services.tile_cache import cache_vector_tile, get_cached_vector_ti
 
 def _detail(message: str, http_status: int = status.HTTP_400_BAD_REQUEST) -> Response:
     return Response({"detail": message}, status=http_status)
+
+
+def _statistics_boundary(value: str | None, *, parameter: str, inclusive_day_end: bool = False) -> datetime | None:
+    if not value:
+        return None
+    parsed = parse_datetime(value)
+    if parsed is None:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"{parameter} must be an ISO-8601 date or datetime.") from exc
+        if inclusive_day_end and len(value) == 10:
+            parsed += timedelta(days=1)
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
 
 
 def _sync_run_data(run: DataSyncRun) -> dict:
@@ -1147,15 +1165,49 @@ def user_statistics_prep(request):
     return Response({"users": [user_data(user) for user in organization_users(request, active_only=True)], "statuses": list(OwnerStatus.objects.values_list("id", flat=True))})
 
 
+@extend_schema(
+    parameters=[
+        OpenApiParameter("from", OpenApiTypes.DATETIME, OpenApiParameter.QUERY, description="Inclusive ISO-8601 start date or datetime."),
+        OpenApiParameter("to", OpenApiTypes.DATETIME, OpenApiParameter.QUERY, description="Inclusive ISO-8601 end date or datetime."),
+        OpenApiParameter("fromStatus", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Filter by the previous owner status."),
+        OpenApiParameter("toStatus", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Filter by the new owner status."),
+        OpenApiParameter("granularity", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Aggregation cadence: hour, day, week, or month."),
+    ]
+)
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def user_statistics(request):
-    frames = (
-        OwnerStatusChange.objects.values("user_id")
-        .annotate(count=Count("id"))
-        .order_by("user_id")
-    )
-    return Response([{"userId": frame["user_id"], "statisticsFrames": [{"since": None, "count": frame["count"]}]} for frame in frames])
+    """Return tenant-scoped owner-status changes grouped at the requested cadence."""
+
+    granularity = request.query_params.get("granularity", "day").lower()
+    truncators = {"hour": TruncHour, "day": TruncDay, "week": TruncWeek, "month": TruncMonth}
+    if granularity not in truncators:
+        return _detail("granularity must be one of: hour, day, week, month.")
+    try:
+        from_at = _statistics_boundary(request.query_params.get("from"), parameter="from")
+        to_at = _statistics_boundary(request.query_params.get("to"), parameter="to", inclusive_day_end=True)
+    except ValueError as exc:
+        return _detail(str(exc))
+    if from_at and to_at and from_at >= to_at:
+        return _detail("from must be before to.")
+
+    changes = OwnerStatusChange.objects.filter(organization_id=request_organization_id(request))
+    if from_at:
+        changes = changes.filter(timestamp__gte=from_at)
+    if to_at:
+        changes = changes.filter(timestamp__lt=to_at)
+    from_status = request.query_params.get("fromStatus")
+    to_status = request.query_params.get("toStatus")
+    if from_status:
+        changes = changes.filter(from_status=from_status)
+    if to_status:
+        changes = changes.filter(to_status=to_status)
+
+    frames = changes.annotate(since=truncators[granularity]("timestamp")).values("user_id", "since").annotate(count=Count("id")).order_by("user_id", "since")
+    grouped: dict[str, list[dict]] = {}
+    for frame in frames:
+        grouped.setdefault(frame["user_id"], []).append({"since": json_value(frame["since"]), "count": frame["count"]})
+    return Response([{"userId": user_id, "statisticsFrames": values} for user_id, values in grouped.items()])
 
 
 @api_view(["GET"])

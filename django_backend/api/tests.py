@@ -18,7 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from api.auth import token_pair
 from api.urls import urlpatterns
 from accounts.models import Organization, OrganizationMembership, OrganizationRole, Privilege, PrivilegeCode, User
-from forestry.models import Cadastre, DataSyncRun, Owner, OwnerLog, OwnerStatus
+from forestry.models import Cadastre, DataSyncRun, Owner, OwnerLog, OwnerStatus, OwnerStatusChange
 from operations.models import CompanyProfile, Contract, ContractTemplate, Deal, DealOffer, DealStage, InheritanceCase, Reminder
 from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
 
@@ -121,6 +121,47 @@ class AdminWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         owner.refresh_from_db()
         self.assertEqual(owner.status, "ASSIGNED")
+
+
+class UserStatisticsTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(slug="statistics-org", name="Statistics organization")
+        self.other_organization = Organization.objects.create(slug="statistics-other", name="Other statistics organization")
+        self.admin = User.objects.create_user("statistics-admin", "Statistics administrator", "very-secure-admin-password", default_organization=self.organization)
+        Privilege.objects.create(user=self.admin, code=PrivilegeCode.ADMIN)
+        self.other_user = User.objects.create_user("statistics-other-user", "Other statistics user", "very-secure-password", default_organization=self.other_organization)
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.admin)['actualToken']['token']}")
+        first = OwnerStatusChange.objects.create(user=self.admin, from_status="NEW", to_status="ASSIGNED", organization=self.organization)
+        second = OwnerStatusChange.objects.create(user=self.admin, from_status="ASSIGNED", to_status="IN_PROGRESS", organization=self.organization)
+        other = OwnerStatusChange.objects.create(user=self.other_user, from_status="NEW", to_status="ASSIGNED", organization=self.other_organization)
+        now = timezone.now().replace(minute=30, second=0, microsecond=0)
+        OwnerStatusChange.objects.filter(id=first.id).update(timestamp=now - timedelta(days=2))
+        OwnerStatusChange.objects.filter(id=second.id).update(timestamp=now - timedelta(hours=2))
+        OwnerStatusChange.objects.filter(id=other.id).update(timestamp=now - timedelta(hours=1))
+
+    def test_statistics_filter_by_time_and_status_is_organization_scoped(self):
+        response = self.client.get(
+            "/api/services/admin/userstatistics/owner-status-change",
+            {"from": (timezone.localdate() - timedelta(days=3)).isoformat(), "to": timezone.localdate().isoformat(), "fromStatus": "NEW", "toStatus": "ASSIGNED", "granularity": "day"},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data, [{"userId": self.admin.id, "statisticsFrames": [{"since": response.data[0]["statisticsFrames"][0]["since"], "count": 1}]}])
+
+    def test_statistics_supports_each_requested_granularity(self):
+        for granularity in ("hour", "day", "week", "month"):
+            response = self.client.get("/api/services/admin/userstatistics/owner-status-change", {"granularity": granularity})
+            self.assertEqual(response.status_code, 200, {"granularity": granularity, "data": response.data})
+            self.assertEqual(response.data[0]["userId"], self.admin.id)
+            self.assertTrue(response.data[0]["statisticsFrames"])
+
+    def test_statistics_rejects_invalid_query_parameters(self):
+        invalid_granularity = self.client.get("/api/services/admin/userstatistics/owner-status-change", {"granularity": "quarter"})
+        self.assertEqual(invalid_granularity.status_code, 400)
+        self.assertIn("granularity", invalid_granularity.data["detail"])
+        invalid_range = self.client.get("/api/services/admin/userstatistics/owner-status-change", {"from": "2026-08-02", "to": "2026-08-01"})
+        self.assertEqual(invalid_range.status_code, 400)
+        self.assertIn("from must be before to", invalid_range.data["detail"])
 
 
 class DashboardStatsTests(TestCase):
