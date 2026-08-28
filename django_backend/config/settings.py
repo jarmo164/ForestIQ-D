@@ -229,6 +229,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "forestry.tasks.enqueue_all_organizations_parimus_official_notice_import",
         "schedule": float(os.getenv("FORESTIQ_PARIMUS_NOTICE_INTERVAL_SECONDS", "21600")),
     },
+    "forestiq-weasel-ownership-delta": {
+        "task": "forestry.tasks.enqueue_all_organizations_weasel_ownership_delta",
+        "schedule": float(os.getenv("FORESTIQ_WEASEL_DELTA_INTERVAL_SECONDS", "3600")),
+    },
 }
 FORESTIQ_TASKS_INLINE = env_bool("FORESTIQ_TASKS_INLINE", False)
 FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS = int(os.getenv("FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS", "30"))
@@ -287,6 +291,17 @@ FORESTEK_API_URL = os.getenv("FORESTEK_API_URL", "").rstrip("/")
 FORESTEK_API_TOKEN = os.getenv("FORESTEK_API_TOKEN", "")
 PARIMUS_API_URL = os.getenv("PARIMUS_API_URL", "").rstrip("/")
 PARIMUS_API_TOKEN = os.getenv("PARIMUS_API_TOKEN", "")
+# Weasel is a separate, opt-in ownership-change delta source. No endpoint or
+# credential is assumed until a production service contract is configured.
+WEASEL_API_URL = os.getenv("WEASEL_API_URL", "").rstrip("/")
+WEASEL_API_TOKEN = os.getenv("WEASEL_API_TOKEN", "")
+FORESTIQ_WEASEL_CHANGES_PATH = os.getenv("FORESTIQ_WEASEL_CHANGES_PATH", "/ownership-changes")
+FORESTIQ_WEASEL_DELTA_INTERVAL_SECONDS = int(os.getenv("FORESTIQ_WEASEL_DELTA_INTERVAL_SECONDS", "3600"))
+FORESTIQ_WEASEL_PAGE_SIZE = int(os.getenv("FORESTIQ_WEASEL_PAGE_SIZE", "100"))
+FORESTIQ_WEASEL_MAX_EVENTS = int(os.getenv("FORESTIQ_WEASEL_MAX_EVENTS", "1000"))
+FORESTIQ_WEASEL_MAX_PAYLOAD_BYTES = int(os.getenv("FORESTIQ_WEASEL_MAX_PAYLOAD_BYTES", "1048576"))
+FORESTIQ_WEASEL_MAX_RETRIES = int(os.getenv("FORESTIQ_WEASEL_MAX_RETRIES", "3"))
+FORESTIQ_WEASEL_RETRY_BACKOFF_SECONDS = float(os.getenv("FORESTIQ_WEASEL_RETRY_BACKOFF_SECONDS", "1"))
 
 LANGUAGE_CODE = "et-ee"
 TIME_ZONE = os.getenv("TIME_ZONE", "Europe/Tallinn")

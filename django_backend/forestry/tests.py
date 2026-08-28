@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import requests
 
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -17,7 +18,7 @@ from accounts.organization_context import organization_scope
 from accounts.models import Organization, User
 from api.auth import token_pair
 from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, ImportCheckpoint, Owner, OwnerLog
-from operations.models import Deal, DealStage
+from operations.models import Deal, DealStage, OwnershipTransitionEvent
 from forestry.services import import_runner
 from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance, wfs_features
 from forestry.services.metsaregister_full_import import FullImportReport, import_all_metsaregister, import_metsaregister_delta
@@ -26,9 +27,12 @@ from forestry.tasks import (
     run_cadastre_sync,
     run_metsaregister_delta_check,
     run_parimus_official_notice_import,
+    enqueue_all_organizations_weasel_ownership_delta,
 )
 from forestry.services.single_flight import SingleFlightLock
 from forestry.services.wfs_client import WfsClient, WfsClientError, WfsClientPolicy
+from forestry.services.weasel_client import WeaselChangePage, WeaselOwnershipClient, WeaselPolicy
+from forestry.services.weasel_ownership_sync import import_weasel_ownership_deltas
 
 
 def authenticated_client(user: User) -> APIClient:
@@ -922,3 +926,66 @@ class ScheduledParimusNoticeImportTests(TestCase):
         schedule = settings.CELERY_BEAT_SCHEDULE["forestiq-parimus-official-notices"]
         self.assertEqual(schedule["task"], "forestry.tasks.enqueue_all_organizations_parimus_official_notice_import")
         self.assertGreater(schedule["schedule"], 0)
+
+
+class WeaselOwnershipClientTests(SimpleTestCase):
+    @override_settings(WEASEL_API_URL="https://weasel.example.test", WEASEL_API_TOKEN="weasel-test-token")
+    def test_client_uses_bounded_cursor_page_and_bearer_authentication(self):
+        response = Mock(status_code=200, headers={"Content-Length": "64"}, content=b'{"events": []}')
+        response.json.return_value = {"events": [{"id": "change-1"}], "nextCursor": "cursor-2"}
+        request_get = Mock(return_value=response)
+        client = WeaselOwnershipClient(WeaselPolicy(page_size=10, max_events=10, max_payload_bytes=1024, max_retries=1, retry_backoff_seconds=0), request_get=request_get)
+
+        page = client.ownership_change_page("cursor-1")
+
+        self.assertEqual(page, WeaselChangePage(events=[{"id": "change-1"}], next_cursor="cursor-2"))
+        request_get.assert_called_once_with(
+            "https://weasel.example.test/ownership-changes",
+            params={"limit": 10, "cursor": "cursor-1"},
+            headers={"Accept": "application/json", "Authorization": "Bearer weasel-test-token", "User-Agent": settings.FORESTIQ_SYNC_USER_AGENT},
+            timeout=settings.FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS,
+        )
+
+    @override_settings(WEASEL_API_URL="https://weasel.example.test", WEASEL_API_TOKEN="weasel-test-token")
+    def test_client_retries_transient_response_before_success(self):
+        retry = Mock(status_code=503, headers={}, content=b"")
+        success = Mock(status_code=200, headers={}, content=b"{}")
+        success.json.return_value = {"events": []}
+        request_get = Mock(side_effect=[retry, success])
+        sleep = Mock()
+        client = WeaselOwnershipClient(WeaselPolicy(page_size=10, max_events=10, max_payload_bytes=1024, max_retries=1, retry_backoff_seconds=2), request_get=request_get, sleep=sleep)
+
+        self.assertEqual(client.ownership_change_page().events, [])
+        self.assertEqual(request_get.call_count, 2)
+        sleep.assert_called_once_with(2)
+
+
+class WeaselOwnershipImportTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(slug="weasel-org", name="Weasel organization")
+        self.other_organization = Organization.objects.create(slug="weasel-other", name="Other Weasel organization")
+        self.owner = Owner.objects.create(id="10101:001:0001", name="Weasel owner", organization=self.organization)
+        self.cadastre = Cadastre.objects.create(id="10101:001:0002", name="Weasel cadastre", organization=self.organization)
+        Owner.objects.create(id="20202:001:0001", name="Other owner", organization=self.other_organization)
+
+    def test_import_persists_only_events_linked_to_the_active_organization(self):
+        client = Mock()
+        client.ownership_change_page.return_value = WeaselChangePage(
+            events=[
+                {"id": "weasel-1", "eventType": "OWNER_CHANGED", "ownerId": self.owner.id, "cadastreId": self.cadastre.id, "occurredAt": "2026-08-28T09:00:00+03:00"},
+                {"id": "weasel-outside", "ownerId": "20202:001:0001", "eventType": "OWNER_CHANGED"},
+            ],
+            next_cursor="next-1",
+        )
+
+        report = import_weasel_ownership_deltas(organization_id=str(self.organization.id), client=client, cursor="current")
+
+        self.assertEqual(report, {"events": 1, "ignored": 1, "nextCursor": "next-1"})
+        event = OwnershipTransitionEvent.objects.get(source_reference="weasel-1")
+        self.assertEqual(event.organization_id, self.organization.id)
+        self.assertEqual(event.owner_id, self.owner.id)
+        self.assertEqual(event.cadastre_id, self.cadastre.id)
+
+    @override_settings(WEASEL_API_URL="", WEASEL_API_TOKEN="")
+    def test_unconfigured_scheduled_delta_does_not_enqueue_work(self):
+        self.assertEqual(enqueue_all_organizations_weasel_ownership_delta.run(), {"organizations": 0, "status": "not_configured"})

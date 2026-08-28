@@ -22,6 +22,8 @@ from forestry.services.external_sync import (
 )
 from forestry.services.metsaregister_full_import import import_metsaregister_delta
 from forestry.services.single_flight import SingleFlightLock
+from forestry.services.weasel_client import WeaselClientError
+from forestry.services.weasel_ownership_sync import import_weasel_ownership_deltas
 
 
 @dataclass(frozen=True)
@@ -369,9 +371,56 @@ def run_parimus_official_notice_import(self, organization_id: str) -> dict[str, 
 @shared_task
 def enqueue_all_organizations_parimus_official_notice_import() -> dict[str, int]:
     """Beat entry point for auditable Pärimus official-notice refreshes."""
-
     queued = 0
     for organization_id in Organization.objects.filter(is_active=True).values_list("id", flat=True):
         result = run_parimus_official_notice_import.delay(str(organization_id))
         queued += 1 if result else 0
     return {"organizations": queued}
+
+
+@shared_task(bind=True, autoretry_for=(ConnectionError, WeaselClientError), retry_backoff=True, max_retries=settings.FORESTIQ_SYNC_RUN_MAX_RETRIES)
+def run_weasel_ownership_delta(self, organization_id: str, cursor: str | None = None) -> dict[str, object]:
+    """Import one bounded Weasel ownership-change page for one organization."""
+
+    lock = SingleFlightLock.for_sync("weasel-ownership-delta", organization_id)
+    if not lock.acquire():
+        return {"status": "already_running"}
+    try:
+        with organization_scope(organization_id):
+            run = DataSyncRun.objects.create(
+                source="weasel:ownership-delta",
+                status=DataSyncRun.Status.RUNNING,
+                started_at=timezone.now(),
+                task_id=self.request.id or "",
+                correlation_id=current_correlation_id(),
+                cursor={"cursor": cursor} if cursor else {},
+            )
+            try:
+                report = import_weasel_ownership_deltas(organization_id=organization_id, cursor=cursor)
+            except Exception as exc:
+                _fail(run, exc, retry_count=self.request.retries)
+                raise
+            next_cursor = report.get("nextCursor")
+            return _succeed(
+                run,
+                report,
+                pages_processed=1,
+                rows_processed=int(report["events"]),
+                cursor={"cursor": next_cursor} if next_cursor else {},
+                retry_count=self.request.retries,
+            )
+    finally:
+        lock.release()
+
+
+@shared_task
+def enqueue_all_organizations_weasel_ownership_delta() -> dict[str, int | str]:
+    """Beat entry point for separately auditable, opt-in Weasel delta imports."""
+
+    if not settings.WEASEL_API_URL or not settings.WEASEL_API_TOKEN:
+        return {"organizations": 0, "status": "not_configured"}
+    queued = 0
+    for organization_id in Organization.objects.filter(is_active=True).values_list("id", flat=True):
+        result = run_weasel_ownership_delta.delay(str(organization_id))
+        queued += 1 if result else 0
+    return {"organizations": queued, "status": "queued"}

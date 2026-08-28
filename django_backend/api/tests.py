@@ -460,7 +460,7 @@ class IntegrationRegistryApiTests(TestCase):
         response = self.client.get("/api/services/admin/integrations")
         self.assertEqual(response.status_code, 200, response.data)
         adapters = {item["key"]: item for item in response.data}
-        self.assertEqual(set(adapters), {"CADASTRE", "FORESTEK", "PARIMUS"})
+        self.assertEqual(set(adapters), {"CADASTRE", "FORESTEK", "PARIMUS", "WEASEL"})
         self.assertEqual(adapters["CADASTRE"]["status"], DataSyncRun.Status.SUCCESS)
         self.assertEqual(adapters["CADASTRE"]["checkpoint"], {"page": 2})
         self.assertEqual(adapters["CADASTRE"]["health"], "OK")

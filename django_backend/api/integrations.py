@@ -8,7 +8,7 @@ from typing import Any
 from django.conf import settings
 
 from forestry.models import DataSyncRun
-from forestry.tasks import enqueue_cadastre_sync, enqueue_portfolio_sync, run_parimus_official_notice_import
+from forestry.tasks import enqueue_cadastre_sync, enqueue_portfolio_sync, run_parimus_official_notice_import, run_weasel_ownership_delta
 
 from .organization import request_organization_id
 from .serializers import json_value
@@ -125,6 +125,15 @@ def _parimus_dispatch(request) -> IntegrationDispatch:
     return IntegrationDispatch({"key": "PARIMUS", "status": "QUEUED", "taskId": task.id}, 202)
 
 
+def _weasel_dispatch(request) -> IntegrationDispatch:
+    organization_id = str(request_organization_id(request))
+    if settings.FORESTIQ_TASKS_INLINE:
+        result = run_weasel_ownership_delta.run(organization_id)
+        return IntegrationDispatch({"key": "WEASEL", "status": result.get("status", "SUCCESS"), "result": result}, 202)
+    task = run_weasel_ownership_delta.delay(organization_id)
+    return IntegrationDispatch({"key": "WEASEL", "status": "QUEUED", "taskId": task.id}, 202)
+
+
 def _forestek_dispatch(_request) -> IntegrationDispatch:
     return IntegrationDispatch(
         {"detail": "Forestek is a one-time initial import. Run the controlled management command only before its first successful import."},
@@ -152,5 +161,6 @@ integration_registry = IntegrationRegistry(
         IntegrationAdapter("CADASTRE", "Cadastre and forest registry", "RECURRING", "cadastre", lambda: True, _cadastre_dispatch),
         IntegrationAdapter("FORESTEK", "Forestek ownership relations", "ONE_TIME", "forestek", lambda: bool(settings.FORESTEK_API_URL and settings.FORESTEK_API_TOKEN), _forestek_dispatch),
         IntegrationAdapter("PARIMUS", "Pärimus official notices", "RECURRING", "parimus", lambda: bool(settings.PARIMUS_API_URL and settings.PARIMUS_API_TOKEN), _parimus_dispatch),
+        IntegrationAdapter("WEASEL", "Weasel ownership changes", "RECURRING", "weasel", lambda: bool(settings.WEASEL_API_URL and settings.WEASEL_API_TOKEN), _weasel_dispatch),
     )
 )
