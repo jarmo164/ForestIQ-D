@@ -28,6 +28,7 @@ from forestry.tasks import (
     run_metsaregister_delta_check,
     run_parimus_official_notice_import,
     enqueue_all_organizations_weasel_ownership_delta,
+    run_weasel_ownership_delta,
 )
 from forestry.services.single_flight import SingleFlightLock
 from forestry.services.wfs_client import WfsClient, WfsClientError, WfsClientPolicy
@@ -980,11 +981,43 @@ class WeaselOwnershipImportTests(TestCase):
 
         report = import_weasel_ownership_deltas(organization_id=str(self.organization.id), client=client, cursor="current")
 
-        self.assertEqual(report, {"events": 1, "ignored": 1, "nextCursor": "next-1"})
-        event = OwnershipTransitionEvent.objects.get(source_reference="weasel-1")
+        self.assertEqual(report, {"events": 1, "duplicates": 0, "ignored": 1, "nextCursor": "next-1"})
+        event = OwnershipTransitionEvent.objects.get(source_reference="WEASEL:weasel-1")
         self.assertEqual(event.organization_id, self.organization.id)
         self.assertEqual(event.owner_id, self.owner.id)
         self.assertEqual(event.cadastre_id, self.cadastre.id)
+
+    def test_replayed_source_event_is_idempotent(self):
+        client = Mock()
+        client.ownership_change_page.return_value = WeaselChangePage(
+            events=[{"id": "weasel-replayed", "ownerId": self.owner.id, "eventType": "OWNER_CHANGED"}],
+            next_cursor="next-2",
+        )
+
+        first = import_weasel_ownership_deltas(organization_id=str(self.organization.id), client=client)
+        second = import_weasel_ownership_deltas(organization_id=str(self.organization.id), client=client)
+
+        self.assertEqual(first["events"], 1)
+        self.assertEqual(second["events"], 0)
+        self.assertEqual(second["duplicates"], 1)
+        self.assertEqual(OwnershipTransitionEvent.objects.filter(source_reference="WEASEL:weasel-replayed").count(), 1)
+
+    @patch("forestry.tasks.SingleFlightLock.for_sync")
+    @patch("forestry.tasks.import_weasel_ownership_deltas")
+    def test_task_resumes_after_last_success_and_only_records_confirmed_cursor(self, importer, lock_factory):
+        lock = Mock()
+        lock.acquire.return_value = True
+        lock_factory.return_value = lock
+        DataSyncRun.objects.create(source="weasel:ownership-delta", status=DataSyncRun.Status.SUCCESS, finished_at=timezone.now(), cursor={"cursor": "confirmed-cursor"}, organization=self.organization)
+        importer.return_value = {"events": 1, "duplicates": 0, "ignored": 0, "nextCursor": "next-cursor"}
+
+        run_weasel_ownership_delta.run(str(self.organization.id))
+
+        importer.assert_called_once_with(organization_id=str(self.organization.id), cursor="confirmed-cursor")
+        current = DataSyncRun.objects.filter(source="weasel:ownership-delta").order_by("-id").first()
+        self.assertEqual(current.status, DataSyncRun.Status.SUCCESS)
+        self.assertEqual(current.cursor, {"cursor": "next-cursor"})
+        lock.release.assert_called_once()
 
     @override_settings(WEASEL_API_URL="", WEASEL_API_TOKEN="")
     def test_unconfigured_scheduled_delta_does_not_enqueue_work(self):

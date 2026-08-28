@@ -387,16 +387,22 @@ def run_weasel_ownership_delta(self, organization_id: str, cursor: str | None = 
         return {"status": "already_running"}
     try:
         with organization_scope(organization_id):
+            previous = DataSyncRun.objects.filter(
+                source="weasel:ownership-delta",
+                status=DataSyncRun.Status.SUCCESS,
+                finished_at__isnull=False,
+            ).order_by("-finished_at", "-id").first()
+            resume_cursor = cursor if cursor is not None else (str(previous.cursor.get("cursor")) if previous and previous.cursor.get("cursor") else None)
             run = DataSyncRun.objects.create(
                 source="weasel:ownership-delta",
                 status=DataSyncRun.Status.RUNNING,
                 started_at=timezone.now(),
                 task_id=self.request.id or "",
                 correlation_id=current_correlation_id(),
-                cursor={"cursor": cursor} if cursor else {},
+                cursor={"cursor": resume_cursor} if resume_cursor else {},
             )
             try:
-                report = import_weasel_ownership_deltas(organization_id=organization_id, cursor=cursor)
+                report = import_weasel_ownership_deltas(organization_id=organization_id, cursor=resume_cursor)
             except Exception as exc:
                 _fail(run, exc, retry_count=self.request.retries)
                 raise
@@ -406,6 +412,7 @@ def run_weasel_ownership_delta(self, organization_id: str, cursor: str | None = 
                 report,
                 pages_processed=1,
                 rows_processed=int(report["events"]),
+                lag_seconds=0,
                 cursor={"cursor": next_cursor} if next_cursor else {},
                 retry_count=self.request.retries,
             )
