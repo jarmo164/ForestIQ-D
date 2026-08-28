@@ -22,7 +22,7 @@ from rest_framework.response import Response
 
 from accounts.models import PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, InheritanceSignal, Owner, OwnerLog
-from forestry.tasks import enqueue_cadastre_sync, enqueue_portfolio_sync
+from forestry.tasks import enqueue_cadastre_sync
 from operations.models import (
     Contract,
     ContractHistory,
@@ -42,6 +42,7 @@ from operations.services.contract_pdf import ContractPdfRenderError, render_cont
 
 from .concurrency import missing_version_response, requested_version, update_if_current, version_conflict_response
 from .permissions import CanEvaluate, CanManageOwners, IsAdmin, can_access_deal, can_access_owner, has_membership_privilege
+from .integrations import integration_registry, serialize_run
 from .organization import organization_user_or_404, organization_users, request_organization_id
 from .serializers import cadastre_summary, json_value, owner_summary, user_data
 
@@ -787,96 +788,56 @@ def ownership_transition_events(request, owner_id: str):
 
 
 def _integration_run_data(item: DataSyncRun) -> dict:
-    """Serialize the complete durable integration audit without hidden retry state."""
+    """Backward-compatible name for the registry's durable audit serializer."""
 
-    return {
-        "id": item.id,
-        "cadastreId": item.cadastre_id,
-        "source": item.source,
-        "status": item.status,
-        "taskId": item.task_id,
-        "correlationId": item.correlation_id or None,
-        "pagesProcessed": item.pages_processed,
-        "rowsProcessed": item.rows_processed,
-        "retryCount": item.retry_count,
-        "backlogSize": item.backlog_size,
-        "cursor": item.cursor,
-        "lagSeconds": item.lag_seconds,
-        "retryOf": item.retry_of_id,
-        "startedAt": json_value(item.started_at),
-        "finishedAt": json_value(item.finished_at),
-        "result": item.result,
-        "error": item.error_message or None,
-    }
-
-
-def _integration_rows() -> list[dict]:
-    rows = []
-    for key, label, configured in [("CADASTRE", "Cadastre and forest registry", True), ("FORESTEK", "Forestek ownership relations", bool(settings.FORESTEK_API_URL and settings.FORESTEK_API_TOKEN)), ("PARIMUS", "Pärimus official notices", bool(settings.PARIMUS_API_URL and settings.PARIMUS_API_TOKEN))]:
-        latest = DataSyncRun.objects.filter(source__icontains=key.lower()).order_by("-id").first()
-        rows.append({"key": key, "label": label, "configured": configured, "mode": "ONE_TIME" if key == "FORESTEK" else "RECURRING", "lastRun": {"id": latest.id, "status": latest.status, "finishedAt": json_value(latest.finished_at), "error": latest.error_message or None} if latest else None})
-    return rows
+    return serialize_run(item)
 
 
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def integration_jobs(request):
-    return Response(_integration_rows())
+    return Response(integration_registry.rows(str(request_organization_id(request))))
 
 
 @api_view(["GET", "POST"])
 @permission_classes([IsAdmin])
 def integration_start(request, key: str):
-    key = key.upper()
-    if key not in {"CADASTRE", "FORESTEK", "PARIMUS"}:
+    adapter = integration_registry.get(key)
+    if adapter is None:
         return _detail("Unknown integration key.", status.HTTP_404_NOT_FOUND)
+    organization_id = str(request_organization_id(request))
     if request.method == "GET":
-        limit = min(max(int(request.query_params.get("limit", "10")), 1), 100)
-        records = DataSyncRun.objects.filter(source__icontains=key.lower()).order_by("-id")[:limit]
-        return Response([_integration_run_data(item) for item in records])
-    if key == "FORESTEK":
-        return _detail("Forestek is a one-time initial import. Run the controlled management command only before its first successful import.", status.HTTP_409_CONFLICT)
-    cadastre_id = request.data.get("cadastreId") or request.data.get("parameters", {}).get("cadastreId")
-    if cadastre_id:
-        dispatch = enqueue_cadastre_sync(
-            str(cadastre_id),
-            organization_id=str(request_organization_id(request)),
-            requested_by_id=request.user.id,
-            source=key.lower(),
-        )
-        if dispatch.already_running:
-            return Response(
-                {
-                    "key": key,
-                    "status": "already_running",
-                    "code": "already_running",
-                    "runId": dispatch.run.id if dispatch.run else None,
-                    "taskId": dispatch.run.task_id if dispatch.run else "",
-                    "correlationId": dispatch.run.correlation_id if dispatch.run else None,
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-        return Response({"key": key, "status": dispatch.run.status, "runId": dispatch.run.id, "taskId": dispatch.run.task_id, "correlationId": dispatch.run.correlation_id or None}, status=status.HTTP_202_ACCEPTED)
-    if settings.FORESTIQ_TASKS_INLINE:
-        result = enqueue_portfolio_sync(str(request_organization_id(request)))
-        return Response({"key": key, "status": "SUCCESS", "result": result})
-    task = enqueue_portfolio_sync.delay(str(request_organization_id(request)))
-    return Response({"key": key, "status": "QUEUED", "taskId": task.id}, status=status.HTTP_202_ACCEPTED)
+        try:
+            limit = min(max(int(request.query_params.get("limit", "10")), 1), 100)
+        except ValueError:
+            return _detail("limit must be an integer between 1 and 100.")
+        return Response([serialize_run(item) for item in adapter.records(organization_id)[:limit]])
+    if adapter.mode != "ONE_TIME" and not adapter.configured():
+        return _detail(f"{adapter.key} is not configured.", status.HTTP_409_CONFLICT)
+    if adapter.dispatch is None:
+        return _detail(f"{adapter.key} cannot be started by the administrator API.", status.HTTP_409_CONFLICT)
+    dispatch = adapter.dispatch(request)
+    return Response(dispatch.payload, status=dispatch.status_code)
 
 
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def integration_runs(request, key: str):
-    limit = min(max(int(request.query_params.get("limit", "10")), 1), 100)
-    records = DataSyncRun.objects.filter(source__icontains=key.lower()).order_by("-id")[:limit]
-    return Response([_integration_run_data(item) for item in records])
+    adapter = integration_registry.get(key)
+    if adapter is None:
+        return _detail("Unknown integration key.", status.HTTP_404_NOT_FOUND)
+    try:
+        limit = min(max(int(request.query_params.get("limit", "10")), 1), 100)
+    except ValueError:
+        return _detail("limit must be an integer between 1 and 100.")
+    return Response([serialize_run(item) for item in adapter.records(str(request_organization_id(request)))[:limit]])
 
 
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def integration_run(request, run_id: int):
-    item = get_object_or_404(DataSyncRun, id=run_id)
-    return Response(_integration_run_data(item))
+    item = get_object_or_404(DataSyncRun, id=run_id, organization_id=request_organization_id(request))
+    return Response(serialize_run(item))
 
 
 def _stale_cadastres(days: int = 30):
