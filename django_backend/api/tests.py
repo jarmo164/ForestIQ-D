@@ -446,6 +446,45 @@ class MainParityWorkflowTests(TestCase):
         self.assertEqual(response.data[0]["result"], {"cadastres": 1, "notices": 2})
 
 
+class IntegrationRegistryApiTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(slug="registry-org", name="Registry organization")
+        self.other_organization = Organization.objects.create(slug="registry-other", name="Other registry organization")
+        self.admin = User.objects.create_user("registry-admin", "Registry administrator", "very-secure-password", default_organization=self.organization)
+        Privilege.objects.create(user=self.admin, code=PrivilegeCode.ADMIN)
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.admin)['actualToken']['token']}")
+
+    def test_registry_declares_operational_state_and_checkpoint_for_each_adapter(self):
+        DataSyncRun.objects.create(source="cadastre", status=DataSyncRun.Status.SUCCESS, cursor={"page": 2}, organization=self.organization)
+        response = self.client.get("/api/services/admin/integrations")
+        self.assertEqual(response.status_code, 200, response.data)
+        adapters = {item["key"]: item for item in response.data}
+        self.assertEqual(set(adapters), {"CADASTRE", "FORESTEK", "PARIMUS"})
+        self.assertEqual(adapters["CADASTRE"]["status"], DataSyncRun.Status.SUCCESS)
+        self.assertEqual(adapters["CADASTRE"]["checkpoint"], {"page": 2})
+        self.assertEqual(adapters["CADASTRE"]["health"], "OK")
+        self.assertIn("lastRun", adapters["PARIMUS"])
+
+    def test_registry_history_is_scoped_and_unknown_work_never_runs(self):
+        DataSyncRun.objects.create(source="cadastre", status=DataSyncRun.Status.SUCCESS, organization=self.organization)
+        DataSyncRun.objects.create(source="cadastre", status=DataSyncRun.Status.SUCCESS, organization=self.other_organization)
+        response = self.client.get("/api/services/admin/integrations/CADASTRE/runs")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["source"], "cadastre")
+        unknown = self.client.post("/api/services/admin/integrations/UNKNOWN/runs", {}, format="json")
+        self.assertEqual(unknown.status_code, 404)
+
+    @override_settings(PARIMUS_API_URL="", PARIMUS_API_TOKEN="")
+    @patch("api.integrations.run_parimus_official_notice_import.delay")
+    def test_unconfigured_adapter_is_rejected_before_dispatch(self, delay):
+        response = self.client.post("/api/services/admin/integrations/PARIMUS/runs", {}, format="json")
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertIn("not configured", response.data["detail"])
+        delay.assert_not_called()
+
+
 class MembershipRoleAuthorizationTests(TestCase):
     """AUTH-03: roles must apply within the active membership, not globally."""
 
