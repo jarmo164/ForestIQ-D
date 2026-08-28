@@ -394,3 +394,10 @@ class OwnershipTransitionEvent(OrganizationScopedModel):
         db_table = "ownership_transition_events"
         ordering = ("-occurred_at", "-recorded_at")
         indexes = [models.Index(fields=("organization", "owner", "occurred_at"), name="ownership_org_owner_idx")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("organization", "source_reference"),
+                condition=Q(source_reference__gt=""),
+                name="ownership_event_source_reference_uniq",
+            )
+        ]

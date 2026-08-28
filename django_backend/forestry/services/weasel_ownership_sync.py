@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -44,23 +45,31 @@ def import_weasel_ownership_deltas(
 
     page = (client or WeaselOwnershipClient()).ownership_change_page(cursor)
     imported = 0
+    duplicates = 0
     ignored = 0
-    for event in page.events:
-        owner_id = _value(event, "ownerId", "owner_id", "ownerCode", "owner_code")
-        cadastre_id = _value(event, "cadastreId", "cadastre_id", "cadastralCode", "cadastral_code")
-        owner = Owner.objects.filter(organization_id=organization_id, id=owner_id).first() if owner_id else None
-        cadastre = Cadastre.objects.filter(organization_id=organization_id, id=cadastre_id).first() if cadastre_id else None
-        if owner is None and cadastre is None:
-            ignored += 1
-            continue
-        OwnershipTransitionEvent.objects.create(
-            organization_id=organization_id,
-            owner=owner,
-            cadastre=cadastre,
-            event_type=_value(event, "eventType", "event_type", "type") or "OWNERSHIP_CHANGE",
-            occurred_at=_occurred_at(event),
-            source_reference=_value(event, "id", "eventId", "event_id", "reference"),
-            payload=event,
-        )
-        imported += 1
-    return {"events": imported, "ignored": ignored, "nextCursor": page.next_cursor}
+    with transaction.atomic():
+        for event in page.events:
+            source_id = _value(event, "id", "eventId", "event_id", "reference")
+            owner_id = _value(event, "ownerId", "owner_id", "ownerCode", "owner_code")
+            cadastre_id = _value(event, "cadastreId", "cadastre_id", "cadastralCode", "cadastral_code")
+            owner = Owner.objects.filter(organization_id=organization_id, id=owner_id).first() if owner_id else None
+            cadastre = Cadastre.objects.filter(organization_id=organization_id, id=cadastre_id).first() if cadastre_id else None
+            if not source_id or (owner is None and cadastre is None):
+                ignored += 1
+                continue
+            record, created = OwnershipTransitionEvent.objects.get_or_create(
+                organization_id=organization_id,
+                source_reference=f"WEASEL:{source_id}",
+                defaults={
+                    "owner": owner,
+                    "cadastre": cadastre,
+                    "event_type": _value(event, "eventType", "event_type", "type") or "OWNERSHIP_CHANGE",
+                    "occurred_at": _occurred_at(event),
+                    "payload": event,
+                },
+            )
+            if created:
+                imported += 1
+            else:
+                duplicates += 1
+    return {"events": imported, "duplicates": duplicates, "ignored": ignored, "nextCursor": page.next_cursor}
