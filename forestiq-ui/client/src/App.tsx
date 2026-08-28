@@ -12,6 +12,7 @@ import { AccessDenied, AuthenticationRequired } from "@/pages/AccessState";
 import Admin from "@/pages/Admin";
 import Dashboard from "@/pages/Dashboard";
 import Login from "@/pages/Login";
+import Management from "@/pages/Management";
 import InheritanceDetail from "@/pages/InheritanceDetail";
 import Messages from "@/pages/Messages";
 import NotFound from "@/pages/NotFound";
@@ -146,6 +147,11 @@ function Routes() {
           )}
         >
           <SalesWorkspace />
+        </Protected>
+      </Route>
+      <Route path="/management">
+        <Protected requirement={{ anyRoles: ["ORG_OWNER", "ORG_ADMIN", "CRM_MANAGER"] }}>
+          <Management />
         </Protected>
       </Route>
       <Route path="/integrations">

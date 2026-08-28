@@ -21,6 +21,7 @@ export const routeAccess: Record<string, AccessRequirement | undefined> = {
   "/inheritance": withPrivilege("ADMIN", "OWNER_PROFILE", "ASSIGNED_OWNERS"),
   "/sales": withPrivilege("ADMIN", "OWNER_PROFILE", "ASSIGNED_OWNERS"),
   "/integrations": withPrivilege("ADMIN"),
+  "/management": { anyRoles: ["ORG_OWNER", "ORG_ADMIN", "CRM_MANAGER"] },
   "/workdesk/caller": withPrivilege("ADMIN", "ASSIGNED_OWNERS"),
   "/workdesk/evaluator": withPrivilege("ADMIN", "EVALUATION"),
   "/workdesk/admin": withPrivilege("ADMIN"),
@@ -43,6 +44,7 @@ export const navigationItems: readonly NavigationItem[] = [
   { label: "Kontaktid", href: "/phones", requirement: routeAccess["/phones"] },
   { label: "Import", href: "/owners/import", requirement: routeAccess["/owners/import"] },
   { label: "Integratsioonid", href: "/integrations", requirement: routeAccess["/integrations"] },
+  { label: "Juhtimine", href: "/management", requirement: routeAccess["/management"] },
   { label: "Haldus", href: "/admin", requirement: routeAccess["/admin"] },
 ];
 
