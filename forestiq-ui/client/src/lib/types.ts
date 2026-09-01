@@ -181,3 +181,65 @@ export interface SyncRun {
   result: Record<string, unknown>;
   error: string | null;
 }
+
+export interface ContractHistoryRecord {
+  id: string;
+  version: number | null;
+  sellers: string;
+  buyer: string;
+  contractNo: string;
+  created: number | string | null;
+  status: "ACTIVE" | "ARCHIVED" | "ORPHANED";
+  dealId?: string | null;
+  ownerId?: string | null;
+  retentionUntil?: number | string | null;
+  templateVersion?: ContractTemplateSnapshot | null;
+}
+
+export interface CompanyProfile {
+  id: string;
+  legalName: string;
+  registryCode?: string | null;
+  vatNumber?: string | null;
+  address?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  iban?: string | null;
+  signatoryName?: string | null;
+  website?: string | null;
+  version: number;
+  createdAt?: number | string | null;
+  updatedAt?: number | string | null;
+}
+
+export interface ContractTemplate {
+  id: string;
+  companyProfileId?: string | null;
+  templateKey: string;
+  name: string;
+  description?: string | null;
+  html: string;
+  version: number;
+  isActive: boolean;
+  supersedesId?: string | null;
+  createdAt?: number | string | null;
+}
+
+export interface ContractTemplateSnapshot {
+  templateId: string;
+  templateKey: string;
+  version: number;
+  name: string;
+  html: string;
+  companyProfile?: CompanyProfile | null;
+}
+
+export interface ContractDraft {
+  dealId: string;
+  dealVersion: number;
+  offerEntryId: string;
+  acceptedPrice?: number | null;
+  acceptedTerms?: string | null;
+  seller: { name: string; code: string; address?: string | null; iban?: string | null };
+  parcels: { cadastralCode: string; address?: string | null; areaHectares?: number | null }[];
+}

@@ -17,6 +17,8 @@ describe("route authorization", () => {
     expect(hasAccess(viewer, requirementForPath("/inheritance/case-123"))).toBe(false);
     expect(hasAccess(admin, requirementForPath("/management"))).toBe(true);
     expect(hasAccess(caller, requirementForPath("/management"))).toBe(false);
+    expect(hasAccess(admin, requirementForPath("/contracts"))).toBe(true);
+    expect(hasAccess(caller, requirementForPath("/contracts"))).toBe(false);
   });
 
   it("exposes navigation entries only to roles with the required privileges", () => {
@@ -30,7 +32,9 @@ describe("route authorization", () => {
     expect(adminLinks).toContain("/integrations");
     expect(adminLinks).toContain("/admin");
     expect(adminLinks).toContain("/management");
+    expect(adminLinks).toContain("/contracts");
     expect(callerLinks).not.toContain("/management");
+    expect(callerLinks).not.toContain("/contracts");
   });
 
   it("does not treat an unrelated route as privileged", () => {

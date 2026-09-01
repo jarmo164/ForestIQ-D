@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { BadgeEuro, FileText, Gavel, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import { Link } from "wouter";
 
 import { api } from "@/lib/api";
 import type { Deal, InheritanceCase, Owner } from "@/lib/types";
@@ -57,15 +58,6 @@ export function OwnerWorkflowPanel({ owner }: { owner: Owner }) {
     } catch (err) { setError(err instanceof Error ? err.message : "Pakkumise saatmine ebaõnnestus."); }
   };
 
-  const createContract = async (deal: Deal) => {
-    try {
-      const number = `FIQ-${new Date().getFullYear()}-${deal.id.slice(0, 8).toUpperCase()}`;
-      const created = await api.post<{ contractId: string }>("/services/contracts/generate-from-deal", { dealId: deal.id, version: deal.version, contractNumber: number, buyer: "ForestIQ buyer" });
-      setError(`Lepingu ${created.contractId} draft on loodud. Lisa PDF lepingute registris.`);
-      void refresh();
-    } catch (err) { setError(err instanceof Error ? err.message : "Lepingu drafti loomine ebaõnnestus."); }
-  };
-
   const checkNotice = async () => {
     try { await api.post(`/services/inheritance/owners/${owner.id}/official-notices/check`, {}); void refresh(); }
     catch (err) { setError(err instanceof Error ? err.message : "Pärimisteadet ei saanud kontrollida."); }
@@ -90,7 +82,7 @@ export function OwnerWorkflowPanel({ owner }: { owner: Owner }) {
           <strong>{deal.stage.replaceAll("_", " ")}</strong><p>{deal.saleSubject} · {deal.parcels.length} kinnistut · {deal.offers.length} pakkumist</p>
           {deal.stage === "EVALUATION" && <div className="mt-3 flex gap-2"><input aria-label="Hindamise pakkumishind" className="min-w-0 rounded-md border bg-background px-2 py-1" inputMode="decimal" value={evaluationAmount} onChange={(event) => setEvaluationAmount(event.target.value)} placeholder="Hind EUR" /><button className="secondary-action" onClick={() => void approveEvaluation(deal)}>Kinnita hindamine</button></div>}
           {deal.stage === "NEGOTIATION" && <div className="mt-3 flex gap-2"><input aria-label="Pakkumise summa" className="min-w-0 rounded-md border bg-background px-2 py-1" inputMode="decimal" value={offerAmount} onChange={(event) => setOfferAmount(event.target.value)} placeholder="EUR" /><button className="secondary-action" onClick={() => void sendOffer(deal)}>Saada pakkumine</button></div>}
-          {deal.stage === "WON" && <button className="secondary-action mt-3" onClick={() => void createContract(deal)}><FileText size={16} /> Koosta lepingu draft</button>}
+          {deal.stage === "WON" && <Link className="secondary-action mt-3" href={`/contracts?dealId=${encodeURIComponent(deal.id)}`}><FileText size={16} /> Koosta leping</Link>}
         </div>)}
         {!deals.length && <p className="text-sm text-muted-foreground">Aktiivseid tehinguid ei ole.</p>}
       </div>

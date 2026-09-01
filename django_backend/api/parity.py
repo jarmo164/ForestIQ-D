@@ -957,7 +957,7 @@ def _deal_contract_draft(deal: Deal) -> dict:
     parcels = [{"cadastralCode": parcel.id, "address": parcel.address, "areaHectares": json_value(parcel.area)} for parcel in deal.parcels.all()]
     if not parcels:
         raise ValueError("The deal has no parcels to include in a contract.")
-    return {"dealId": str(deal.id), "offerEntryId": str(accepted_offer.id), "acceptedPrice": json_value(accepted_offer.amount), "acceptedTerms": accepted_offer.terms, "seller": {"name": deal.owner.name, "code": deal.owner.id, "address": deal.owner.address, "iban": ""}, "parcels": parcels}
+    return {"dealId": str(deal.id), "dealVersion": deal.version, "offerEntryId": str(accepted_offer.id), "acceptedPrice": json_value(accepted_offer.amount), "acceptedTerms": accepted_offer.terms, "seller": {"name": deal.owner.name, "code": deal.owner.id, "address": deal.owner.address, "iban": ""}, "parcels": parcels}
 
 
 @api_view(["GET"])

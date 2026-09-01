@@ -11,6 +11,7 @@ import { hasAccess, type AccessRequirement } from "@/lib/authorization";
 import { AccessDenied, AuthenticationRequired } from "@/pages/AccessState";
 import Admin from "@/pages/Admin";
 import Dashboard from "@/pages/Dashboard";
+import Contracts from "@/pages/Contracts";
 import Login from "@/pages/Login";
 import Management from "@/pages/Management";
 import InheritanceDetail from "@/pages/InheritanceDetail";
@@ -190,8 +191,8 @@ function Routes() {
         </Protected>
       </Route>
       <Route path="/contracts">
-        <Protected requirement={requirePrivileges("ADMIN", "OWNER_PROFILE")}>
-          <GenericWorkspace kind="contracts" />
+        <Protected requirement={requirePrivileges("ADMIN")}>
+          <Contracts />
         </Protected>
       </Route>
       <Route path="/phones">
