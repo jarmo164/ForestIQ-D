@@ -70,6 +70,9 @@ export async function installSeededApi(page: Page) {
       offers: [],
     },
   ];
+  const contracts: Array<Record<string, unknown>> = [];
+  const companyProfiles = [{ id: "company-0001", legalName: "ForestIQ OÜ", version: 1 }];
+  const contractTemplates = [{ id: "template-0001", companyProfileId: "company-0001", templateKey: "forest-sale", name: "Metsamüügi leping", description: "QA lepingumall", html: "<h1>{{ company.legalName }}</h1><p>{{ deal.ownerName }}</p>", version: 1, isActive: true }];
   const inheritanceCases = [
     {
       id: "case-0001",
@@ -225,11 +228,23 @@ export async function installSeededApi(page: Page) {
       };
       return json(route, deals[0]);
     }
+    if (pathname === "/api/services/contracts" && method === "GET")
+      return json(route, contracts);
+    if (pathname === "/api/services/contract-templates" && method === "GET")
+      return json(route, contractTemplates);
+    if (pathname === "/api/services/company-profiles" && method === "GET")
+      return json(route, companyProfiles);
+    if (pathname === "/api/services/contracts/deals/deal-0001/draft" && method === "GET")
+      return json(route, { dealId: "deal-0001", dealVersion: 4, offerEntryId: "offer-0001", acceptedPrice: 125000, acceptedTerms: "QA terms", seller: { name: owner.name, code: owner.id }, parcels: [{ cadastralCode: owner.cadastres[0].id, address: owner.address, areaHectares: 12.4 }] });
+    if (pathname === "/api/services/contract-templates/template-0001/preview" && method === "POST")
+      return json(route, { templateId: "template-0001", dealId: "deal-0001", html: "<h1>ForestIQ OÜ</h1><p>Metsaomanik Mari</p>" });
     if (
       pathname === "/api/services/contracts/generate-from-deal" &&
       method === "POST"
-    )
-      return json(route, { contractId: "contract-0001" }, 201);
+    ) {
+      contracts.unshift({ id: "contract-0001", version: 1, sellers: owner.name, buyer: "ForestIQ OÜ", contractNo: "FIQ-2026-DEAL", created: "2026-09-01T12:00:00Z", status: "ACTIVE", dealId: "deal-0001", ownerId: owner.id, templateVersion: { templateId: "template-0001", name: "Metsamüügi leping" } });
+      return json(route, { contractId: "contract-0001", pdf: "/services/contracts/contract-0001/pdf" }, 201);
+    }
     if (pathname.includes("/official-notices/check") && method === "POST")
       return json(route, { notices: [] });
     if (

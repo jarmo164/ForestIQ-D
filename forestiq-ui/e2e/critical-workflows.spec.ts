@@ -21,7 +21,7 @@ test("login opens the deterministic development workspace", async ({
   await expect(page.getByText("Töölaud").first()).toBeVisible();
 });
 
-test("owner workflow completes evaluation, offer and contract draft", async ({
+test("owner workflow completes evaluation, offer and template-based contract generation", async ({
   page,
 }) => {
   await authenticateSeededUser(page);
@@ -34,11 +34,15 @@ test("owner workflow completes evaluation, offer and contract draft", async ({
   await page.getByRole("button", { name: "Kinnita hindamine" }).click();
   await page.getByLabel("Pakkumise summa").fill("125000");
   await page.getByRole("button", { name: "Saada pakkumine" }).click();
-  await page.getByRole("button", { name: "Koosta lepingu draft" }).click();
-
-  await expect(
-    page.getByText("Lepingu contract-0001 draft on loodud."),
-  ).toBeVisible();
+  await page.getByRole("link", { name: "Koosta leping" }).click();
+  await expect(page.getByRole("heading", { name: "Lepingute tööala", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Laadi tehing" }).click();
+  await expect(page.getByText("Metsaomanik Mari").last()).toBeVisible();
+  await expect(page.getByText("ForestIQ OÜ").last()).toBeVisible();
+  await page.getByRole("button", { name: "Eelvaade" }).click();
+  await expect(page.getByTitle("Lepingumalli eelvaade")).toBeVisible();
+  await page.getByRole("button", { name: "Genereeri PDF" }).click();
+  await expect(page.getByText("Leping contract-0001 loodi serveripoolse PDF-iga.")).toBeVisible();
 });
 
 test("owner workflow creates and starts an inheritance case", async ({
