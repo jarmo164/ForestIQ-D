@@ -314,9 +314,34 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(os.getenv("FORESTIQ_MEDIA_ROOT", BASE_DIR / "media"))
+FORESTIQ_DOCUMENT_STORAGE_BACKEND = os.getenv("FORESTIQ_DOCUMENT_STORAGE_BACKEND", "local").lower()
+
+if FORESTIQ_DOCUMENT_STORAGE_BACKEND == "s3":
+    FORESTIQ_S3_BUCKET_NAME = os.getenv("FORESTIQ_S3_BUCKET_NAME", "").strip()
+    if not FORESTIQ_S3_BUCKET_NAME:
+        raise ValueError("FORESTIQ_S3_BUCKET_NAME is required when FORESTIQ_DOCUMENT_STORAGE_BACKEND=s3.")
+    _document_storage_options = {
+        "bucket_name": FORESTIQ_S3_BUCKET_NAME,
+        "access_key": os.getenv("FORESTIQ_S3_ACCESS_KEY", "").strip() or None,
+        "secret_key": os.getenv("FORESTIQ_S3_SECRET_KEY", "").strip() or None,
+        "endpoint_url": os.getenv("FORESTIQ_S3_ENDPOINT_URL", "").strip() or None,
+        "region_name": os.getenv("FORESTIQ_S3_REGION_NAME", "").strip() or None,
+        "addressing_style": os.getenv("FORESTIQ_S3_ADDRESSING_STYLE", "path").strip(),
+        "file_overwrite": False,
+        "querystring_auth": True,
+    }
+    _document_storage_backend = "storages.backends.s3.S3Storage"
+elif FORESTIQ_DOCUMENT_STORAGE_BACKEND == "local":
+    # Let Django resolve MEDIA_ROOT and MEDIA_URL lazily so test and development overrides work.
+    _document_storage_options = {}
+    _document_storage_backend = "django.core.files.storage.FileSystemStorage"
+else:
+    raise ValueError("FORESTIQ_DOCUMENT_STORAGE_BACKEND must be local or s3.")
+
 STORAGES = {
     "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "BACKEND": _document_storage_backend,
+        "OPTIONS": _document_storage_options,
     },
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
