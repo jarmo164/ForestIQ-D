@@ -178,6 +178,11 @@ class ContractTemplate(OrganizationScopedModel):
         ]
 
 
+class ContractStatus(models.TextChoices):
+    ACTIVE = "ACTIVE", "Active"
+    ARCHIVED = "ARCHIVED", "Archived"
+
+
 class Contract(OrganizationScopedModel):
     id = models.CharField(primary_key=True, max_length=100)
     document = models.BinaryField(null=True, blank=True, db_column="contract")
@@ -193,6 +198,8 @@ class Contract(OrganizationScopedModel):
         related_name="generated_contracts",
     )
     template_snapshot = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=20, choices=ContractStatus.choices, default=ContractStatus.ACTIVE)
+    created_at = models.DateTimeField(auto_now_add=True)
     version = models.PositiveBigIntegerField(default=1)
     organization_parent_fields = ("source_deal", "source_offer")
 
