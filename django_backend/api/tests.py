@@ -415,6 +415,7 @@ class MainParityWorkflowTests(TestCase):
         self.assertEqual(Deal.objects.get(id=deal_id).offers.get(id=offer_id).status, DealOffer.Status.ACCEPTED)
         draft = self.client.get(f"/api/services/contracts/deals/{deal_id}/draft")
         self.assertEqual(draft.status_code, 200, draft.data)
+        self.assertEqual(draft.data["dealVersion"], won.data["version"])
         company = CompanyProfile.objects.create(organization=self.admin.default_organization, legal_name="ForestIQ ÕÄÖÜ OÜ")
         template = ContractTemplate.objects.create(
             organization=self.admin.default_organization,

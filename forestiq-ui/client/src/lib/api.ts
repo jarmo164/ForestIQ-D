@@ -109,7 +109,22 @@ export const api = {
   patch: <T>(path: string, body: unknown) => jsonRequest<T>("PATCH", path, body),
   upload: <T>(path: string, body: FormData, method: "POST" | "PUT" = "POST") =>
     fetch(`${BASE_URL}${path}`, { method, headers: headers(), body }).then(parse<T>),
-  delete: <T>(path: string) => fetch(`${BASE_URL}${path}`, { method: "DELETE", headers: headers() }).then(parse<T>),
+  delete: <T>(path: string, body?: unknown) => fetch(`${BASE_URL}${path}`, { method: "DELETE", headers: headers(body !== undefined), body: body === undefined ? undefined : JSON.stringify(body) }).then(parse<T>),
+  async download(path: string, filename: string): Promise<void> {
+    const response = await fetch(`${BASE_URL}${path}`, { headers: headers() });
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw new ApiError(data?.detail || `Allalaadimine ebaõnnestus (${response.status})`, response.status);
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  },
 
   async oidcConfiguration(): Promise<OidcConfiguration> {
     return parse<OidcConfiguration>(await fetch(`${BASE_URL}/oidc/config`));

@@ -26,7 +26,7 @@ export const routeAccess: Record<string, AccessRequirement | undefined> = {
   "/workdesk/evaluator": withPrivilege("ADMIN", "EVALUATION"),
   "/workdesk/admin": withPrivilege("ADMIN"),
   "/admin": withPrivilege("ADMIN"),
-  "/contracts": withPrivilege("ADMIN", "OWNER_PROFILE"),
+  "/contracts": withPrivilege("ADMIN"),
   "/phones": withPrivilege("ADMIN", "PHONES"),
 };
 
