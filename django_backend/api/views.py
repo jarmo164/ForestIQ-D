@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from hashlib import sha256
 import json
@@ -38,7 +38,7 @@ from forestry.models import (
     OwnerStatus,
     OwnerStatusChange,
 )
-from operations.models import ApplicationMessage, Contract, ContractHistory, Deal, DealStage, DirectMessage, InheritanceCase, PersonDump, Reminder
+from operations.models import ApplicationMessage, Contract, ContractHistory, ContractStatus, Deal, DealStage, DirectMessage, InheritanceCase, PersonDump, Reminder
 
 from .concurrency import delete_if_current, missing_version_response, requested_version, update_if_current, version_conflict_response
 from .organization import organization_user_or_404, organization_users, request_organization_id
@@ -1013,35 +1013,88 @@ def new_messages_count(request):
     return Response({"newMessageCount": DirectMessage.objects.filter(recipient=request.user, noticed_at__isnull=True).count()})
 
 
+def _contract_history_date(value: str | None, parameter: str, *, upper_bound: bool = False) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{parameter} must use YYYY-MM-DD format.") from exc
+    boundary = datetime.combine(parsed, datetime.max.time() if upper_bound else datetime.min.time())
+    return timezone.make_aware(boundary, timezone.get_current_timezone())
+
+
+def _contract_history_data(history: ContractHistory, contract: Contract | None) -> dict:
+    retention_until = contract.created_at + timedelta(days=settings.FORESTIQ_CONTRACT_RETENTION_DAYS) if contract else None
+    return {
+        "id": history.id,
+        "version": contract.version if contract else None,
+        "sellers": history.sellers,
+        "buyer": history.buyer,
+        "contractNo": history.contract_number,
+        "created": json_value(history.created_at),
+        "status": contract.status if contract else "ORPHANED",
+        "dealId": str(contract.source_deal_id) if contract and contract.source_deal_id else None,
+        "ownerId": contract.source_deal.owner_id if contract and contract.source_deal_id else None,
+        "retentionUntil": json_value(retention_until),
+        "templateVersion": contract.template_snapshot or None if contract else None,
+    }
+
+
+@extend_schema(
+    methods=["GET"],
+    parameters=[
+        OpenApiParameter("ownerId", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Filter contract history by owner identifier."),
+        OpenApiParameter("dealId", OpenApiTypes.UUID, OpenApiParameter.QUERY, description="Filter contract history by commercial deal identifier."),
+        OpenApiParameter("from", OpenApiTypes.DATE, OpenApiParameter.QUERY, description="Inclusive creation date in YYYY-MM-DD format."),
+        OpenApiParameter("to", OpenApiTypes.DATE, OpenApiParameter.QUERY, description="Inclusive creation date in YYYY-MM-DD format."),
+        OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Filter contract history by ACTIVE or ARCHIVED lifecycle status."),
+    ]
+)
 @api_view(["GET", "POST"])
 @permission_classes([IsAdmin])
 def contracts(request):
+    organization_id = request_organization_id(request)
     if request.method == "GET":
-        records = list(ContractHistory.objects.all())
+        records = ContractHistory.objects.filter(organization_id=organization_id).order_by("-created_at", "-id")
+        owner_id = str(request.query_params.get("ownerId", "")).strip()
+        deal_id = str(request.query_params.get("dealId", "")).strip()
+        contract_status = str(request.query_params.get("status", "")).upper().strip()
+        if contract_status and contract_status not in ContractStatus.values:
+            return _detail(f"status must be one of: {', '.join(ContractStatus.values)}.")
+        try:
+            since = _contract_history_date(request.query_params.get("from"), "from")
+            until = _contract_history_date(request.query_params.get("to"), "to", upper_bound=True)
+        except ValueError as exc:
+            return _detail(str(exc))
+        if since and until and since > until:
+            return _detail("from must not be later than to.")
+        if since:
+            records = records.filter(created_at__gte=since)
+        if until:
+            records = records.filter(created_at__lte=until)
+        matching_contracts = Contract.objects.filter(organization_id=organization_id)
+        if owner_id:
+            matching_contracts = matching_contracts.filter(source_deal__owner_id=owner_id)
+        if deal_id:
+            matching_contracts = matching_contracts.filter(source_deal_id=deal_id)
+        if contract_status:
+            matching_contracts = matching_contracts.filter(status=contract_status)
+        if owner_id or deal_id or contract_status:
+            records = records.filter(id__in=matching_contracts.values("id"))
         contracts_by_id = {
             item.id: item
-            for item in Contract.objects.select_related("template_version").filter(id__in=[record.id for record in records])
+            for item in Contract.objects.select_related("template_version", "source_deal__owner").filter(organization_id=organization_id, id__in=records.values("id"))
         }
-        return Response(
-            [
-                {
-                    "id": item.id,
-                    "version": contracts_by_id.get(item.id).version if item.id in contracts_by_id else None,
-                    "sellers": item.sellers,
-                    "buyer": item.buyer,
-                    "contractNo": item.contract_number,
-                    "created": json_value(item.created_at),
-                    "templateVersion": (contracts_by_id[item.id].template_snapshot or None) if item.id in contracts_by_id else None,
-                }
-                for item in records
-            ]
-        )
+        return Response([_contract_history_data(item, contracts_by_id.get(item.id)) for item in records])
     data = request.data
     contract_id = str(data.get("id") or uuid4())
     with transaction.atomic():
-        contract = Contract.objects.filter(id=contract_id).first()
+        contract = Contract.objects.filter(id=contract_id, organization_id=organization_id).first()
         if contract is None:
-            contract = Contract.objects.create(id=contract_id, base_id=data.get("baseId", ""))
+            if Contract.objects.filter(id=contract_id).exists() or ContractHistory.objects.filter(id=contract_id).exists():
+                return _detail("A contract with this identifier already exists in another organization.", status.HTTP_409_CONFLICT)
+            contract = Contract.objects.create(id=contract_id, base_id=data.get("baseId", ""), organization_id=organization_id)
         else:
             expected_version = requested_version(request)
             if expected_version is None:
@@ -1059,26 +1112,47 @@ def contracts(request):
             created_at=timezone.now(),
             data=data,
             cadastres=", ".join(item.get("id", "") for item in data.get("details", {}).get("cadastres", [])),
+            organization_id=organization_id,
         )
     return Response({"id": history.id, "version": contract.version, "pdf": f"/api/services/contracts/{history.id}/pdf"}, status=status.HTTP_201_CREATED)
 
 
-@api_view(["GET", "DELETE"])
+@api_view(["GET", "PATCH", "DELETE"])
 @permission_classes([IsAdmin])
 def contract_detail(request, contract_id: str):
-    history = get_object_or_404(ContractHistory, id=contract_id)
-    contract = get_object_or_404(Contract, id=contract_id)
+    organization_id = request_organization_id(request)
+    history = get_object_or_404(ContractHistory, id=contract_id, organization_id=organization_id)
+    contract = get_object_or_404(Contract, id=contract_id, organization_id=organization_id)
+    if request.method == "PATCH":
+        expected_version = requested_version(request)
+        if expected_version is None:
+            return missing_version_response()
+        contract_status = str(request.data.get("status", "")).upper().strip()
+        if contract_status != ContractStatus.ARCHIVED:
+            return _detail("status must be ARCHIVED.")
+        updated_contract = update_if_current(contract, expected_version, status=contract_status)
+        if updated_contract is None:
+            contract.refresh_from_db(fields=["version"])
+            return version_conflict_response(contract, expected_version)
+        return Response(_contract_history_data(history, updated_contract))
     if request.method == "DELETE":
         expected_version = requested_version(request)
         if expected_version is None:
             return missing_version_response()
+        if contract.status != ContractStatus.ARCHIVED:
+            return _detail("Archive the contract before requesting physical deletion.", status.HTTP_409_CONFLICT)
+        retention_until = contract.created_at + timedelta(days=settings.FORESTIQ_CONTRACT_RETENTION_DAYS)
+        if timezone.now() < retention_until:
+            return Response({"detail": "The contract is still within its retention period.", "retentionUntil": json_value(retention_until)}, status=status.HTTP_409_CONFLICT)
         if not delete_if_current(contract, expected_version):
             contract.refresh_from_db(fields=["version"])
             return version_conflict_response(contract, expected_version)
+        if contract.document_file:
+            contract.document_file.delete(save=False)
         history.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
     payload = dict(history.data)
-    payload["version"] = contract.version
+    payload.update(_contract_history_data(history, contract))
     payload["template"] = contract.template_snapshot or payload.get("template") or None
     return Response(payload)
 
@@ -1086,7 +1160,7 @@ def contract_detail(request, contract_id: str):
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def contract_pdf(request, contract_id: str):
-    contract = get_object_or_404(Contract, id=contract_id)
+    contract = get_object_or_404(Contract, id=contract_id, organization_id=request_organization_id(request))
     if contract.document_file:
         return FileResponse(contract.document_file.open("rb"), content_type="application/pdf", as_attachment=True, filename=f"contract-{contract_id}.pdf")
     if not contract.document:
@@ -1103,7 +1177,7 @@ def contract_document_upload(request, contract_id: str):
         return _detail("A file field is required.")
     if uploaded.content_type not in {"application/pdf", "application/x-pdf"}:
         return _detail("Only PDF contract files are accepted.", status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
-    contract = get_object_or_404(Contract, id=contract_id)
+    contract = get_object_or_404(Contract, id=contract_id, organization_id=request_organization_id(request))
     expected_version = requested_version(request)
     if expected_version is None:
         return missing_version_response()

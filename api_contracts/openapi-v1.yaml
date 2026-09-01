@@ -691,6 +691,35 @@ paths:
   /api/v1/services/contracts:
     get:
       operationId: services_contracts_retrieve
+      parameters:
+      - in: query
+        name: dealId
+        schema:
+          type: string
+          format: uuid
+        description: Filter contract history by commercial deal identifier.
+      - in: query
+        name: from
+        schema:
+          type: string
+          format: date
+        description: Inclusive creation date in YYYY-MM-DD format.
+      - in: query
+        name: ownerId
+        schema:
+          type: string
+        description: Filter contract history by owner identifier.
+      - in: query
+        name: status
+        schema:
+          type: string
+        description: Filter contract history by ACTIVE or ARCHIVED lifecycle status.
+      - in: query
+        name: to
+        schema:
+          type: string
+          format: date
+        description: Inclusive creation date in YYYY-MM-DD format.
       tags:
       - services
       responses:
@@ -706,6 +735,19 @@ paths:
   /api/v1/services/contracts/{contract_id}:
     get:
       operationId: services_contracts_retrieve_2
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: services_contracts_partial_update
       parameters:
       - in: path
         name: contract_id

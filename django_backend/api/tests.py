@@ -3,7 +3,7 @@
 import base64
 import json
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -19,7 +19,7 @@ from api.auth import token_pair
 from api.urls import urlpatterns
 from accounts.models import Organization, OrganizationMembership, OrganizationRole, Privilege, PrivilegeCode, User
 from forestry.models import Cadastre, DataSyncRun, Owner, OwnerLog, OwnerStatus, OwnerStatusChange
-from operations.models import CompanyProfile, Contract, ContractTemplate, Deal, DealOffer, DealStage, InheritanceCase, Reminder
+from operations.models import CompanyProfile, Contract, ContractHistory, ContractStatus, ContractTemplate, Deal, DealOffer, DealStage, InheritanceCase, Reminder
 from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
 
 
@@ -316,6 +316,59 @@ class ContractConfigurationTests(TestCase):
         self.assertIn("Owner &lt;script&gt;", preview.data["html"])
         self.assertEqual(preview.data["html"].count("Owner &lt;script&gt;"), 2)
         self.assertEqual(Contract.objects.count(), before_contracts)
+
+
+class ContractHistoryApiTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(slug="contract-history", name="Contract history organization")
+        self.other_organization = Organization.objects.create(slug="contract-history-other", name="Other contract history organization")
+        self.admin = User.objects.create_user("contract-history-admin", "Contract history admin", "very-secure-password", default_organization=self.organization)
+        Privilege.objects.create(user=self.admin, code=PrivilegeCode.ADMIN)
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.admin)['actualToken']['token']}")
+        self.owner = Owner.objects.create(id="60001:001:0001", name="Selected owner", organization=self.organization)
+        self.other_owner = Owner.objects.create(id="60001:001:0002", name="Other owner", organization=self.organization)
+        self.deal = Deal.objects.create(owner=self.owner, sale_subject="FOREST", organization=self.organization)
+        self.other_deal = Deal.objects.create(owner=self.other_owner, sale_subject="LAND", organization=self.organization)
+        self.contract = self._contract("contract-selected", self.deal, "C-SELECTED", ContractStatus.ACTIVE, datetime(2026, 1, 15, tzinfo=timezone.get_current_timezone()))
+        self.archived = self._contract("contract-archived", self.other_deal, "C-ARCHIVED", ContractStatus.ARCHIVED, datetime(2026, 2, 15, tzinfo=timezone.get_current_timezone()))
+
+    def _contract(self, contract_id, deal, number, contract_status, created_at):
+        contract = Contract.objects.create(id=contract_id, source_deal=deal, organization=self.organization, status=contract_status, document=b"%PDF-1.4 contract")
+        Contract.objects.filter(id=contract_id).update(created_at=created_at)
+        ContractHistory.objects.create(id=contract_id, sellers=deal.owner.name, buyer="ForestIQ OÜ", contract_number=number, created_at=created_at, organization=self.organization, data={"deal": {"dealId": str(deal.id)}})
+        return Contract.objects.get(id=contract_id)
+
+    def test_history_filters_by_owner_deal_date_and_status(self):
+        by_owner = self.client.get(f"/api/services/contracts?ownerId={self.owner.id}")
+        self.assertEqual(by_owner.status_code, 200, by_owner.data)
+        self.assertEqual([item["id"] for item in by_owner.data], [self.contract.id])
+        by_deal = self.client.get(f"/api/services/contracts?dealId={self.other_deal.id}&status=ARCHIVED")
+        self.assertEqual(by_deal.status_code, 200, by_deal.data)
+        self.assertEqual([item["id"] for item in by_deal.data], [self.archived.id])
+        by_date = self.client.get("/api/services/contracts?from=2026-02-01&to=2026-02-28")
+        self.assertEqual([item["id"] for item in by_date.data], [self.archived.id])
+        invalid = self.client.get("/api/services/contracts?status=DELETED")
+        self.assertEqual(invalid.status_code, 400)
+
+    @override_settings(FORESTIQ_CONTRACT_RETENTION_DAYS=0)
+    def test_contract_must_be_archived_before_retention_eligible_deletion(self):
+        blocked = self.client.delete(f"/api/services/contracts/{self.contract.id}", {"version": self.contract.version}, format="json")
+        self.assertEqual(blocked.status_code, 409, blocked.data)
+        archived = self.client.patch(f"/api/services/contracts/{self.contract.id}", {"status": "ARCHIVED", "version": self.contract.version}, format="json")
+        self.assertEqual(archived.status_code, 200, archived.data)
+        deleted = self.client.delete(f"/api/services/contracts/{self.contract.id}", {"version": archived.data["version"]}, format="json")
+        self.assertEqual(deleted.status_code, 204, deleted.data)
+        self.assertFalse(Contract.objects.filter(id=self.contract.id).exists())
+        self.assertFalse(ContractHistory.objects.filter(id=self.contract.id).exists())
+
+    def test_detail_and_pdf_reject_contracts_from_another_organization(self):
+        foreign_owner = Owner.objects.create(id="70001:001:0001", name="Foreign owner", organization=self.other_organization)
+        foreign_deal = Deal.objects.create(owner=foreign_owner, sale_subject="FOREST", organization=self.other_organization)
+        foreign_contract = Contract.objects.create(id="contract-foreign", source_deal=foreign_deal, organization=self.other_organization, document=b"%PDF-1.4 foreign")
+        ContractHistory.objects.create(id=foreign_contract.id, sellers=foreign_owner.name, buyer="Other OÜ", contract_number="C-FOREIGN", created_at=timezone.now(), organization=self.other_organization, data={})
+        self.assertEqual(self.client.get(f"/api/services/contracts/{foreign_contract.id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/services/contracts/{foreign_contract.id}/pdf").status_code, 404)
 
 
 class ContractPdfServiceTests(SimpleTestCase):
