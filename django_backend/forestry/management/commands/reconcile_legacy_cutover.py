@@ -10,7 +10,7 @@ import psycopg
 from psycopg.rows import dict_row
 from django.core.management.base import BaseCommand, CommandError
 
-from accounts.models import OrganizationMembership, User
+from accounts.models import OrganizationMembership
 from accounts.organization_context import organization_scope
 from accounts.organization_selection import active_organization
 from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, Owner, OwnerCadastre, OwnerLog
@@ -33,6 +33,14 @@ def _hash_rows(rows, keys):
     digest = hashlib.sha256()
     for row in sorted(rows, key=lambda item: tuple(str(item.get(key, "")) for key in keys)):
         digest.update("|".join(str(row.get(key, "")) for key in keys).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _hash_values(values):
+    digest = hashlib.sha256()
+    for value in sorted(str(item) for item in values):
+        digest.update(value.encode("utf-8"))
         digest.update(b"\n")
     return digest.hexdigest()
 
@@ -70,7 +78,11 @@ class Command(BaseCommand):
                     "available": True,
                     "count": len(rows),
                     "ids": ids,
-                    "checksum": _hash_rows(rows, ["id"] if any("id" in row for row in rows) else list(rows[0].keys())[:2] if rows else ["id"]),
+                    "checksum": _hash_rows(
+                        rows,
+                        ["id"] if any("id" in row for row in rows)
+                        else list(rows[0].keys())[:2] if rows else ["id"],
+                    ),
                 }
 
         with organization_scope(organization.id):
@@ -91,7 +103,6 @@ class Command(BaseCommand):
         for key, legacy_info in legacy.items():
             target = django_sets.get(key, set())
             source_ids = set(legacy_info.get("ids", []))
-            # Relationship tables may not expose the same synthetic IDs, so count remains the stable gate there.
             comparable_ids = key not in {"ownerCadastres", "subparts"}
             missing = sorted(source_ids - set(map(str, target))) if comparable_ids else []
             extra = sorted(set(map(str, target)) - source_ids) if comparable_ids else []
@@ -107,6 +118,7 @@ class Command(BaseCommand):
                 "djangoCount": len(target),
                 "countDelta": delta,
                 "legacyChecksum": legacy_info.get("checksum"),
+                "djangoIdentityChecksum": _hash_values(target),
                 "missingIds": missing[:100],
                 "extraIds": extra[:100],
                 "missingCount": len(missing),
@@ -114,14 +126,21 @@ class Command(BaseCommand):
                 "passed": passed,
             }
         report = {
-            "organization": str(organization.id),
+            "organization": {
+                "id": str(organization.id),
+                "slug": organization.slug,
+                "active": organization.is_active,
+                "membershipCount": len(django_sets["users"]),
+            },
             "go": go,
             "thresholds": {"maxCountDelta": options["max_count_delta"], "maxMissingIds": options["max_missing_ids"]},
             "comparisons": comparisons,
             "note": "Deals are Django-native and are reported independently because legacy MetsIS did not have the same deal aggregate.",
-            "djangoDealCount": len(django_sets["deals"]),
+            "djangoDeals": {"count": len(django_sets["deals"]), "identityChecksum": _hash_values(django_sets["deals"])},
         }
-        Path(options["output"]).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        output = Path(options["output"])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         self.stdout.write(json.dumps(report, indent=2, ensure_ascii=False))
         if not go:
             raise CommandError("Cutover reconciliation failed go/no-go thresholds.")
