@@ -2,8 +2,8 @@
 
 The legacy API accepts a number of historical field names, but it must not silently
 coerce booleans, numbers or collection values into another type. These serializers
-are intentionally validation-only: existing views keep their response compatibility
-while every registered mutation is type-checked before it reaches persistence code.
+are validation-only: existing views keep response compatibility while registered
+mutations are type-checked before persistence code runs.
 """
 
 from __future__ import annotations
@@ -53,8 +53,15 @@ class StrictListField(serializers.ListField):
         return super().to_internal_value(data)
 
 
+class StrictUUIDField(serializers.UUIDField):
+    def to_internal_value(self, data):
+        if not isinstance(data, str):
+            self.fail("invalid", value=data)
+        return super().to_internal_value(data)
+
+
 class LegacyDateTimeField(serializers.Field):
-    """Accept the two explicitly documented legacy date formats: epoch-ms or ISO-8601."""
+    """Accept only the two documented legacy date formats: epoch-ms or ISO-8601."""
 
     default_error_messages = {"invalid": "Expected epoch milliseconds or an ISO-8601 datetime string."}
 
@@ -79,7 +86,7 @@ class LegacyDateTimeField(serializers.Field):
 class AdminUserCreateSerializer(serializers.Serializer):
     id = StrictCharField(max_length=50)
     name = StrictCharField(max_length=100)
-    password = StrictCharField(min_length=12, write_only=True)
+    password = StrictCharField(write_only=True)
     privileges = StrictListField(child=StrictChoiceField(choices=PrivilegeCode.values), required=False, default=list)
 
 
@@ -119,7 +126,7 @@ class OwnerCreateSerializer(serializers.Serializer):
 
 
 class OwnerUpdateSerializer(serializers.Serializer):
-    version = StrictIntegerField(min_value=1)
+    version = StrictIntegerField(min_value=1, required=False)
     name = StrictCharField(max_length=100, required=False, allow_blank=True)
     type = StrictChoiceField(choices=OwnerType.values, required=False, allow_blank=True)
     phone = StrictCharField(max_length=100, required=False, allow_blank=True)
@@ -130,12 +137,12 @@ class OwnerUpdateSerializer(serializers.Serializer):
 
 
 class VersionedStatusSerializer(serializers.Serializer):
-    version = StrictIntegerField(min_value=1)
+    version = StrictIntegerField(min_value=1, required=False)
     code = StrictCharField(max_length=100)
 
 
 class AssigneeSerializer(serializers.Serializer):
-    version = StrictIntegerField(min_value=1)
+    version = StrictIntegerField(min_value=1, required=False)
     assignee = StrictCharField(max_length=50, required=False, allow_blank=True, allow_null=True)
 
 
@@ -150,12 +157,6 @@ class MarkCadastresSerializer(serializers.Serializer):
 class CadastreEvaluationSerializer(serializers.Serializer):
     ownerPrice = StrictCharField(max_length=255, required=False, allow_blank=True)
     ourPrice = StrictCharField(max_length=255, required=False, allow_blank=True)
-
-
-class AdminWorkdeskAssignSerializer(serializers.Serializer):
-    owners = StrictListField(child=StrictCharField(max_length=50), allow_empty=False)
-    userId = StrictCharField(max_length=50)
-    reassign = StrictBooleanField(required=False)
 
 
 class ReminderCreateSerializer(serializers.Serializer):
@@ -191,12 +192,19 @@ class MarkMessagesReadSerializer(serializers.Serializer):
 
 class ContractUploadSerializer(serializers.Serializer):
     file = serializers.FileField(required=True)
-    version = StrictIntegerField(min_value=1, required=False)
 
     def validate_file(self, upload):
         if getattr(upload, "content_type", "") not in {"application/pdf", "application/x-pdf"}:
             raise serializers.ValidationError("Only PDF contract files are accepted.")
         return upload
+
+
+class ContractGenerateSerializer(serializers.Serializer):
+    dealId = StrictUUIDField()
+    templateId = StrictUUIDField()
+    contractId = StrictCharField(max_length=100, required=False)
+    contractNumber = StrictCharField(max_length=50)
+    version = StrictIntegerField(min_value=1, required=False)
 
 
 MUTATION_RULES: tuple[tuple[str, str, type[serializers.Serializer]], ...] = (
@@ -211,12 +219,12 @@ MUTATION_RULES: tuple[tuple[str, str, type[serializers.Serializer]], ...] = (
     ("POST", r"^/services/owners/[^/]+/log$", OwnerLogSerializer),
     ("POST", r"^/services/owners/[^/]+/mark-cadastres$", MarkCadastresSerializer),
     ("POST", r"^/services/cadastres/[^/]+/evaluation$", CadastreEvaluationSerializer),
-    ("POST", r"^/services/admin-workdesk/assign$", AdminWorkdeskAssignSerializer),
     ("POST", r"^/services/reminders$", ReminderCreateSerializer),
     ("POST", r"^/services/persons-dump$", PersonDumpCreateSerializer),
     ("POST", r"^/services/messages/send$", SendMessageSerializer),
     ("POST", r"^/services/messages/(read|received/mark-as-read)$", MarkMessagesReadSerializer),
     ("POST", r"^/services/contracts/[^/]+/document$", ContractUploadSerializer),
+    ("POST", r"^/services/contracts/generate-from-deal$", ContractGenerateSerializer),
 )
 
 
