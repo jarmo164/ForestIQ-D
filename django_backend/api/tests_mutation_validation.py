@@ -4,7 +4,13 @@ from django.test import RequestFactory, SimpleTestCase
 from rest_framework.response import Response
 
 from api.middleware import TraceContextMiddleware, _normalize_error_response
-from api.mutation_serializers import OwnerCreateSerializer, OwnerStatusWriteSerializer, ReminderCreateSerializer
+from api.mutation_serializers import (
+    ContractGenerateSerializer,
+    OwnerCreateSerializer,
+    OwnerStatusWriteSerializer,
+    OwnerUpdateSerializer,
+    ReminderCreateSerializer,
+)
 
 
 class StrictMutationSerializerTests(SimpleTestCase):
@@ -27,6 +33,18 @@ class StrictMutationSerializerTests(SimpleTestCase):
         self.assertTrue(valid.is_valid(), valid.errors)
         self.assertFalse(invalid.is_valid())
         self.assertIn("dueTime", invalid.errors)
+
+    def test_uuid_references_are_validated(self):
+        serializer = ContractGenerateSerializer(
+            data={"dealId": "not-a-uuid", "templateId": "also-not-a-uuid", "contractNumber": "L-1"}
+        )
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("dealId", serializer.errors)
+        self.assertIn("templateId", serializer.errors)
+
+    def test_version_can_remain_in_if_match_header(self):
+        serializer = OwnerUpdateSerializer(data={"name": "Uus nimi"})
+        self.assertTrue(serializer.is_valid(), serializer.errors)
 
 
 class MutationValidationMiddlewareTests(SimpleTestCase):
