@@ -38,7 +38,10 @@ def _request_payload(request):
         return json.loads(request.body.decode(request.encoding or "utf-8"))
     if "multipart/form-data" in content_type:
         data = request.POST.dict()
-        data.update(request.FILES)
+        # MultiValueDict tuleb kopeerida võtmehaaval: dict.update ei säilita
+        # kõigis Django request-kontekstides failiobjekti usaldusväärselt.
+        for field_name, uploaded_file in request.FILES.items():
+            data[field_name] = uploaded_file
         return data
     return None
 

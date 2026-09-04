@@ -192,6 +192,8 @@ class MarkMessagesReadSerializer(serializers.Serializer):
 
 class ContractUploadSerializer(serializers.Serializer):
     file = serializers.FileField(required=True)
+    # Multipart vormiväljad on HTTP-s tekst; DRF teeb siin teadliku vormi-arvu teisenduse.
+    version = serializers.IntegerField(min_value=1)
 
     def validate_file(self, upload):
         if getattr(upload, "content_type", "") not in {"application/pdf", "application/x-pdf"}:
