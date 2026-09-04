@@ -9,14 +9,14 @@ WORKDIR /app
 RUN addgroup --system forestiq && adduser --system --ingroup forestiq forestiq
 
 RUN apt-get update && apt-get install --no-install-recommends -y \
-    gdal-bin libgdal-dev libgeos-dev libproj-dev \
+    gdal-bin libgdal-dev libgeos-dev libproj-dev postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY django_backend /app
-COPY scripts/render-predeploy.sh /app/scripts/render-predeploy.sh
+COPY scripts /app/scripts
 
 RUN python manage.py collectstatic --noinput \
     && chown -R forestiq:forestiq /app
