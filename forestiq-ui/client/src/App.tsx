@@ -9,6 +9,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { hasAccess, type AccessRequirement } from "@/lib/authorization";
 import { AccessDenied, AuthenticationRequired } from "@/pages/AccessState";
+import Account from "@/pages/Account";
 import Admin from "@/pages/Admin";
 import Dashboard from "@/pages/Dashboard";
 import Contracts from "@/pages/Contracts";
@@ -19,6 +20,7 @@ import Messages from "@/pages/Messages";
 import NotFound from "@/pages/NotFound";
 import OwnerDetail from "@/pages/OwnerDetail";
 import Owners from "@/pages/Owners";
+import PhoneDirectory from "@/pages/PhoneDirectory";
 import {
   DealsWorkspace,
   InheritanceWorkspace,
@@ -26,7 +28,7 @@ import {
   SalesWorkspace,
 } from "@/pages/ParityWorkspaces";
 import Reminders from "@/pages/Reminders";
-import { GenericWorkspace, OwnerWorkspace } from "@/pages/Workspaces";
+import { OwnerWorkspace } from "@/pages/Workspaces";
 
 const MapWorkspace = lazy(() => import("@/pages/MapWorkspace"));
 
@@ -197,12 +199,12 @@ function Routes() {
       </Route>
       <Route path="/phones">
         <Protected requirement={requirePrivileges("ADMIN", "PHONES")}>
-          <GenericWorkspace kind="phones" />
+          <PhoneDirectory />
         </Protected>
       </Route>
       <Route path="/me">
         <Protected>
-          <GenericWorkspace kind="me" />
+          <Account />
         </Protected>
       </Route>
       <Route path="/reminders-dashboard">
