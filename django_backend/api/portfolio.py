@@ -35,8 +35,6 @@ def _run_data(run: DataSyncRun | None) -> dict | None:
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def portfolio_status(request):
-    """Return recurring portfolio health without coupling it to Forestek bootstrap state."""
-
     latest = DataSyncRun.objects.filter(source="daily").order_by("-id").first()
     latest_success = DataSyncRun.objects.filter(
         source="daily", status=DataSyncRun.Status.SUCCESS
@@ -70,8 +68,6 @@ def portfolio_status(request):
 @api_view(["POST"])
 @permission_classes([IsAdmin])
 def portfolio_sync(request):
-    """Queue a tenant-scoped portfolio refresh and persist an audit row for the request."""
-
     organization_id = str(request_organization_id(request))
     now = timezone.now()
     async_result = enqueue_portfolio_sync.delay(organization_id)
