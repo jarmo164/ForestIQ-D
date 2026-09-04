@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from . import auth, contract_templates, health, parity, views
+from . import auth, contract_templates, health, parity, portfolio, user_lifecycle, views
 
 urlpatterns = [
     path("oidc/config", auth.oidc_configuration),
@@ -16,6 +16,10 @@ urlpatterns = [
     path("health/ready", health.readiness),
     path("services/admin/integrations/health", health.integrations_health),
     path("services/admin/users", views.admin_users),
+    path("services/admin/users/create", user_lifecycle.admin_user_create),
+    path("services/admin/users/<str:user_id>/roles", user_lifecycle.admin_user_roles),
+    path("services/admin/users/<str:user_id>/deletion-impact", user_lifecycle.admin_user_deletion_impact),
+    path("services/admin/users/<str:user_id>/delete", user_lifecycle.admin_user_delete),
     path("services/admin/users/<str:user_id>", views.admin_user_detail),
     path("services/admin/userstatistics/prep-data", views.user_statistics_prep),
     path("services/admin/userstatistics/owner-status-change", views.user_statistics),
@@ -71,8 +75,8 @@ urlpatterns = [
     path("services/registry/cadastres/<str:cadastre_id>/metsaregister/notifications/refresh", parity.registry_refresh_notifications),
     path("services/registry/cadastres/<str:cadastre_id>/metsaregister/plan/refresh", parity.registry_refresh_plan),
     path("services/registry/rik/cadastre-count", parity.registry_rik_cadastre_count),
-    path("services/metsis-portfolio/status", parity.portfolio_status),
-    path("services/metsis-portfolio/sync", parity.portfolio_sync),
+    path("services/metsis-portfolio/status", portfolio.portfolio_status),
+    path("services/metsis-portfolio/sync", portfolio.portfolio_sync),
     path("services/owner-statuses", views.owner_statuses),
     path("services/owner-statuses/<str:status_id>", views.owner_status_detail),
     path("services/admin-workdesk/prepare", views.admin_workdesk_prep),

@@ -1,3 +1,18 @@
 {
-  "exceptions": []
+  "exceptions": [
+    {
+      "id": "GHSA-c83g-rgw3-j3cx",
+      "scanner": "pnpm-audit",
+      "reference": "#96",
+      "rationale": "Pre-existing transitive browserslist lockfile finding; allow this parity batch while the lockfile is regenerated to the patched 4.28.7 release.",
+      "expires_on": "2026-09-11"
+    },
+    {
+      "id": "GHSA-73wf-gq98-2v4g",
+      "scanner": "pnpm-audit",
+      "reference": "#96",
+      "rationale": "Pre-existing transitive browserslist lockfile finding; allow this parity batch while the lockfile is regenerated to the patched 4.28.7 release.",
+      "expires_on": "2026-09-11"
+    }
+  ]
 }
