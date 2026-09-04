@@ -10,6 +10,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -121,6 +122,7 @@ def _has_blockers(impact: dict[str, int]) -> bool:
     return any(value > 0 for value in impact.values())
 
 
+@extend_schema(exclude=True)
 @api_view(["POST"])
 @permission_classes([IsAdmin])
 def admin_user_create(request):
@@ -128,6 +130,7 @@ def admin_user_create(request):
     full_name = str(request.data.get("fullName") or "").strip()
     email = str(request.data.get("email") or "").strip()
     roles = normalize_organization_roles(request.data.get("roles") or [OrganizationRole.MEMBER])
+    organization_id = request_organization_id(request)
     if not user_id or not full_name:
         return _detail("userId and fullName are required.")
     if not roles:
@@ -136,12 +139,16 @@ def admin_user_create(request):
         return _detail("User already exists.", status.HTTP_409_CONFLICT)
 
     keycloak_id = None
+    payload = {
+        "username": user_id,
+        "enabled": True,
+        "firstName": full_name,
+        "attributes": {settings.KEYCLOAK_ORGANIZATION_CLAIM: [str(organization_id)]},
+    }
+    if email:
+        payload["email"] = email
     try:
-        response = _kc_request(
-            "POST",
-            "/users",
-            json={"username": user_id, "enabled": True, "email": email or None, "firstName": full_name},
-        )
+        response = _kc_request("POST", "/users", json=payload)
         location = response.headers.get("Location", "")
         keycloak_id = location.rstrip("/").split("/")[-1] if location else ""
         if not keycloak_id:
@@ -151,12 +158,15 @@ def admin_user_create(request):
             raise KeycloakAdminError("Keycloak did not return the created user id.")
         _replace_keycloak_roles(keycloak_id, roles)
         with transaction.atomic():
-            user = User.objects.create_user(user_id=user_id, full_name=full_name, oidc_subject=keycloak_id)
-            membership, _ = OrganizationMembership.objects.get_or_create(
-                organization_id=request_organization_id(request), user=user
+            user = User.objects.create_user(
+                user_id=user_id,
+                full_name=full_name,
+                oidc_subject=keycloak_id,
+                default_organization_id=organization_id,
             )
+            membership, _ = OrganizationMembership.objects.get_or_create(organization_id=organization_id, user=user)
             membership.set_roles(roles, oidc_managed=True)
-    except (KeycloakAdminError, requests.RequestException) as exc:
+    except KeycloakAdminError as exc:
         if keycloak_id:
             try:
                 _kc_request("DELETE", f"/users/{keycloak_id}")
@@ -170,10 +180,12 @@ def admin_user_create(request):
     )
 
 
+@extend_schema(exclude=True)
 @api_view(["PUT"])
 @permission_classes([IsAdmin])
 def admin_user_roles(request, user_id: str):
-    user = User.objects.filter(id=user_id, organization_memberships__organization_id=request_organization_id(request)).distinct().first()
+    organization_id = request_organization_id(request)
+    user = User.objects.filter(id=user_id, organization_memberships__organization_id=organization_id).distinct().first()
     if user is None:
         return _detail("User not found.", status.HTTP_404_NOT_FOUND)
     roles = normalize_organization_roles(request.data.get("roles") or [])
@@ -184,7 +196,7 @@ def admin_user_roles(request, user_id: str):
         _replace_keycloak_roles(keycloak_id, roles)
     except KeycloakAdminError as exc:
         return _detail(str(exc), status.HTTP_503_SERVICE_UNAVAILABLE)
-    membership = OrganizationMembership.objects.get(user=user, organization_id=request_organization_id(request))
+    membership = OrganizationMembership.objects.get(user=user, organization_id=organization_id)
     membership.set_roles(roles, oidc_managed=True)
     if not user.oidc_subject:
         user.oidc_subject = keycloak_id
@@ -192,20 +204,24 @@ def admin_user_roles(request, user_id: str):
     return Response({"id": user.id, "roles": membership.role_codes})
 
 
+@extend_schema(exclude=True)
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def admin_user_deletion_impact(request, user_id: str):
-    user = User.objects.filter(id=user_id, organization_memberships__organization_id=request_organization_id(request)).distinct().first()
+    organization_id = request_organization_id(request)
+    user = User.objects.filter(id=user_id, organization_memberships__organization_id=organization_id).distinct().first()
     if user is None:
         return _detail("User not found.", status.HTTP_404_NOT_FOUND)
     impact = _deletion_impact(user)
     return Response({"userId": user.id, "blocking": _has_blockers(impact), "impact": impact})
 
 
+@extend_schema(exclude=True)
 @api_view(["DELETE"])
 @permission_classes([IsAdmin])
 def admin_user_delete(request, user_id: str):
-    user = User.objects.filter(id=user_id, organization_memberships__organization_id=request_organization_id(request)).distinct().first()
+    organization_id = request_organization_id(request)
+    user = User.objects.filter(id=user_id, organization_memberships__organization_id=organization_id).distinct().first()
     if user is None:
         return _detail("User not found.", status.HTTP_404_NOT_FOUND)
     if user.id == request.user.id:
