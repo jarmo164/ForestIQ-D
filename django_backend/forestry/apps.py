@@ -7,3 +7,4 @@ class ForestryConfig(AppConfig):
 
     def ready(self):
         import forestry.signals  # noqa: F401
+        import forestry.portfolio_tasks  # noqa: F401
