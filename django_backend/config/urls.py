@@ -16,7 +16,9 @@ urlpatterns = [
         SpectacularAPIView.as_view(urlconf="config.api_v1_urls"),
         name="openapi-v1-schema",
     ),
+    path("api/v1/", include("api.overrides_urls")),
     path("api/v1/", include("api.urls")),
+    path("api/", include("api.overrides_urls")),
     path("api/", include("api.urls")),
 ]
 
