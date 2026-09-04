@@ -26,7 +26,7 @@ import {
   SalesWorkspace,
 } from "@/pages/ParityWorkspaces";
 import Reminders from "@/pages/Reminders";
-import { GenericWorkspace, OwnerWorkspace } from "@/pages/Workspaces";
+import { AccountWorkspace, OwnerWorkspace, PhonebookWorkspace } from "@/pages/Workspaces";
 
 const MapWorkspace = lazy(() => import("@/pages/MapWorkspace"));
 
@@ -58,95 +58,44 @@ function Routes() {
         </Protected>
       </Route>
       <Route path="/owners">
-        <Protected
-          requirement={requirePrivileges(
-            "ADMIN",
-            "OWNER_PROFILE",
-            "ASSIGNED_OWNERS",
-          )}
-        >
+        <Protected requirement={requirePrivileges("ADMIN", "OWNER_PROFILE", "ASSIGNED_OWNERS")}>
           <Owners />
         </Protected>
       </Route>
       <Route path="/owners/import">
-        <Protected
-          requirement={requirePrivileges(
-            "ADMIN",
-            "OWNER_PROFILE",
-            "ASSIGNED_OWNERS",
-          )}
-        >
+        <Protected requirement={requirePrivileges("ADMIN", "OWNER_PROFILE", "ASSIGNED_OWNERS")}>
           <OwnerImportWorkspace />
         </Protected>
       </Route>
       <Route path="/owners/:id">
-        <Protected
-          requirement={requirePrivileges(
-            "ADMIN",
-            "OWNER_PROFILE",
-            "ASSIGNED_OWNERS",
-          )}
-        >
+        <Protected requirement={requirePrivileges("ADMIN", "OWNER_PROFILE", "ASSIGNED_OWNERS")}>
           <OwnerDetail />
         </Protected>
       </Route>
       <Route path="/map">
-        <Protected
-          requirement={requirePrivileges(
-            "ADMIN",
-            "OWNER_PROFILE",
-            "ASSIGNED_OWNERS",
-            "EVALUATION",
-          )}
-        >
-          <Suspense
-            fallback={<div className="app-loading">Laadin kaarditöölauda…</div>}
-          >
+        <Protected requirement={requirePrivileges("ADMIN", "OWNER_PROFILE", "ASSIGNED_OWNERS", "EVALUATION")}>
+          <Suspense fallback={<div className="app-loading">Laadin kaarditöölauda…</div>}>
             <MapWorkspace />
           </Suspense>
         </Protected>
       </Route>
       <Route path="/deals">
-        <Protected
-          requirement={requirePrivileges(
-            "ADMIN",
-            "OWNER_PROFILE",
-            "EVALUATION",
-          )}
-        >
+        <Protected requirement={requirePrivileges("ADMIN", "OWNER_PROFILE", "EVALUATION")}>
           <DealsWorkspace />
         </Protected>
       </Route>
       <Route path="/inheritance/:id">
-        <Protected
-          requirement={requirePrivileges(
-            "ADMIN",
-            "OWNER_PROFILE",
-            "ASSIGNED_OWNERS",
-          )}
-        >
+        <Protected requirement={requirePrivileges("ADMIN", "OWNER_PROFILE", "ASSIGNED_OWNERS")}>
           <InheritanceDetail />
         </Protected>
       </Route>
       <Route path="/inheritance">
-        <Protected
-          requirement={requirePrivileges(
-            "ADMIN",
-            "OWNER_PROFILE",
-            "ASSIGNED_OWNERS",
-          )}
-        >
+        <Protected requirement={requirePrivileges("ADMIN", "OWNER_PROFILE", "ASSIGNED_OWNERS")}>
           <InheritanceWorkspace />
         </Protected>
       </Route>
       <Route path="/sales">
-        <Protected
-          requirement={requirePrivileges(
-            "ADMIN",
-            "OWNER_PROFILE",
-            "ASSIGNED_OWNERS",
-          )}
-        >
+        <Protected requirement={requirePrivileges("ADMIN", "OWNER_PROFILE", "ASSIGNED_OWNERS")}>
           <SalesWorkspace />
         </Protected>
       </Route>
@@ -176,43 +125,27 @@ function Routes() {
         </Protected>
       </Route>
       <Route path="/reminders">
-        <Protected>
-          <Reminders />
-        </Protected>
+        <Protected><Reminders /></Protected>
       </Route>
       <Route path="/messages">
-        <Protected>
-          <Messages />
-        </Protected>
+        <Protected><Messages /></Protected>
       </Route>
       <Route path="/admin">
-        <Protected requirement={requirePrivileges("ADMIN")}>
-          <Admin />
-        </Protected>
+        <Protected requirement={requirePrivileges("ADMIN")}><Admin /></Protected>
       </Route>
       <Route path="/contracts">
-        <Protected requirement={requirePrivileges("ADMIN")}>
-          <Contracts />
-        </Protected>
+        <Protected requirement={requirePrivileges("ADMIN")}><Contracts /></Protected>
       </Route>
       <Route path="/phones">
-        <Protected requirement={requirePrivileges("ADMIN", "PHONES")}>
-          <GenericWorkspace kind="phones" />
-        </Protected>
+        <Protected requirement={requirePrivileges("ADMIN", "PHONES")}><PhonebookWorkspace /></Protected>
       </Route>
       <Route path="/me">
-        <Protected>
-          <GenericWorkspace kind="me" />
-        </Protected>
+        <Protected><AccountWorkspace /></Protected>
       </Route>
       <Route path="/reminders-dashboard">
-        <Protected>
-          <Reminders />
-        </Protected>
+        <Protected><Reminders /></Protected>
       </Route>
-      <Route>
-        <NotFound />
-      </Route>
+      <Route><NotFound /></Route>
     </Switch>
   );
 }
