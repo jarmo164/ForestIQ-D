@@ -202,6 +202,22 @@ jobs:
           cache: pnpm
           cache-dependency-path: forestiq-ui/pnpm-lock.yaml
 
+      - name: Refresh P1 frontend lockfile on the PR branch
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/p1-workflows-98-105' }}
+        working-directory: forestiq-ui
+        run: |
+          pnpm install --lockfile-only --no-frozen-lockfile
+          cp pnpm-lock.yaml /tmp/pnpm-lock.yaml
+          cd ..
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$GITHUB_HEAD_REF"
+          git checkout -B "$GITHUB_HEAD_REF" FETCH_HEAD
+          cp /tmp/pnpm-lock.yaml forestiq-ui/pnpm-lock.yaml
+          git add forestiq-ui/pnpm-lock.yaml
+          git commit -m "Refresh frontend lockfile" || exit 0
+          git push origin "$GITHUB_HEAD_REF"
+
       - name: Install frontend dependencies
         working-directory: forestiq-ui
         run: pnpm install --frozen-lockfile
