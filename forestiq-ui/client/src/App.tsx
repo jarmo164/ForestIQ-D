@@ -20,6 +20,7 @@ import Messages from "@/pages/Messages";
 import NotFound from "@/pages/NotFound";
 import OwnerDetail from "@/pages/OwnerDetail";
 import Owners from "@/pages/Owners";
+import P1Operations from "@/pages/P1Operations";
 import PhoneDirectory from "@/pages/PhoneDirectory";
 import {
   DealsWorkspace,
@@ -150,6 +151,11 @@ function Routes() {
           )}
         >
           <SalesWorkspace />
+        </Protected>
+      </Route>
+      <Route path="/operations">
+        <Protected requirement={requirePrivileges("ADMIN")}>
+          <P1Operations />
         </Protected>
       </Route>
       <Route path="/management">
