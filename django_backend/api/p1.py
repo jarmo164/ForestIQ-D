@@ -772,6 +772,13 @@ def _quality_upsert(*, issue_type: str, fingerprint: str, severity: str, descrip
     return item, True
 
 
+def _phone_quality_key(value: str) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) in (10, 11) and digits.startswith("372"):
+        return digits[3:]
+    return digits
+
+
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def data_quality_issues(request):
@@ -819,7 +826,7 @@ def data_quality_scan(request):
     phone_groups = defaultdict(list)
     email_groups = defaultdict(list)
     for owner in owners:
-        phone = re.sub(r"\D", "", owner.phone or "")
+        phone = _phone_quality_key(owner.phone)
         email = (owner.email or "").strip().lower()
         if phone:
             phone_groups[phone].append(owner)
