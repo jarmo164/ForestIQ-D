@@ -103,7 +103,41 @@ export interface Deal {
   evaluationStatus?: string | null;
   priceExpectation?: number | null;
   offers: DealOffer[];
+  latestDecisionEvidenceSnapshot?: DecisionEvidenceSnapshotSummary | null;
   updatedAt?: number | null;
+}
+export interface DecisionEvidenceSnapshotSummary {
+  id: string;
+  sequence: number;
+  decisionType: "EVALUATION" | "OFFER";
+  schemaVersion: number;
+  snapshotSha256: string;
+  confirmedBy?: AppUser | null;
+  confirmedAt?: number | null;
+  summary?: {
+    cadastreCount?: number;
+    totalArea?: number | null;
+    forestArea?: number | null;
+    knownVolume?: number | null;
+    activeNoticeCount?: number;
+    activeDealCount?: number;
+  };
+  signalCount?: number;
+}
+export interface DecisionEvidencePreview {
+  snapshot: {
+    portfolioSummary: {
+      cadastreCount: number;
+      totalArea?: number | null;
+      forestArea?: number | null;
+      knownVolume?: number | null;
+      activeNoticeCount: number;
+      activeDealCount: number;
+    };
+    signals: OwnerPortfolioSignal[];
+    freshness: { source: string; observedAt?: number | string | null; status: string }[];
+  };
+  snapshotSha256: string;
 }
 export interface DealOffer {
   id: string;

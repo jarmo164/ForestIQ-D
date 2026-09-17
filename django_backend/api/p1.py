@@ -11,7 +11,7 @@ import re
 from urllib.parse import urlparse
 
 from django.db import transaction
-from django.db.models import DecimalField, Q, Value
+from django.db.models import Count, DecimalField, Max, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -21,7 +21,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from accounts.models import PrivilegeCode
-from forestry.models import Cadastre, Owner, OwnerCadastre, OwnerLog
+from forestry.models import Cadastre, CadastreNotification, ForestRegistryFeature, Owner, OwnerCadastre, OwnerLog
 from operations.models import Contract, ContractHistory, Deal, DealOffer, DealStage
 from operations.p1_models import (
     ContactActivity,
@@ -30,6 +30,7 @@ from operations.p1_models import (
     ContractVersion,
     DataQualityIssue,
     DataQualityIssueEvent,
+    DecisionEvidenceSnapshot,
     DealLossOutcome,
     DealWorkState,
     LossReasonCode,
@@ -63,6 +64,7 @@ SIGNING_TRANSITIONS = {
     ContractSigning.State.CANCELLED: set(),
 }
 CONTRACT_CHECKLIST = ("priceMatched", "termsMatched", "sellerMatched", "parcelsMatched")
+DECISION_EVIDENCE_SCHEMA_VERSION = 1
 
 
 def _detail(message: str, http_status: int = status.HTTP_400_BAD_REQUEST) -> Response:
@@ -371,6 +373,181 @@ def _deal_work_item(deal: Deal) -> dict:
         "health": reasons,
         "healthy": not reasons,
     }
+
+
+def _decision_evidence_signal(code: str, severity: str, reason: str, source: str, observed_at, recommended_action: str, target: dict | None = None) -> dict:
+    return {
+        "code": code,
+        "severity": severity,
+        "reason": reason,
+        "source": source,
+        "observedAt": _snapshot_json_value(observed_at),
+        "recommendedAction": recommended_action,
+        "target": target or {},
+    }
+
+
+def _decision_evidence_source(name: str, observed_at, status: str = "OBSERVED") -> dict:
+    return {"source": name, "observedAt": _snapshot_json_value(observed_at), "status": status}
+
+
+def _snapshot_json_value(value):
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value.isoformat()
+    return json_value(value)
+
+
+def _build_decision_evidence_snapshot(deal: Deal, *, decision_type: str) -> dict:
+    now = timezone.now()
+    owner = deal.owner
+    cadastres = deal.parcels.prefetch_related("labels").all()
+    cadastre_ids = list(cadastres.values_list("id", flat=True))
+    cadastre_totals = cadastres.aggregate(total_area=Sum("area"), forest_area=Sum("forest_area"), latest_mk_date=Max("mk_date"))
+    notifications = CadastreNotification.objects.filter(cadastre_id__in=cadastre_ids)
+    active_notifications = notifications.filter(archived=False)
+    notification_totals = notifications.aggregate(latest_registration=Max("registration_date"))
+    registry_features = ForestRegistryFeature.objects.filter(cadastre_id__in=cadastre_ids)
+    registry_totals = registry_features.aggregate(known_volume=Sum("volume"), latest_event=Max("event_date"))
+    active_deals = Deal.objects.filter(owner=owner).exclude(stage__in=CLOSED_DEAL_STAGES)
+    signals = []
+    if not owner.phone or not owner.email:
+        missing = ", ".join(item for item, empty in (("phone", not owner.phone), ("email", not owner.email)) if empty)
+        signals.append(_decision_evidence_signal("MISSING_CONTACT", "HIGH", f"Owner is missing {missing}.", "owner", now, "Complete owner contact data.", {"ownerId": owner.id}))
+    if owner.last_cadastre_list_refresh is None or owner.last_cadastre_list_refresh < now - timedelta(days=90):
+        signals.append(_decision_evidence_signal("STALE_REGISTRY_DATA", "MEDIUM", "Owner cadastre list has not been refreshed within 90 days.", "owner.lastCadastreListRefresh", owner.last_cadastre_list_refresh, "Refresh the owner portfolio before making an offer.", {"ownerId": owner.id}))
+    fresh_cutoff = now - timedelta(days=30)
+    for notice in active_notifications.filter(registration_date__gte=fresh_cutoff).order_by("-registration_date", "-id")[:5]:
+        signals.append(_decision_evidence_signal("FRESH_FOREST_NOTICE", "MEDIUM", f"Active forest notice {notice.notification_number} was registered recently.", "metsaregister.notifications", notice.registration_date, "Review the notice before valuation.", {"cadastreId": notice.cadastre_id, "notificationId": notice.id}))
+    restricted_labels = {"CONSERVATION_AREA", "DEAD_LAND", "SWAMP"}
+    selected_cadastres = []
+    for cadastre in cadastres:
+        labels = sorted(label.code for label in cadastre.labels.all())
+        restricted = [label for label in labels if label in restricted_labels]
+        if restricted:
+            signals.append(_decision_evidence_signal("RESTRICTION_LABEL", "MEDIUM", f"Cadastre has restriction labels: {', '.join(restricted)}.", "cadastre.labels", now, "Check restrictions before valuation.", {"cadastreId": cadastre.id, "labels": restricted}))
+        selected_cadastres.append(
+            {
+                "id": cadastre.id,
+                "name": cadastre.name or None,
+                "county": cadastre.county or None,
+                "area": json_value(cadastre.area),
+                "forestArea": json_value(cadastre.forest_area),
+                "mkDate": json_value(cadastre.mk_date),
+                "labels": labels,
+            }
+        )
+    offer_cutoff = date.today() + timedelta(days=7)
+    for related_deal in active_deals.filter(offer_valid_until__isnull=False, offer_valid_until__lte=offer_cutoff).order_by("offer_valid_until", "id")[:5]:
+        signals.append(_decision_evidence_signal("OFFER_DEADLINE_APPROACHING", "HIGH", f"Active {related_deal.stage.lower()} deal offer deadline is approaching.", "commercial_deals.offer_valid_until", related_deal.offer_valid_until, "Contact the owner or update the offer plan.", {"dealId": str(related_deal.id)}))
+    latest_offer = deal.offers.order_by("-revision", "-created_at").first()
+    freshness = [
+        _decision_evidence_source("owner.lastCadastreListRefresh", owner.last_cadastre_list_refresh, "STALE" if owner.last_cadastre_list_refresh is None or owner.last_cadastre_list_refresh < now - timedelta(days=90) else "OBSERVED"),
+        _decision_evidence_source("cadastre.mkDate", cadastre_totals["latest_mk_date"], "MISSING" if cadastre_totals["latest_mk_date"] is None else "OBSERVED"),
+        _decision_evidence_source("metsaregister.notifications", notification_totals["latest_registration"], "MISSING" if notification_totals["latest_registration"] is None else "OBSERVED"),
+        _decision_evidence_source("metsaregister.registryFeatures", registry_totals["latest_event"], "MISSING" if registry_totals["latest_event"] is None else "OBSERVED"),
+    ]
+    return {
+        "schemaVersion": DECISION_EVIDENCE_SCHEMA_VERSION,
+        "decisionType": decision_type,
+        "generatedAt": json_value(now),
+        "deal": {
+            "id": str(deal.id),
+            "version": deal.version,
+            "stage": deal.stage,
+            "saleSubject": deal.sale_subject,
+            "evaluationStatus": deal.evaluation_status or None,
+            "estimatedMinPrice": json_value(deal.estimated_min_price),
+            "estimatedMaxPrice": json_value(deal.estimated_max_price),
+            "recommendedPurchasePrice": json_value(deal.recommended_purchase_price),
+            "internalMinPrice": json_value(deal.internal_min_price),
+            "proposedOfferPrice": json_value(deal.proposed_offer_price),
+            "offerValidUntil": deal.offer_valid_until.isoformat() if deal.offer_valid_until else None,
+            "latestOffer": {
+                "id": str(latest_offer.id),
+                "revision": latest_offer.revision,
+                "status": latest_offer.status,
+                "amount": json_value(latest_offer.amount),
+                "validUntil": latest_offer.valid_until.isoformat() if latest_offer.valid_until else None,
+            } if latest_offer else None,
+        },
+        "owner": owner_summary(owner),
+        "selectedCadastres": sorted(selected_cadastres, key=lambda item: item["id"]),
+        "portfolioSummary": {
+            "cadastreCount": len(cadastre_ids),
+            "totalArea": json_value(cadastre_totals["total_area"]),
+            "forestArea": json_value(cadastre_totals["forest_area"]),
+            "knownVolume": json_value(registry_totals["known_volume"]),
+            "activeNoticeCount": active_notifications.count(),
+            "activeDealCount": active_deals.count(),
+        },
+        "countyBreakdown": [
+            {"county": item["county"] or None, "cadastreCount": item["count"], "area": json_value(item["area"])}
+            for item in cadastres.values("county").annotate(count=Count("id"), area=Sum("area")).order_by("county")
+        ],
+        "freshness": freshness,
+        "signals": signals,
+    }
+
+
+def _decision_snapshot_hash(snapshot: dict) -> str:
+    encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _decision_snapshot_data(item: DecisionEvidenceSnapshot) -> dict:
+    return {
+        "id": str(item.id),
+        "dealId": str(item.deal_id),
+        "sequence": item.sequence,
+        "decisionType": item.decision_type,
+        "schemaVersion": item.schema_version,
+        "snapshot": item.snapshot,
+        "snapshotSha256": item.snapshot_sha256,
+        "confirmedBy": user_data(item.confirmed_by),
+        "confirmedAt": json_value(item.confirmed_at),
+    }
+
+
+@api_view(["GET"])
+@permission_classes([CanManageOwners])
+def deal_decision_evidence_preview(request, deal_id: str):
+    deal, denied = _deal_or_403(request, deal_id)
+    if denied:
+        return denied
+    decision_type = str(request.query_params.get("decisionType", DecisionEvidenceSnapshot.DecisionType.EVALUATION)).upper()
+    if decision_type not in DecisionEvidenceSnapshot.DecisionType.values:
+        return _detail("decisionType must be EVALUATION or OFFER.")
+    snapshot = _build_decision_evidence_snapshot(deal, decision_type=decision_type)
+    return Response({"snapshot": snapshot, "snapshotSha256": _decision_snapshot_hash(snapshot)})
+
+
+@api_view(["GET", "POST"])
+@permission_classes([CanManageOwners])
+def deal_decision_evidence_snapshots(request, deal_id: str):
+    deal, denied = _deal_or_403(request, deal_id)
+    if denied:
+        return denied
+    if request.method == "GET":
+        records = deal.decision_evidence_snapshots.select_related("confirmed_by").all()
+        return Response([_decision_snapshot_data(item) for item in records])
+    decision_type = str(request.data.get("decisionType", DecisionEvidenceSnapshot.DecisionType.EVALUATION)).upper()
+    if decision_type not in DecisionEvidenceSnapshot.DecisionType.values:
+        return _detail("decisionType must be EVALUATION or OFFER.")
+    snapshot = _build_decision_evidence_snapshot(deal, decision_type=decision_type)
+    with transaction.atomic():
+        locked = Deal.objects.select_for_update().get(id=deal.id)
+        sequence = (DecisionEvidenceSnapshot.objects.filter(deal=locked).aggregate(last=Max("sequence"))["last"] or 0) + 1
+        item = DecisionEvidenceSnapshot.objects.create(
+            deal=locked,
+            sequence=sequence,
+            decision_type=decision_type,
+            schema_version=DECISION_EVIDENCE_SCHEMA_VERSION,
+            snapshot=snapshot,
+            snapshot_sha256=_decision_snapshot_hash(snapshot),
+            confirmed_by=request.user,
+        )
+        _audit(owner=locked.owner, deal=locked, actor=request.user, event_type="DECISION_EVIDENCE_CONFIRMED", payload={"snapshotId": str(item.id), "sequence": item.sequence, "decisionType": decision_type})
+    return Response(_decision_snapshot_data(item), status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET"])

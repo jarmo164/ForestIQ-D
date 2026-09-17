@@ -4,18 +4,20 @@ from __future__ import annotations
 from datetime import timedelta
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Organization, Privilege, PrivilegeCode, User
 from api.auth import token_pair
-from forestry.models import Cadastre, Owner, OwnerCadastre
+from forestry.models import Cadastre, CadastreLabel, CadastreNotification, Owner, OwnerCadastre
 from operations.models import Contract, Deal, DealOffer, DealStage
 from operations.p1_models import (
     ContactActivity,
     ContractVersion,
     DataQualityIssue,
+    DecisionEvidenceSnapshot,
     DealLossOutcome,
     NextAction,
     OwnershipRelation,
@@ -250,3 +252,71 @@ class P1WorkflowApiTests(TestCase):
         self.assertFalse(relation.is_active)
         self.assertTrue(relation.manual_protected)
         self.assertTrue(relation.events.filter(event_type="EXTERNAL_RESTORE_BLOCKED").exists())
+
+    def test_decision_evidence_preview_and_confirm_freeze_reproducible_snapshot(self):
+        self.owner.phone = ""
+        self.owner.email = "owner@example.test"
+        self.owner.last_cadastre_list_refresh = timezone.now() - timedelta(days=120)
+        self.owner.save(update_fields=("phone", "email", "last_cadastre_list_refresh"))
+        self.cadastre.area = Decimal("12.5000")
+        self.cadastre.forest_area = Decimal("8.2500")
+        self.cadastre.mk_date = timezone.now() - timedelta(days=2)
+        self.cadastre.save(update_fields=("area", "forest_area", "mk_date"))
+        CadastreLabel.objects.create(cadastre=self.cadastre, code="CONSERVATION_AREA", organization=self.organization)
+        CadastreNotification.objects.create(
+            id=990001,
+            notification_number=55001,
+            cadastre=self.cadastre,
+            registration_date=timezone.now() - timedelta(days=1),
+            archived=False,
+            organization=self.organization,
+        )
+        deal = self.create_deal(stage=DealStage.EVALUATION)
+        deal.recommended_purchase_price = Decimal("100000.00")
+        deal.proposed_offer_price = Decimal("95000.00")
+        deal.save(update_fields=("recommended_purchase_price", "proposed_offer_price"))
+
+        preview = self.client.get(f"/api/services/deals/{deal.id}/decision-evidence/preview")
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["snapshot"]["portfolioSummary"]["cadastreCount"], 1)
+        preview_codes = {signal["code"] for signal in preview.data["snapshot"]["signals"]}
+        self.assertIn("MISSING_CONTACT", preview_codes)
+        self.assertIn("STALE_REGISTRY_DATA", preview_codes)
+        self.assertIn("FRESH_FOREST_NOTICE", preview_codes)
+        self.assertIn("RESTRICTION_LABEL", preview_codes)
+
+        confirmed = self.client.post(
+            f"/api/services/deals/{deal.id}/decision-evidence",
+            {"decisionType": "EVALUATION"},
+            format="json",
+        )
+        self.assertEqual(confirmed.status_code, 201, confirmed.data)
+        snapshot_id = confirmed.data["id"]
+        self.assertEqual(confirmed.data["schemaVersion"], 1)
+        self.assertEqual(confirmed.data["confirmedBy"]["id"], self.admin.id)
+        self.assertEqual(confirmed.data["snapshot"]["deal"]["proposedOfferPrice"], 95000.0)
+        self.assertEqual(confirmed.data["snapshot"]["selectedCadastres"][0]["area"], 12.5)
+
+        deal.proposed_offer_price = Decimal("88000.00")
+        deal.save(update_fields=("proposed_offer_price",))
+        self.cadastre.area = Decimal("20.0000")
+        self.cadastre.save(update_fields=("area",))
+        stored = self.client.get(f"/api/services/deals/{deal.id}/decision-evidence")
+        self.assertEqual(stored.status_code, 200, stored.data)
+        frozen = next(item for item in stored.data if item["id"] == snapshot_id)
+        self.assertEqual(frozen["snapshot"]["deal"]["proposedOfferPrice"], 95000.0)
+        self.assertEqual(frozen["snapshot"]["selectedCadastres"][0]["area"], 12.5)
+
+        second = self.client.post(
+            f"/api/services/deals/{deal.id}/decision-evidence",
+            {"decisionType": "OFFER"},
+            format="json",
+        )
+        self.assertEqual(second.status_code, 201, second.data)
+        self.assertEqual(second.data["sequence"], 2)
+        self.assertEqual(second.data["snapshot"]["deal"]["proposedOfferPrice"], 88000.0)
+
+        immutable = DecisionEvidenceSnapshot.objects.get(id=snapshot_id)
+        immutable.snapshot = {"changed": True}
+        with self.assertRaises(ValidationError):
+            immutable.save()
