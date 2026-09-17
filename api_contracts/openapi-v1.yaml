@@ -1474,6 +1474,52 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/map/layers/{layer}:
+    get:
+      operationId: services_map_layers_retrieve
+      description: Return validated GeoDjango layers as WGS84 GeoJSON for the MapLibre
+        client.
+      parameters:
+      - in: path
+        name: layer
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/tiles/{layer}/{z}/{x}/{y}.pbf:
+    get:
+      operationId: services_map_tiles_.pbf_retrieve
+      description: Return an organization-scoped Mapbox Vector Tile from PostGIS geometry.
+      parameters:
+      - in: path
+        name: layer
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: x
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: y
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: z
+        schema:
+          type: integer
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/map/workbaskets:
     get:
       operationId: services_map_workbaskets_retrieve
@@ -1557,52 +1603,6 @@ paths:
         schema:
           type: string
           format: uuid
-        required: true
-      tags:
-      - services
-      responses:
-        '200':
-          description: No response body
-  /api/v1/services/map/layers/{layer}:
-    get:
-      operationId: services_map_layers_retrieve
-      description: Return validated GeoDjango layers as WGS84 GeoJSON for the MapLibre
-        client.
-      parameters:
-      - in: path
-        name: layer
-        schema:
-          type: string
-        required: true
-      tags:
-      - services
-      responses:
-        '200':
-          description: No response body
-  /api/v1/services/map/tiles/{layer}/{z}/{x}/{y}.pbf:
-    get:
-      operationId: services_map_tiles_.pbf_retrieve
-      description: Return an organization-scoped Mapbox Vector Tile from PostGIS geometry.
-      parameters:
-      - in: path
-        name: layer
-        schema:
-          type: string
-        required: true
-      - in: path
-        name: x
-        schema:
-          type: integer
-        required: true
-      - in: path
-        name: y
-        schema:
-          type: integer
-        required: true
-      - in: path
-        name: z
-        schema:
-          type: integer
         required: true
       tags:
       - services

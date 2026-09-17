@@ -237,8 +237,8 @@ export default function MapWorkspace() {
 
   const loadWorkbaskets = useCallback(async () => {
     try {
-      const records = await api.get<MapWorkbasket[]>("/services/map/workbaskets");
-      setWorkbaskets(records);
+      const records = await api.get<unknown>("/services/map/workbaskets");
+      setWorkbaskets(Array.isArray(records) ? records as MapWorkbasket[] : []);
     } catch (error) {
       setBasketStatus(error instanceof Error ? error.message : "Töökorve ei saanud laadida.");
     }
