@@ -108,6 +108,37 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/admin/data-quality/issues:
+    get:
+      operationId: services_admin_data_quality_issues_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/data-quality/issues/{issue_id}:
+    patch:
+      operationId: services_admin_data_quality_issues_partial_update
+      parameters:
+      - in: path
+        name: issue_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/data-quality/scan:
+    post:
+      operationId: services_admin_data_quality_scan_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/admin/integrations:
     get:
       operationId: services_admin_integrations_retrieve
@@ -175,6 +206,44 @@ paths:
         name: run_id
         schema:
           type: integer
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/loss-analysis:
+    get:
+      operationId: services_admin_loss_analysis_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/loss-reasons:
+    get:
+      operationId: services_admin_loss_reasons_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_admin_loss_reasons_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/loss-reasons/{reason_id}:
+    patch:
+      operationId: services_admin_loss_reasons_partial_update
+      parameters:
+      - in: path
+        name: reason_id
+        schema:
+          type: string
+          format: uuid
         required: true
       tags:
       - services
@@ -801,6 +870,74 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/contracts/{contract_id}/signing:
+    get:
+      operationId: services_contracts_signing_retrieve
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: services_contracts_signing_partial_update
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts/{contract_id}/signing/document:
+    post:
+      operationId: services_contracts_signing_document_create
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/contracts/{contract_id}/versions:
+    get:
+      operationId: services_contracts_versions_retrieve
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_contracts_versions_create
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/contracts/cadastre-details/{cadastre_id}:
     get:
       operationId: services_contracts_cadastre_details_retrieve
@@ -1045,6 +1182,34 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/deals/{deal_id}/next-action:
+    post:
+      operationId: services_deals_next_action_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/timeline:
+    get:
+      operationId: services_deals_timeline_retrieve
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/deals/evaluation-queue:
     get:
       operationId: services_deals_evaluation_queue_retrieve
@@ -1089,6 +1254,14 @@ paths:
         schema:
           type: string
         required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/workbench:
+    get:
+      operationId: services_deals_workbench_retrieve
       tags:
       - services
       responses:
@@ -1410,6 +1583,21 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/next-actions/{action_id}:
+    patch:
+      operationId: services_next_actions_partial_update
+      parameters:
+      - in: path
+        name: action_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/owner-statuses:
     get:
       operationId: services_owner_statuses_retrieve
@@ -1534,6 +1722,8 @@ paths:
   /api/v1/services/owners:
     get:
       operationId: services_owners_retrieve
+      description: Stable keyset owner search. The cursor is opaque and page size
+        is bounded.
       tags:
       - services
       responses:
@@ -1563,6 +1753,33 @@ paths:
           description: No response body
     post:
       operationId: services_owners_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/{owner_id}/activities:
+    get:
+      operationId: services_owners_activities_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_owners_activities_create
       parameters:
       - in: path
         name: owner_id
@@ -1656,6 +1873,47 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/owners/{owner_id}/ownership-relations:
+    get:
+      operationId: services_owners_ownership_relations_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_owners_ownership_relations_create
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/{owner_id}/timeline:
+    get:
+      operationId: services_owners_timeline_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/owners/imports/batches:
     get:
       operationId: services_owners_imports_batches_retrieve
@@ -1697,6 +1955,21 @@ paths:
   /api/v1/services/owners/imports/preview:
     post:
       operationId: services_owners_imports_preview_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/ownership-relations/{relation_id}:
+    patch:
+      operationId: services_ownership_relations_partial_update
+      parameters:
+      - in: path
+        name: relation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
       tags:
       - services
       responses:
