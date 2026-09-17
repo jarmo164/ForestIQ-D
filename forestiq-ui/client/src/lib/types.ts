@@ -34,6 +34,29 @@ export interface Owner {
   type?: string | null;
   cadastres?: Cadastre[];
 }
+export interface OwnerPortfolioSignal {
+  code: string;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  reason: string;
+  source: string;
+  observedAt?: number | string | null;
+  recommendedAction: string;
+  target: Record<string, unknown>;
+}
+export interface OwnerPortfolio {
+  owner: Owner;
+  summary: {
+    cadastreCount: number;
+    totalArea?: number | null;
+    forestArea?: number | null;
+    knownVolume?: number | null;
+    activeNoticeCount: number;
+    activeDealCount: number;
+  };
+  countyBreakdown: { county?: string | null; cadastreCount: number; area?: number | null }[];
+  freshness: { source: string; observedAt?: number | string | null; status: string }[];
+  signals: OwnerPortfolioSignal[];
+}
 export interface Cadastre {
   id: string;
   name?: string | null;

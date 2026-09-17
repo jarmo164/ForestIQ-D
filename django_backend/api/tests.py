@@ -18,7 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from api.auth import token_pair
 from api.urls import urlpatterns
 from accounts.models import Organization, OrganizationMembership, OrganizationRole, Privilege, PrivilegeCode, User
-from forestry.models import Cadastre, DataSyncRun, Owner, OwnerLog, OwnerStatus, OwnerStatusChange
+from forestry.models import Cadastre, CadastreLabel, CadastreNotification, DataSyncRun, ForestRegistryFeature, Owner, OwnerLog, OwnerStatus, OwnerStatusChange
 from operations.models import CompanyProfile, Contract, ContractHistory, ContractStatus, ContractTemplate, Deal, DealOffer, DealStage, InheritanceCase, Reminder
 from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
 
@@ -483,6 +483,48 @@ class MainParityWorkflowTests(TestCase):
         response = self.client.get("/api/services/registry/freshness")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["totalCadastres"], 1)
+
+    def test_owner_portfolio_returns_explainable_signals(self):
+        now = timezone.now()
+        self.owner.phone = ""
+        self.owner.email = "owner@example.test"
+        self.owner.last_cadastre_list_refresh = now - timedelta(days=120)
+        self.owner.save(update_fields=("phone", "email", "last_cadastre_list_refresh"))
+        self.cadastre.area = "12.50"
+        self.cadastre.forest_area = "9.25"
+        self.cadastre.county = "Tartu maakond"
+        self.cadastre.mk_date = now - timedelta(days=3)
+        self.cadastre.save(update_fields=("area", "forest_area", "county", "mk_date"))
+        CadastreLabel.objects.create(cadastre=self.cadastre, code="CONSERVATION_AREA")
+        CadastreNotification.objects.create(
+            id=91001,
+            notification_number=456,
+            cadastre=self.cadastre,
+            registration_date=now - timedelta(days=2),
+            archived=False,
+            area="1.50",
+            amount_to_be_cut="25.00",
+        )
+        ForestRegistryFeature.objects.create(
+            source_layer="metsaregister:eraldis",
+            source_id="feature-1",
+            cadastre=self.cadastre,
+            volume="83.50",
+            event_date=now - timedelta(days=1),
+        )
+        Deal.objects.create(owner=self.owner, sale_subject="FOREST", stage=DealStage.NEGOTIATION, offer_valid_until=timezone.localdate() + timedelta(days=3), created_by=self.admin)
+
+        response = self.client.get(f"/api/services/owners/{self.owner.id}/portfolio")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["summary"]["cadastreCount"], 1)
+        self.assertEqual(response.data["summary"]["totalArea"], 12.5)
+        self.assertEqual(response.data["summary"]["forestArea"], 9.25)
+        self.assertEqual(response.data["summary"]["knownVolume"], 83.5)
+        self.assertEqual(response.data["countyBreakdown"][0]["county"], "Tartu maakond")
+        signal_codes = {item["code"] for item in response.data["signals"]}
+        self.assertTrue({"MISSING_CONTACT", "STALE_REGISTRY_DATA", "FRESH_FOREST_NOTICE", "RESTRICTION_LABEL", "OFFER_DEADLINE_APPROACHING"}.issubset(signal_codes))
+        self.assertTrue(all(item["reason"] and item["source"] and item["recommendedAction"] for item in response.data["signals"]))
 
     def test_integration_runs_can_be_listed_from_the_main_contract_path(self):
         DataSyncRun.objects.create(cadastre=self.cadastre, source="cadastre", status=DataSyncRun.Status.SUCCESS)

@@ -1,14 +1,14 @@
 /** ForestIQ owner record with spatial, commercial and inheritance workflows in one operational view. */
 import { useEffect, useState } from "react";
 import { useLocation, useRoute } from "wouter";
-import { ArrowLeft, Bookmark, FileText, Map, MessageSquareText, Plus, Save, ShieldCheck, Trees } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BarChart3, Bookmark, Clock3, FileText, Map, MessageSquareText, Plus, Save, ShieldCheck, Trees } from "lucide-react";
 
 import { AppShell } from "@/components/AppShell";
 import { OwnerP1Panel } from "@/components/OwnerP1Panel";
 import { OwnerWorkflowPanel } from "@/components/OwnerWorkflowPanel";
 import { StatusPill } from "@/components/StatusPill";
 import { api } from "@/lib/api";
-import type { Owner, OwnerStatus } from "@/lib/types";
+import type { Owner, OwnerPortfolio, OwnerStatus } from "@/lib/types";
 
 type OwnershipTransition = {
   id: string;
@@ -20,12 +20,15 @@ type OwnershipTransition = {
 };
 
 const dateTime = (value: number | null) => value ? new Date(value).toLocaleString("et-EE") : "kuupäev puudub";
+const observed = (value: number | string | null | undefined) => typeof value === "number" ? new Date(value).toLocaleDateString("et-EE") : value ? new Date(value).toLocaleDateString("et-EE") : "puudub";
+const metric = (value: number | null | undefined, suffix = "") => value === null || value === undefined ? "—" : `${new Intl.NumberFormat("et-EE", { maximumFractionDigits: 2 }).format(value)}${suffix}`;
 
 export default function OwnerDetail() {
   const [, params] = useRoute("/owners/:id");
   const [, setLocation] = useLocation();
   const ownerId = params?.id || "";
   const [owner, setOwner] = useState<Owner | null>(null);
+  const [portfolio, setPortfolio] = useState<OwnerPortfolio | null>(null);
   const [statuses, setStatuses] = useState<OwnerStatus[]>([]);
   const [transitions, setTransitions] = useState<OwnershipTransition[]>([]);
   const [note, setNote] = useState("");
@@ -34,6 +37,7 @@ export default function OwnerDetail() {
 
   useEffect(() => {
     void refresh();
+    void api.get<OwnerPortfolio>(`/services/owners/${ownerId}/portfolio`).then(setPortfolio).catch(() => undefined);
     void api.get<OwnerStatus[]>("/services/owner-statuses").then(setStatuses).catch(() => undefined);
     void api.get<OwnershipTransition[]>(`/services/owners/${ownerId}/ownership-transitions`).then(setTransitions).catch(() => undefined);
   }, [ownerId]);
@@ -47,6 +51,7 @@ export default function OwnerDetail() {
     <button className="back-link" onClick={() => setLocation("/owners")}><ArrowLeft size={16} /> Tagasi registrisse</button>
     {error && <div className="connection-warning">{error}</div>}
     <section className="owner-hero"><div className="owner-identity"><div className="owner-monogram">{owner.name.slice(0, 1)}</div><div><p className="eyebrow">{owner.type || "OMANIK"}</p><h2>{owner.name}</h2><div className="owner-contact">{owner.phone || "telefon puudub"}<i />{owner.email || "e-post puudub"}<i />{owner.address || "aadress puudub"}</div></div></div><div className="owner-status-action"><StatusPill value={owner.status} /><select value={owner.status || ""} onChange={(event) => void changeStatus(event.target.value)}><option value="">Vali staatus</option>{statuses.map((status) => <option value={status.id} key={status.id}>{status.id.replaceAll("_", " ")}</option>)}</select></div></section>
+    {portfolio && <section className="panel owner-decision-panel"><div className="panel-heading"><div><p className="eyebrow">OTSUSETUGI</p><h3>Portfelli koondvaade ja signaalid</h3></div><BarChart3 size={19} /></div><div className="metrics-grid compact"><div><strong>{portfolio.summary.cadastreCount}</strong><span>kinnistut</span></div><div><strong>{metric(portfolio.summary.totalArea, " ha")}</strong><span>kogupindala</span></div><div><strong>{metric(portfolio.summary.forestArea, " ha")}</strong><span>metsamaa</span></div><div><strong>{metric(portfolio.summary.knownVolume, " tm")}</strong><span>teadaolev maht</span></div><div><strong>{portfolio.summary.activeNoticeCount}</strong><span>aktiivset teatist</span></div><div><strong>{portfolio.summary.activeDealCount}</strong><span>aktiivset tehingut</span></div></div><div className="owner-decision-grid"><div><h4><Clock3 size={15} /> Andmevärskus</h4>{portfolio.freshness.map((item) => <div className="decision-row" key={item.source}><span>{item.source}</span><b>{item.status}</b><small>{observed(item.observedAt)}</small></div>)}</div><div><h4><AlertTriangle size={15} /> Selgitatavad signaalid</h4>{portfolio.signals.length ? portfolio.signals.map((signal) => <div className="decision-signal" key={`${signal.code}-${signal.source}-${signal.observedAt || ""}`}><div><span className="status-pill warning">{signal.severity}</span><strong>{signal.code.replaceAll("_", " ")}</strong></div><p>{signal.reason}</p><small>{signal.source} · {observed(signal.observedAt)} · {signal.recommendedAction}</small></div>) : <div className="empty-state">Tähelepanusignaale ei ole.</div>}</div></div></section>}
     <section className="detail-grid"><article className="panel property-panel"><div className="panel-heading"><div><p className="eyebrow">KINNISTUD</p><h3>Omandiportfell</h3></div><span className="count-label">{owner.cadastres?.length || 0}</span></div><div className="property-image" style={{ backgroundImage: "linear-gradient(0deg, rgba(11,43,35,.72), rgba(11,43,35,.06)), url('/manus-storage/forestiq-forest-parcel_037fa144.jpg')" }}><span><Trees size={17} /> Ruumiandmete ülevaade</span></div><div className="cadastre-list">{owner.cadastres?.map((cadastre) => <div key={cadastre.id} className="cadastre-row"><Map size={17} /><div><strong>{cadastre.name || cadastre.id}</strong><small>{cadastre.id} · {cadastre.area ? `${cadastre.area} ha` : "pindala puudub"}</small></div><Bookmark size={16} className={cadastre.marked ? "marked" : ""} /></div>) || <div className="empty-state">Katastriüksusi ei ole lisatud.</div>}</div></article><article className="panel log-panel"><div className="panel-heading"><div><p className="eyebrow">VANA KONTAKTLOGI</p><h3>Vaba tekstiga märkus</h3></div><FileText size={19} /></div><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Lisa legacy-märkus…" /><button className="secondary-action" onClick={() => void addLog()}><Plus size={16} /> Lisa töölogisse</button><div className="quick-actions"><button><MessageSquareText size={16} /> Saada sõnum</button><button><Save size={16} /> Salvesta muudatused</button></div></article></section>
     <OwnerP1Panel ownerId={ownerId} />
     <section className="panel ownership-audit-panel"><div className="panel-heading"><div><p className="eyebrow">OMANDIMUUTUSTE AUDIT</p><h3>Allikas ja töötluse aeg</h3></div><ShieldCheck size={19} /></div><div className="ownership-audit-list">{transitions.map((transition) => <div className="ownership-audit-row" key={transition.id}><div><strong>{transition.type.replaceAll("_", " ")}</strong><small>{transition.cadastreId || "katastriüksus puudub"} · sündmus {dateTime(transition.occurredAt)}</small></div><div><span>{transition.sourceReference || "allikaviide puudub"}</span><small>Töödeldud {dateTime(transition.recordedAt)}</small></div></div>)}{!transitions.length && <div className="empty-state">Selle omaniku omandimuutuste auditikirjed puuduvad.</div>}</div></section>
