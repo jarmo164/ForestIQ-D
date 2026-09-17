@@ -1,5 +1,5 @@
 /** ForestIQ Landscape Desk design: fixed dark spruce navigation and a spacious operational surface. */
-import { BadgeEuro, BarChart3, Bell, BookOpenText, ChevronRight, ClipboardList, Compass, FileText, Gauge, Gavel, LayoutDashboard, LogOut, MapPinned, MessagesSquare, Phone, Settings2, UsersRound, type LucideIcon } from "lucide-react";
+import { BadgeEuro, BarChart3, Bell, BookOpenText, ChevronRight, ClipboardList, Compass, FileText, Gauge, Gavel, LayoutDashboard, ListChecks, LogOut, MapPinned, MessagesSquare, Phone, Settings2, UsersRound, type LucideIcon } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
 import { useAuth } from "@/contexts/AuthContext";
@@ -12,6 +12,7 @@ const navigationIcons: Record<string, LucideIcon> = {
   "/owners": UsersRound,
   "/sales": ClipboardList,
   "/deals": BadgeEuro,
+  "/operations": ListChecks,
   "/inheritance": Gavel,
   "/map": MapPinned,
   "/workdesk/evaluator": Compass,
