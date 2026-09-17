@@ -174,6 +174,12 @@ export async function installSeededApi(page: Page) {
       });
     if (pathname === `/api/services/owners/${owner.id}` && method === "GET")
       return json(route, owner);
+    if (pathname === `/api/services/owners/${owner.id}/activities` && method === "GET")
+      return json(route, []);
+    if (pathname === `/api/services/owners/${owner.id}/ownership-relations` && method === "GET")
+      return json(route, { items: [], nextCursor: null, pageSize: 20 });
+    if (pathname === `/api/services/owners/${owner.id}/timeline` && method === "GET")
+      return json(route, []);
     if (pathname === "/api/services/owner-statuses")
       return json(route, [
         {
