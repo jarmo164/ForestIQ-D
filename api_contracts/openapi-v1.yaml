@@ -1900,6 +1900,20 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/owners/{owner_id}/portfolio:
+    get:
+      operationId: services_owners_portfolio_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/owners/{owner_id}/timeline:
     get:
       operationId: services_owners_timeline_retrieve

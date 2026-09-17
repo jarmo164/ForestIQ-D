@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.db import connection, transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import TruncDay, TruncHour, TruncMonth, TruncWeek
 from django.contrib.gis.geos import Polygon
 from django.http import FileResponse, HttpResponse
@@ -30,8 +30,8 @@ from forestry.models import (
     CadastreLabel,
     CadastreNotification,
     CadastreSubPart,
-    ForestRegistryFeature,
     DataSyncRun,
+    ForestRegistryFeature,
     Owner,
     OwnerFollowing,
     OwnerLog,
@@ -566,6 +566,89 @@ def owner_detail(request, owner_id: str):
         owner.refresh_from_db(fields=["version"])
         return version_conflict_response(owner, expected_version)
     return Response(owner_data(updated_owner))
+
+
+def _portfolio_source(name: str, observed_at, status: str = "OBSERVED") -> dict:
+    return {"source": name, "observedAt": json_value(observed_at), "status": status}
+
+
+def _portfolio_signal(code: str, severity: str, reason: str, source: str, observed_at, recommended_action: str, target: dict | None = None) -> dict:
+    return {
+        "code": code,
+        "severity": severity,
+        "reason": reason,
+        "source": source,
+        "observedAt": json_value(observed_at),
+        "recommendedAction": recommended_action,
+        "target": target or {},
+    }
+
+
+@api_view(["GET"])
+@permission_classes([CanManageOwners])
+def owner_portfolio(request, owner_id: str):
+    owner, denied = _owner_or_forbidden(request, owner_id)
+    if denied:
+        return denied
+
+    cadastres = owner.cadastres.prefetch_related("labels").all()
+    cadastre_ids = list(cadastres.values_list("id", flat=True))
+    cadastre_totals = cadastres.aggregate(
+        total_area=Sum("area"),
+        forest_area=Sum("forest_area"),
+        latest_mk_date=Max("mk_date"),
+    )
+    notifications = CadastreNotification.objects.filter(cadastre_id__in=cadastre_ids)
+    active_notifications = notifications.filter(archived=False)
+    notification_totals = notifications.aggregate(latest_registration=Max("registration_date"))
+    registry_features = ForestRegistryFeature.objects.filter(cadastre_id__in=cadastre_ids)
+    registry_totals = registry_features.aggregate(known_volume=Sum("volume"), latest_event=Max("event_date"))
+    active_deals = Deal.objects.filter(owner=owner).exclude(stage__in=[DealStage.WON, DealStage.LOST, DealStage.CANCELLED])
+
+    signals = []
+    now = timezone.now()
+    if not owner.phone or not owner.email:
+        missing = ", ".join(item for item, empty in (("phone", not owner.phone), ("email", not owner.email)) if empty)
+        signals.append(_portfolio_signal("MISSING_CONTACT", "HIGH", f"Owner is missing {missing}.", "owner", now, "Complete owner contact data.", {"ownerId": owner.id}))
+    if owner.last_cadastre_list_refresh is None or owner.last_cadastre_list_refresh < now - timedelta(days=90):
+        signals.append(_portfolio_signal("STALE_REGISTRY_DATA", "MEDIUM", "Owner cadastre list has not been refreshed within 90 days.", "owner.lastCadastreListRefresh", owner.last_cadastre_list_refresh, "Refresh the owner portfolio before making an offer.", {"ownerId": owner.id}))
+    fresh_cutoff = now - timedelta(days=30)
+    for notice in active_notifications.filter(registration_date__gte=fresh_cutoff).order_by("-registration_date", "-id")[:5]:
+        signals.append(_portfolio_signal("FRESH_FOREST_NOTICE", "MEDIUM", f"Active forest notice {notice.notification_number} was registered recently.", "metsaregister.notifications", notice.registration_date, "Review the notice before valuation.", {"cadastreId": notice.cadastre_id, "notificationId": notice.id}))
+    restricted_labels = {"CONSERVATION_AREA", "DEAD_LAND", "SWAMP"}
+    for cadastre in cadastres:
+        labels = sorted(label.code for label in cadastre.labels.all() if label.code in restricted_labels)
+        if labels:
+            signals.append(_portfolio_signal("RESTRICTION_LABEL", "MEDIUM", f"Cadastre has restriction labels: {', '.join(labels)}.", "cadastre.labels", now, "Check restrictions before valuation.", {"cadastreId": cadastre.id, "labels": labels}))
+    offer_cutoff = date.today() + timedelta(days=7)
+    for deal in active_deals.filter(offer_valid_until__isnull=False, offer_valid_until__lte=offer_cutoff).order_by("offer_valid_until", "id")[:5]:
+        signals.append(_portfolio_signal("OFFER_DEADLINE_APPROACHING", "HIGH", f"Active {deal.stage.lower()} deal offer deadline is approaching.", "commercial_deals.offer_valid_until", deal.offer_valid_until, "Contact the owner or update the offer plan.", {"dealId": str(deal.id)}))
+
+    county_breakdown = [
+        {"county": item["county"] or None, "cadastreCount": item["count"], "area": json_value(item["area"])}
+        for item in cadastres.values("county").annotate(count=Count("id"), area=Sum("area")).order_by("county")
+    ]
+    return Response(
+        {
+            "owner": owner_summary(owner),
+            "summary": {
+                "cadastreCount": len(cadastre_ids),
+                "totalArea": json_value(cadastre_totals["total_area"]),
+                "forestArea": json_value(cadastre_totals["forest_area"]),
+                "knownVolume": json_value(registry_totals["known_volume"]),
+                "activeNoticeCount": active_notifications.count(),
+                "activeDealCount": active_deals.count(),
+            },
+            "countyBreakdown": county_breakdown,
+            "freshness": [
+                _portfolio_source("owner.lastCadastreListRefresh", owner.last_cadastre_list_refresh, "STALE" if owner.last_cadastre_list_refresh is None or owner.last_cadastre_list_refresh < now - timedelta(days=90) else "OBSERVED"),
+                _portfolio_source("cadastre.mkDate", cadastre_totals["latest_mk_date"], "MISSING" if cadastre_totals["latest_mk_date"] is None else "OBSERVED"),
+                _portfolio_source("metsaregister.notifications", notification_totals["latest_registration"], "MISSING" if notification_totals["latest_registration"] is None else "OBSERVED"),
+                _portfolio_source("metsaregister.registryFeatures", registry_totals["latest_event"], "MISSING" if registry_totals["latest_event"] is None else "OBSERVED"),
+            ],
+            "signals": signals,
+        }
+    )
 
 
 @api_view(["POST"])

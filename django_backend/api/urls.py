@@ -116,6 +116,7 @@ urlpatterns = [
     path("services/owners/<str:owner_id>/activities", p1.owner_activities),
     path("services/owners/<str:owner_id>/timeline", p1.owner_timeline),
     path("services/owners/<str:owner_id>/ownership-relations", p1.owner_relations),
+    path("services/owners/<str:owner_id>/portfolio", views.owner_portfolio),
     path("services/ownership-relations/<uuid:relation_id>", p1.ownership_relation_detail),
     path("services/next-actions/<uuid:action_id>", p1.next_action_detail),
     path("services/owners/<str:owner_id>", views.owner_detail),
