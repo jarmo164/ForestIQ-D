@@ -3,7 +3,7 @@ import { BadgeEuro, FileText, Gavel, Plus, RefreshCw, ShieldCheck } from "lucide
 import { Link } from "wouter";
 
 import { api } from "@/lib/api";
-import type { Deal, InheritanceCase, Owner } from "@/lib/types";
+import type { Deal, DecisionEvidencePreview, InheritanceCase, Owner } from "@/lib/types";
 
 type OwnershipEvent = { id: string; cadastreId?: string | null; type: string; occurredAt?: number | null; sourceReference?: string | null };
 
@@ -14,6 +14,7 @@ export function OwnerWorkflowPanel({ owner }: { owner: Owner }) {
   const [error, setError] = useState("");
   const [evaluationAmount, setEvaluationAmount] = useState("");
   const [offerAmount, setOfferAmount] = useState("");
+  const [evidencePreviews, setEvidencePreviews] = useState<Record<string, DecisionEvidencePreview>>({});
 
   const refresh = () => Promise.all([
     api.get<Deal[]>(`/services/deals/owners/${owner.id}`),
@@ -57,6 +58,24 @@ export function OwnerWorkflowPanel({ owner }: { owner: Owner }) {
       void refresh();
     } catch (err) { setError(err instanceof Error ? err.message : "Pakkumise saatmine ebaõnnestus."); }
   };
+  const previewEvidence = async (deal: Deal, decisionType: "EVALUATION" | "OFFER") => {
+    try {
+      const query = new URLSearchParams({ decisionType });
+      const preview = await api.get<DecisionEvidencePreview>(`/services/deals/${deal.id}/decision-evidence/preview?${query.toString()}`);
+      setEvidencePreviews((current) => ({ ...current, [deal.id]: preview }));
+    } catch (err) { setError(err instanceof Error ? err.message : "Tõenduspildi eelvaadet ei saanud laadida."); }
+  };
+  const confirmEvidence = async (deal: Deal, decisionType: "EVALUATION" | "OFFER") => {
+    try {
+      await api.post(`/services/deals/${deal.id}/decision-evidence`, { decisionType });
+      setEvidencePreviews((current) => {
+        const next = { ...current };
+        delete next[deal.id];
+        return next;
+      });
+      void refresh();
+    } catch (err) { setError(err instanceof Error ? err.message : "Tõenduspildi kinnitamine ebaõnnestus."); }
+  };
 
   const checkNotice = async () => {
     try { await api.post(`/services/inheritance/owners/${owner.id}/official-notices/check`, {}); void refresh(); }
@@ -80,6 +99,9 @@ export function OwnerWorkflowPanel({ owner }: { owner: Owner }) {
       <div className="mt-4 space-y-2">
         {deals.map((deal) => <div className="rounded-xl bg-muted p-3 text-sm" key={deal.id}>
           <strong>{deal.stage.replaceAll("_", " ")}</strong><p>{deal.saleSubject} · {deal.parcels.length} kinnistut · {deal.offers.length} pakkumist</p>
+          {deal.latestDecisionEvidenceSnapshot && <p className="mt-2 text-xs text-muted-foreground">Tõenduspilt #{deal.latestDecisionEvidenceSnapshot.sequence} · {deal.latestDecisionEvidenceSnapshot.decisionType} · {deal.latestDecisionEvidenceSnapshot.signalCount ?? 0} signaali</p>}
+          {evidencePreviews[deal.id] && <div className="mt-2 rounded-lg border bg-background p-2 text-xs"><strong>Eelvaade</strong><p>{evidencePreviews[deal.id].snapshot.portfolioSummary.cadastreCount} kinnistut · {evidencePreviews[deal.id].snapshot.signals.length} signaali · räsi {evidencePreviews[deal.id].snapshotSha256.slice(0, 10)}</p></div>}
+          <div className="mt-3 flex flex-wrap gap-2"><button className="secondary-action" onClick={() => void previewEvidence(deal, deal.stage === "NEGOTIATION" ? "OFFER" : "EVALUATION")}>Eelvaata tõenduspilti</button><button className="secondary-action" onClick={() => void confirmEvidence(deal, deal.stage === "NEGOTIATION" ? "OFFER" : "EVALUATION")}>Kinnita tõenduspilt</button></div>
           {deal.stage === "EVALUATION" && <div className="mt-3 flex gap-2"><input aria-label="Hindamise pakkumishind" className="min-w-0 rounded-md border bg-background px-2 py-1" inputMode="decimal" value={evaluationAmount} onChange={(event) => setEvaluationAmount(event.target.value)} placeholder="Hind EUR" /><button className="secondary-action" onClick={() => void approveEvaluation(deal)}>Kinnita hindamine</button></div>}
           {deal.stage === "NEGOTIATION" && <div className="mt-3 flex gap-2"><input aria-label="Pakkumise summa" className="min-w-0 rounded-md border bg-background px-2 py-1" inputMode="decimal" value={offerAmount} onChange={(event) => setOfferAmount(event.target.value)} placeholder="EUR" /><button className="secondary-action" onClick={() => void sendOffer(deal)}>Saada pakkumine</button></div>}
           {deal.stage === "WON" && <Link className="secondary-action mt-3" href={`/contracts?dealId=${encodeURIComponent(deal.id)}`}><FileText size={16} /> Koosta leping</Link>}

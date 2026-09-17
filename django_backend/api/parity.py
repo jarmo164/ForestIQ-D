@@ -37,6 +37,7 @@ from operations.models import (
     OwnershipTransitionEvent,
     Reminder,
 )
+from operations.p1_models import DecisionEvidenceSnapshot
 
 from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
 
@@ -82,6 +83,7 @@ def _owner_access(request, owner_id: str):
 
 
 def _deal_data(deal: Deal) -> dict:
+    latest_snapshot = DecisionEvidenceSnapshot.objects.filter(deal=deal).select_related("confirmed_by").order_by("-sequence").first()
     offers = [
         {
             "id": str(item.id), "revision": item.revision, "kind": item.kind, "status": item.status,
@@ -106,6 +108,17 @@ def _deal_data(deal: Deal) -> dict:
         "returnedReason": deal.returned_reason or None, "lossReason": deal.loss_reason or None,
         "closedAt": json_value(deal.closed_at), "createdAt": json_value(deal.created_at), "updatedAt": json_value(deal.updated_at),
         "offers": offers,
+        "latestDecisionEvidenceSnapshot": {
+            "id": str(latest_snapshot.id),
+            "sequence": latest_snapshot.sequence,
+            "decisionType": latest_snapshot.decision_type,
+            "schemaVersion": latest_snapshot.schema_version,
+            "snapshotSha256": latest_snapshot.snapshot_sha256,
+            "confirmedBy": user_data(latest_snapshot.confirmed_by),
+            "confirmedAt": json_value(latest_snapshot.confirmed_at),
+            "summary": latest_snapshot.snapshot.get("portfolioSummary", {}),
+            "signalCount": len(latest_snapshot.snapshot.get("signals", [])),
+        } if latest_snapshot else None,
     }
 
 

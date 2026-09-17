@@ -43,6 +43,8 @@ urlpatterns = [
     path("services/deals/evaluation-queue", parity.deal_evaluation_queue),
     path("services/deals/<str:deal_id>/next-action", p1.deal_next_action),
     path("services/deals/<str:deal_id>/timeline", p1.deal_timeline),
+    path("services/deals/<str:deal_id>/decision-evidence/preview", p1.deal_decision_evidence_preview),
+    path("services/deals/<str:deal_id>/decision-evidence", p1.deal_decision_evidence_snapshots),
     path("services/deals/<str:deal_id>/evaluation-assignment/claim", parity.deal_evaluation_claim),
     path("services/deals/<str:deal_id>/evaluation-assignment", parity.deal_evaluation_assignment),
     path("services/deals/<str:deal_id>/evaluations", parity.deal_evaluation_submit),

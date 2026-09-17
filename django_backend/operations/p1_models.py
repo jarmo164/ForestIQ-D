@@ -123,6 +123,34 @@ class DealLossOutcome(OrganizationScopedModel):
         indexes = [models.Index(fields=("organization", "created_at"), name="p1_loss_created_idx")]
 
 
+class DecisionEvidenceSnapshot(OrganizationScopedModel):
+    class DecisionType(models.TextChoices):
+        EVALUATION = "EVALUATION", "Evaluation"
+        OFFER = "OFFER", "Offer"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    deal = models.ForeignKey("operations.Deal", on_delete=models.PROTECT, related_name="decision_evidence_snapshots")
+    sequence = models.PositiveIntegerField()
+    decision_type = models.CharField(max_length=20, choices=DecisionType.choices, default=DecisionType.EVALUATION)
+    schema_version = models.PositiveSmallIntegerField(default=1)
+    snapshot = models.JSONField(default=dict)
+    snapshot_sha256 = models.CharField(max_length=64)
+    confirmed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="confirmed_decision_evidence_snapshots")
+    confirmed_at = models.DateTimeField(auto_now_add=True)
+    organization_parent_fields = ("deal",)
+
+    class Meta:
+        db_table = "p2_decision_evidence_snapshots"
+        ordering = ("deal_id", "-sequence")
+        constraints = [models.UniqueConstraint(fields=("organization", "deal", "sequence"), name="p2_uq_decision_snapshot_sequence")]
+        indexes = [models.Index(fields=("organization", "deal", "confirmed_at"), name="p2_decision_snapshot_deal_idx")]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Decision evidence snapshots are immutable.")
+        return super().save(*args, **kwargs)
+
+
 class ContractSigning(OrganizationScopedModel):
     class State(models.TextChoices):
         PREPARING = "PREPARING", "Preparing"

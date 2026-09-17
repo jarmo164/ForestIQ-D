@@ -1182,6 +1182,47 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/deals/{deal_id}/decision-evidence:
+    get:
+      operationId: services_deals_decision_evidence_retrieve
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_deals_decision_evidence_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '201':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/decision-evidence/preview:
+    get:
+      operationId: services_deals_decision_evidence_preview_retrieve
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/deals/{deal_id}/next-action:
     post:
       operationId: services_deals_next_action_create
