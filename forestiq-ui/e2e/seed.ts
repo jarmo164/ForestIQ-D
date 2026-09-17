@@ -174,6 +174,34 @@ export async function installSeededApi(page: Page) {
       });
     if (pathname === `/api/services/owners/${owner.id}` && method === "GET")
       return json(route, owner);
+    if (pathname === `/api/services/owners/${owner.id}/portfolio` && method === "GET")
+      return json(route, {
+        owner,
+        summary: {
+          cadastreCount: 1,
+          totalArea: 12.4,
+          forestArea: 8.1,
+          knownVolume: 145.5,
+          activeNoticeCount: 1,
+          activeDealCount: 1,
+        },
+        countyBreakdown: [{ county: "Harju maakond", cadastreCount: 1, area: 12.4 }],
+        freshness: [
+          { source: "owner.lastCadastreListRefresh", observedAt: 1788096000000, status: "OBSERVED" },
+          { source: "cadastre.mkDate", observedAt: 1788182400000, status: "OBSERVED" },
+        ],
+        signals: [
+          {
+            code: "FRESH_FOREST_NOTICE",
+            severity: "MEDIUM",
+            reason: "Seeded active forest notice was registered recently.",
+            source: "metsaregister.notifications",
+            observedAt: 1788182400000,
+            recommendedAction: "Review the notice before valuation.",
+            target: { cadastreId: owner.cadastres[0].id },
+          },
+        ],
+      });
     if (pathname === `/api/services/owners/${owner.id}/activities` && method === "GET")
       return json(route, []);
     if (pathname === `/api/services/owners/${owner.id}/ownership-relations` && method === "GET")
