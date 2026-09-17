@@ -151,6 +151,59 @@ class DecisionEvidenceSnapshot(OrganizationScopedModel):
         return super().save(*args, **kwargs)
 
 
+class MapWorkbasket(OrganizationScopedModel):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        PENDING = "PENDING", "Pending"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class Permission(models.TextChoices):
+        VIEW = "VIEW", "View"
+        EDIT = "EDIT", "Edit"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=160)
+    description = models.TextField(blank=True)
+    purpose = models.CharField(max_length=500, blank=True)
+    due_at = models.DateTimeField(null=True, blank=True)
+    permission = models.CharField(max_length=10, choices=Permission.choices, default=Permission.VIEW)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_map_workbaskets")
+    assigned_to_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="assigned_map_workbaskets")
+    assigned_to_role = models.CharField(max_length=80, blank=True)
+    accepted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="accepted_map_workbaskets")
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "p2_map_workbaskets"
+        ordering = ("-updated_at", "-created_at", "name")
+        indexes = [
+            models.Index(fields=("organization", "created_by", "status"), name="p2_workbasket_creator_idx"),
+            models.Index(fields=("organization", "assigned_to_user", "status"), name="p2_workbasket_user_idx"),
+            models.Index(fields=("organization", "assigned_to_role", "status"), name="p2_workbasket_role_idx"),
+        ]
+
+
+class MapWorkbasketItem(OrganizationScopedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    basket = models.ForeignKey(MapWorkbasket, on_delete=models.CASCADE, related_name="items")
+    cadastre = models.ForeignKey("forestry.Cadastre", on_delete=models.PROTECT, related_name="map_workbasket_items")
+    added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="added_map_workbasket_items")
+    added_at = models.DateTimeField(auto_now_add=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    organization_parent_fields = ("basket", "cadastre")
+
+    class Meta:
+        db_table = "p2_map_workbasket_items"
+        ordering = ("sort_order", "added_at", "id")
+        constraints = [models.UniqueConstraint(fields=("organization", "basket", "cadastre"), name="p2_uq_workbasket_cadastre")]
+        indexes = [models.Index(fields=("organization", "cadastre"), name="p2_workbasket_cadastre_idx")]
+
+
 class ContractSigning(OrganizationScopedModel):
     class State(models.TextChoices):
         PREPARING = "PREPARING", "Preparing"
