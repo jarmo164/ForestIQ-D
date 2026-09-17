@@ -1127,6 +1127,47 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/deals/{deal_id}/decision-evidence:
+    get:
+      operationId: services_deals_decision_evidence_retrieve
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_deals_decision_evidence_create
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/deals/{deal_id}/decision-evidence/preview:
+    get:
+      operationId: services_deals_decision_evidence_preview_retrieve
+      parameters:
+      - in: path
+        name: deal_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/deals/{deal_id}/evaluation-assignment:
     put:
       operationId: services_deals_evaluation_assignment_update
@@ -1171,47 +1212,6 @@ paths:
   /api/v1/services/deals/{deal_id}/evaluations:
     post:
       operationId: services_deals_evaluations_create
-      parameters:
-      - in: path
-        name: deal_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - services
-      responses:
-        '200':
-          description: No response body
-  /api/v1/services/deals/{deal_id}/decision-evidence:
-    get:
-      operationId: services_deals_decision_evidence_retrieve
-      parameters:
-      - in: path
-        name: deal_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - services
-      responses:
-        '200':
-          description: No response body
-    post:
-      operationId: services_deals_decision_evidence_create
-      parameters:
-      - in: path
-        name: deal_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - services
-      responses:
-        '201':
-          description: No response body
-  /api/v1/services/deals/{deal_id}/decision-evidence/preview:
-    get:
-      operationId: services_deals_decision_evidence_preview_retrieve
       parameters:
       - in: path
         name: deal_id
