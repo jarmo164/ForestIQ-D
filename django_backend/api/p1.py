@@ -388,7 +388,7 @@ def map_workbasket_transfer(request, basket_id: str):
         return _detail("Provide exactly one of assignedToUserId or assignedToRole.")
     if assigned_user_id:
         assigned_user = get_object_or_404(User, id=assigned_user_id)
-        if not assigned_user.organizations.filter(id=request_organization_id()).exists():
+        if not assigned_user.organizations.filter(id=request_organization_id(request)).exists():
             return _detail("Cannot transfer a map workbasket across organizations.", status.HTTP_403_FORBIDDEN)
     try:
         due_at = _parse_datetime(request.data.get("dueAt"), "dueAt")
