@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   django:
@@ -77,21 +77,6 @@ jobs:
       - name: Run Django system checks
         working-directory: django_backend
         run: python manage.py check
-
-      - name: Refresh P1 OpenAPI snapshot on the PR branch
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/p1-workflows-98-105' }}
-        working-directory: django_backend
-        run: |
-          python manage.py spectacular --file /tmp/openapi-v1.yaml --validate --urlconf config.api_v1_urls
-          cd ..
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin "$GITHUB_HEAD_REF"
-          git checkout -B "$GITHUB_HEAD_REF" FETCH_HEAD
-          cp /tmp/openapi-v1.yaml api_contracts/openapi-v1.yaml
-          git add api_contracts/openapi-v1.yaml
-          git commit -m "Refresh versioned OpenAPI contract" || exit 0
-          git push origin "$GITHUB_HEAD_REF"
 
       - name: Generate and verify the versioned OpenAPI contract
         working-directory: django_backend
@@ -201,22 +186,6 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: forestiq-ui/pnpm-lock.yaml
-
-      - name: Refresh P1 frontend lockfile on the PR branch
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/p1-workflows-98-105' }}
-        working-directory: forestiq-ui
-        run: |
-          pnpm install --lockfile-only --no-frozen-lockfile
-          cp pnpm-lock.yaml /tmp/pnpm-lock.yaml
-          cd ..
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin "$GITHUB_HEAD_REF"
-          git checkout -B "$GITHUB_HEAD_REF" FETCH_HEAD
-          cp /tmp/pnpm-lock.yaml forestiq-ui/pnpm-lock.yaml
-          git add forestiq-ui/pnpm-lock.yaml
-          git commit -m "Refresh frontend lockfile" || exit 0
-          git push origin "$GITHUB_HEAD_REF"
 
       - name: Install frontend dependencies
         working-directory: forestiq-ui

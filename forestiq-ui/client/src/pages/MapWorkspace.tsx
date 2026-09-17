@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import type { Map as MapLibreMap, MapLayerMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   Eye,
@@ -366,7 +367,7 @@ export default function MapWorkspace() {
         instance.on("mouseleave", interactionLayer, () => {
           instance.getCanvas().style.cursor = "";
         });
-        instance.on("click", interactionLayer, (event) => {
+        instance.on("click", interactionLayer, (event: MapLayerMouseEvent) => {
           const rawProperties = event.features?.[0]?.properties as MapProperties | undefined;
           if (!rawProperties) return;
           const properties = normaliseProperties(rawProperties);
