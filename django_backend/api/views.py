@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.db import connection, transaction
-from django.db.models import Count, Max, Q, Sum
+from django.db.models import Count, F, Max, Q, Sum
 from django.db.models.functions import TruncDay, TruncHour, TruncMonth, TruncWeek
 from django.contrib.gis.geos import Polygon
 from django.http import FileResponse, HttpResponse
@@ -264,16 +264,16 @@ def map_vector_tile(request, layer: str, z: int, x: int, y: int):
 
     cadastres = _map_cadastre_queryset(request)
     if layer == "cadastres":
-        queryset = cadastres.exclude(boundary__isnull=True)
-        properties = ("id", "name", "county", "municipality", "area")
+        queryset = cadastres.exclude(boundary__isnull=True).annotate(public_id=F("external_id"))
+        properties = ("public_id", "name", "county", "municipality", "area")
         geometry_field = "boundary"
     elif layer == "subparts":
-        queryset = CadastreSubPart.objects.exclude(boundary__isnull=True).filter(cadastre__in=cadastres)
-        properties = ("id", "cadastre_id", "sub_part_code", "tree_type_code", "area")
+        queryset = CadastreSubPart.objects.exclude(boundary__isnull=True).filter(cadastre__in=cadastres).annotate(public_cadastre_id=F("cadastre__external_id"))
+        properties = ("id", "public_cadastre_id", "sub_part_code", "tree_type_code", "area")
         geometry_field = "boundary"
     else:
-        queryset = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).filter(cadastre__in=cadastres)
-        properties = ("id", "cadastre_id", "subpart_code", "title", "work_code", "decision", "area", "volume")
+        queryset = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).filter(cadastre__in=cadastres).annotate(public_cadastre_id=F("cadastre__external_id"))
+        properties = ("id", "public_cadastre_id", "subpart_code", "title", "work_code", "decision", "area", "volume")
         geometry_field = "spatial_geometry"
 
     organization_id = str(request_organization_id(request))
