@@ -663,7 +663,7 @@ export default function MapWorkspace() {
             <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[.18em] text-[#31705a]">
               <Trees className="h-4 w-4" /> Keskne ruumiandmete töölaud
             </div>
-            <h1 className="font-serif text-3xl font-semibold tracking-tight">Metsa- ja katastrivaade</h1>
+            <h2 className="font-serif text-3xl font-semibold tracking-tight">Kaardi töölaud</h2>
             <p className="mt-1 text-sm text-[#627469]">
               Suured katastri- ja registrikihid laetakse MVT-paanidena; klõpsa katastriüksusel tervikvaate avamiseks.
             </p>
