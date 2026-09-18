@@ -685,21 +685,24 @@ export default function MapWorkspace() {
               <MapPinned className="h-4 w-4" /> Ühtne kaardiotsing
             </div>
             <div className="mt-3 rounded-xl border border-[#e2eae0] bg-white p-3">
-              <div className="flex gap-2">
+              <label htmlFor="map-search-query" className="block text-xs font-semibold text-[#587065]">Katastritunnus või aadress</label>
+              <p id="map-search-help" className="mt-1 text-xs leading-5 text-[#65756b]">Sisesta vähemalt kaks märki, vajuta Enter ning vali tulemus klaviatuuriga. Detailaken avaneb valitud katastri kohta.</p>
+              <div className="mt-2 flex gap-2">
                 <input
-                  aria-label="Otsi katastritunnuse või aadressi järgi"
+                  id="map-search-query"
+                  aria-describedby="map-search-help map-search-status"
                   className="min-w-0 flex-1 rounded-lg border border-[#dbe8d8] px-2 py-1.5 text-sm"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                   onKeyDown={(event) => { if (event.key === "Enter") void runMapSearch(); }}
                   placeholder="Katastritunnus või aadress"
                 />
-                <button className="secondary-action" onClick={() => void runMapSearch()}>Otsi</button>
+                <button type="button" className="secondary-action" onClick={() => void runMapSearch()}>Otsi</button>
               </div>
-              {searchStatus && <p className="mt-2 text-xs text-[#65756b]" role="status">{searchStatus}</p>}
-              <div className="mt-2 space-y-1" role="listbox" aria-label="Kaardi otsingutulemused">
+              <p id="map-search-status" className="mt-2 min-h-4 text-xs text-[#65756b]" role="status" aria-live="polite">{searchStatus}</p>
+              <div className="mt-2 space-y-1" aria-label="Kaardi otsingutulemused">
                 {searchResults.slice(0, 6).map((result) => (
-                  <button key={`${result.source}-${result.id}-${result.label}`} role="option" aria-selected={workspaceId === result.cadastreId} className="block w-full rounded-lg bg-[#f5f8f3] px-2 py-1.5 text-left text-xs focus:outline focus:outline-2 focus:outline-[#28704f]" onClick={() => openSearchResult(result)}>
+                  <button key={`${result.source}-${result.id}-${result.label}`} type="button" aria-current={workspaceId === result.cadastreId ? "true" : undefined} className="block w-full rounded-lg bg-[#f5f8f3] px-2 py-1.5 text-left text-xs focus:outline focus:outline-2 focus:outline-[#28704f]" onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openSearchResult(result); } }} onClick={() => openSearchResult(result)}>
                     <strong>{result.label || result.cadastreId || result.id}</strong>
                     <span className="ml-2 text-[#718176]">{result.source}</span>
                     {result.address && <span className="block text-[#65756b]">{result.address}</span>}
@@ -832,18 +835,20 @@ export default function MapWorkspace() {
                 <Save className="h-4 w-4" /> Kaarditöökorv
               </div>
               <div className="mt-3 rounded-xl border border-[#e2eae0] bg-white p-3 text-sm">
-                <label className="block text-xs font-semibold text-[#587065]">
+                <label htmlFor="map-basket-name" className="block text-xs font-semibold text-[#587065]">
                   Nimi
                   <input
+                    id="map-basket-name"
                     value={basketName}
                     onChange={(event) => setBasketName(event.target.value)}
                     className="mt-1 w-full rounded-lg border border-[#dbe8d8] bg-white px-2 py-1.5 text-sm"
                     placeholder="Nt Hindamise välitöö"
                   />
                 </label>
-                <label className="mt-3 block text-xs font-semibold text-[#587065]">
+                <label htmlFor="map-basket-purpose" className="mt-3 block text-xs font-semibold text-[#587065]">
                   Eesmärk
                   <textarea
+                    id="map-basket-purpose"
                     value={basketPurpose}
                     onChange={(event) => setBasketPurpose(event.target.value)}
                     className="mt-1 min-h-16 w-full rounded-lg border border-[#dbe8d8] bg-white px-2 py-1.5 text-sm"
@@ -869,9 +874,10 @@ export default function MapWorkspace() {
                   </button>
                 </div>
                 <div className="mt-4 border-t border-[#e7eee5] pt-3">
-                  <label className="block text-xs font-semibold text-[#587065]">
+                  <label htmlFor="map-basket-transfer-user" className="block text-xs font-semibold text-[#587065]">
                     Üle kasutajale
                     <input
+                      id="map-basket-transfer-user"
                       value={transferToUser}
                       onChange={(event) => setTransferToUser(event.target.value)}
                       className="mt-1 w-full rounded-lg border border-[#dbe8d8] bg-white px-2 py-1.5 text-sm"
