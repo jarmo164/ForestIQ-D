@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import timedelta
 from typing import Iterable
 
 from django.db.models import Case, CharField, Count, F, Value, When
@@ -60,7 +61,6 @@ def _phone_annotations(queryset):
 
 
 def _duplicate_groups(kind: str) -> Iterable[tuple[str, list[Owner]]]:
-    base = Owner.objects.select_related("assignee").exclude(phone="" if kind == "DUPLICATE_PHONE" else None)
     if kind == "DUPLICATE_PHONE":
         query = _phone_annotations(Owner.objects.exclude(phone="")).exclude(_quality_key="")
         groups = query.values("_quality_key").annotate(total=Count("id")).filter(total__gt=1).iterator(chunk_size=200)
@@ -99,7 +99,7 @@ def run_data_quality_scan(*, trigger: str = "MANUAL", batch_size: int = 250) -> 
                 auto_resolved += _auto_resolve(missing_fp, reason="Owner contact data is complete.")
 
             stale_fp = _fingerprint("STALE_OWNER_DATA", owner.id)
-            if owner.last_cadastre_list_refresh is None or owner.last_cadastre_list_refresh < now - timezone.timedelta(days=90):
+            if owner.last_cadastre_list_refresh is None or owner.last_cadastre_list_refresh < now - timedelta(days=90):
                 _, was_created = _upsert(
                     issue_type="STALE_OWNER_DATA", fingerprint=stale_fp, severity=DataQualityIssue.Severity.MEDIUM,
                     description="Owner registry/portfolio data has not been refreshed within 90 days.", owner=owner, suggested=owner.assignee,
