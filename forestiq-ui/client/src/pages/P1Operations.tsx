@@ -24,6 +24,9 @@ type DealWorkItem = {
 };
 
 type LossReason = { id: string; code: string; label: string; description: string | null; active: boolean; sortOrder: number };
+type LossAnalysisRow = { reasonCode: string; reasonLabel: string; sellerId: string | null; previousStage: string; count: number };
+type QualityScanRun = { id: string; status: string; trigger: string; detected: number; created: number; autoResolved: number; processedOwners: number; processedDeals: number; error: string | null; startedAt: number; finishedAt: number | null };
+type QualityScanStatus = { lastRun: QualityScanRun | null; queueSize: number };
 type QualityIssue = {
   id: string;
   type: string;
@@ -77,7 +80,9 @@ export default function P1Operations() {
   const [tab, setTab] = useState<Tab>("deals");
   const [deals, setDeals] = useState<DealWorkItem[]>([]);
   const [lossReasons, setLossReasons] = useState<LossReason[]>([]);
+  const [lossAnalysis, setLossAnalysis] = useState<LossAnalysisRow[]>([]);
   const [quality, setQuality] = useState<QualityIssue[]>([]);
+  const [qualityScan, setQualityScan] = useState<QualityScanStatus | null>(null);
   const [contracts, setContracts] = useState<ContractRecord[]>([]);
   const [selectedContract, setSelectedContract] = useState<ContractRecord | null>(null);
   const [signing, setSigning] = useState<Signing | null>(null);
@@ -90,6 +95,10 @@ export default function P1Operations() {
   const [maxValue, setMaxValue] = useState("");
   const [deadlineBefore, setDeadlineBefore] = useState("");
   const [qualityStatus, setQualityStatus] = useState("OPEN");
+  const [lossFrom, setLossFrom] = useState("");
+  const [lossTo, setLossTo] = useState("");
+  const [lossSeller, setLossSeller] = useState("");
+  const [lossStage, setLossStage] = useState("");
   const [newReasonCode, setNewReasonCode] = useState("");
   const [newReasonLabel, setNewReasonLabel] = useState("");
   const [notice, setNotice] = useState("");
@@ -115,9 +124,26 @@ export default function P1Operations() {
   const refreshQuality = useCallback(async () => {
     try {
       const suffix = qualityStatus ? `?status=${encodeURIComponent(qualityStatus)}` : "";
-      setQuality(await api.get<QualityIssue[]>(`/services/admin/data-quality/issues${suffix}`));
+      const [issues, scan] = await Promise.all([
+        api.get<QualityIssue[]>(`/services/admin/data-quality/issues${suffix}`),
+        api.get<QualityScanStatus>("/services/admin/data-quality/scan"),
+      ]);
+      setQuality(issues);
+      setQualityScan(scan);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Andmekvaliteedi järjekorda ei saanud laadida."); }
   }, [qualityStatus]);
+
+  const refreshLossAnalysis = useCallback(async () => {
+    try {
+      const params = new URLSearchParams();
+      if (lossFrom) params.set("from", lossFrom);
+      if (lossTo) params.set("to", lossTo);
+      if (lossSeller.trim()) params.set("sellerId", lossSeller.trim());
+      if (lossStage) params.set("previousStage", lossStage);
+      const suffix = params.toString() ? `?${params}` : "";
+      setLossAnalysis(await api.get<LossAnalysisRow[]>(`/services/admin/loss-analysis${suffix}`));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Kaotuste analüüsi ei saanud laadida."); }
+  }, [lossFrom, lossSeller, lossStage, lossTo]);
 
   const refreshReferenceData = useCallback(async () => {
     try {
@@ -132,6 +158,7 @@ export default function P1Operations() {
 
   useEffect(() => { void refreshDeals(); }, [refreshDeals]);
   useEffect(() => { void refreshQuality(); }, [refreshQuality]);
+  useEffect(() => { void refreshLossAnalysis(); }, [refreshLossAnalysis]);
   useEffect(() => { void refreshReferenceData(); }, [refreshReferenceData]);
 
   const setNextAction = async (deal: DealWorkItem) => {
@@ -167,8 +194,8 @@ export default function P1Operations() {
 
   const runQualityScan = async () => {
     try {
-      const result = await api.post<{ detected: number; created: number }>("/services/admin/data-quality/scan", {});
-      setNotice(`Andmekvaliteedi kontroll: ${result.detected} probleemi, ${result.created} uut.`);
+      const result = await api.post<QualityScanRun & { queueSize: number }>("/services/admin/data-quality/scan", {});
+      setNotice(`Andmekvaliteedi kontroll: ${result.detected} probleemi, ${result.created} uut, ${result.autoResolved} automaatselt lahendatud.`);
       await refreshQuality();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Andmekvaliteedi kontroll ebaõnnestus."); }
   };
@@ -250,6 +277,18 @@ export default function P1Operations() {
 
   const healthCodes = useMemo(() => Array.from(new Set(deals.flatMap((deal) => deal.health.map((reason) => reason.code)))).sort(), [deals]);
 
+  const exportLossAnalysis = () => {
+    const header = ["reasonCode", "reasonLabel", "sellerId", "previousStage", "count"];
+    const rows = lossAnalysis.map((row) => [row.reasonCode, row.reasonLabel, row.sellerId || "", row.previousStage, row.count]);
+    const csv = [header, ...rows].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "forestiq-loss-analysis.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return <AppShell title="Operatsioonide kontroll" eyebrow="P1 / MÜÜK JA LEPINGUD">
     <section className="workspace-intro"><ListChecks size={24} /><div><h2>Järgmine tegevus, tervis, kvaliteet ja lepingukontroll</h2><p>P1 töölaud koondab igapäevase müügi- ja lepingutöö kontrollpunktid ühte auditeeritavasse vaatesse.</p></div></section>
     {notice && <div className="success-notice">{notice}</div>}{error && <div className="connection-warning">{error}</div>}
@@ -265,9 +304,9 @@ export default function P1Operations() {
       <div className="work-card-grid">{deals.map((deal) => { const draft = draftFor(deal.id); return <article className="work-card" key={deal.id}><div><div className="flex flex-wrap gap-2"><span className="status-pill">{deal.stage}</span>{deal.health.map((reason) => <span className="status-pill warning" key={reason.code} title={reason.message}>{reason.code}</span>)}</div><h3>{deal.owner.name}</h3><p>{money(deal.value)} · vastutaja {deal.responsible?.name || "määramata"}</p>{deal.nextAction && <p className="mt-2 text-sm"><strong>Järgmine:</strong> {deal.nextAction.text} · {dateTime(deal.nextAction.dueAt)}</p>}</div><div className="mt-3 grid gap-2"><input value={draft.text} onChange={(event) => patchDraft(deal.id, { text: event.target.value })} placeholder="Järgmine tegevus" /><input type="datetime-local" value={draft.dueAt} onChange={(event) => patchDraft(deal.id, { dueAt: event.target.value })} /><input type="datetime-local" value={draft.evaluationDueAt} onChange={(event) => patchDraft(deal.id, { evaluationDueAt: event.target.value })} placeholder="Hindamise tähtaeg" /><button className="secondary-action" onClick={() => void setNextAction(deal)}>Salvesta järgmine samm</button><div className="grid grid-cols-2 gap-2"><select value={draft.lossReason} onChange={(event) => patchDraft(deal.id, { lossReason: event.target.value })}><option value="">Kaotuse põhjus</option>{lossReasons.filter((reason) => reason.active).map((reason) => <option value={reason.code} key={reason.id}>{reason.label}</option>)}</select><input value={draft.lossNote} onChange={(event) => patchDraft(deal.id, { lossNote: event.target.value })} placeholder="Märkus" /></div><input type="datetime-local" value={draft.followUpAt} onChange={(event) => patchDraft(deal.id, { followUpAt: event.target.value })} /><div className="flex justify-between gap-2"><button className="secondary-action" onClick={() => void markLost(deal)}>Märgi kaotatuks</button><Link href={`/owners/${deal.owner.id}`}>AVA OMANIK →</Link></div></div></article>; })}{!deals.length && <div className="empty-state">Filtritele vastavaid aktiivseid tehinguid ei ole.</div>}</div>
     </section>}
 
-    {tab === "quality" && <section className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">ANDMEKVALITEET</p><h3>Auditeeritud probleemijärjekord</h3></div><AlertTriangle size={19} /></div><div className="mb-4 flex flex-wrap gap-2"><select value={qualityStatus} onChange={(event) => setQualityStatus(event.target.value)}><option value="OPEN">Avatud</option><option value="ASSIGNED">Määratud</option><option value="RESOLVED">Lahendatud</option><option value="">Kõik</option></select><button className="secondary-action" onClick={() => void runQualityScan()}><RefreshCw size={15} /> Käivita kontroll</button></div><div className="space-y-2">{quality.map((issue) => <article className="rounded-xl border border-border p-3" key={issue.id}><div className="flex flex-wrap items-center justify-between gap-2"><div><span className="status-pill warning">{issue.severity}</span><strong className="ml-2">{issue.type.replaceAll("_", " ")}</strong></div><span>{issue.status}</span></div><p className="mt-2 text-sm">{issue.description}</p><small>{issue.owner?.name || issue.dealId || "mitme omaniku kontroll"} · vastutaja {issue.assignee?.name || issue.suggestedAssignee?.name || "määramata"}</small><div className="mt-3 flex flex-wrap gap-2">{issue.status !== "ASSIGNED" && issue.status !== "RESOLVED" && <button className="secondary-action" onClick={() => void qualityAction(issue, "ASSIGN")}>Määra mulle</button>}{issue.status === "ASSIGNED" && <button className="secondary-action" onClick={() => void qualityAction(issue, "RELEASE")}>Vabasta</button>}{issue.status !== "RESOLVED" && <button className="secondary-action" onClick={() => void qualityAction(issue, "RESOLVE")}><CheckCircle2 size={14} /> Lahenda</button>}</div></article>)}{!quality.length && <div className="empty-state">Selles olekus andmekvaliteedi probleeme ei ole.</div>}</div></section>}
+    {tab === "quality" && <section className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">ANDMEKVALITEET</p><h3>Auditeeritud probleemijärjekord</h3></div><AlertTriangle size={19} /></div>{qualityScan?.lastRun && <div className="mb-4 grid gap-2 rounded-xl bg-muted p-3 text-sm md:grid-cols-4"><div><strong>{qualityScan.lastRun.status}</strong><small className="block">viimane skann · {dateTime(qualityScan.lastRun.finishedAt || qualityScan.lastRun.startedAt)}</small></div><div><strong>{qualityScan.lastRun.detected}</strong><small className="block">tuvastatud</small></div><div><strong>{qualityScan.lastRun.created} / {qualityScan.lastRun.autoResolved}</strong><small className="block">uut / automaatselt lahendatud</small></div><div><strong>{qualityScan.queueSize}</strong><small className="block">aktiivses järjekorras</small></div>{qualityScan.lastRun.error && <p className="text-destructive md:col-span-4">{qualityScan.lastRun.error}</p>}</div>}<div className="mb-4 flex flex-wrap gap-2"><select value={qualityStatus} onChange={(event) => setQualityStatus(event.target.value)}><option value="OPEN">Avatud</option><option value="ASSIGNED">Määratud</option><option value="RESOLVED">Lahendatud</option><option value="">Kõik</option></select><button className="secondary-action" onClick={() => void runQualityScan()}><RefreshCw size={15} /> Käivita kontroll</button></div><div className="space-y-2">{quality.map((issue) => <article className="rounded-xl border border-border p-3" key={issue.id}><div className="flex flex-wrap items-center justify-between gap-2"><div><span className="status-pill warning">{issue.severity}</span><strong className="ml-2">{issue.type.replaceAll("_", " ")}</strong></div><span>{issue.status}</span></div><p className="mt-2 text-sm">{issue.description}</p><small>{issue.owner?.name || issue.dealId || "mitme omaniku kontroll"} · vastutaja {issue.assignee?.name || issue.suggestedAssignee?.name || "määramata"}</small><div className="mt-3 flex flex-wrap gap-2">{issue.status !== "ASSIGNED" && issue.status !== "RESOLVED" && <button className="secondary-action" onClick={() => void qualityAction(issue, "ASSIGN")}>Määra mulle</button>}{issue.status === "ASSIGNED" && <button className="secondary-action" onClick={() => void qualityAction(issue, "RELEASE")}>Vabasta</button>}{issue.status !== "RESOLVED" && <button className="secondary-action" onClick={() => void qualityAction(issue, "RESOLVE")}><CheckCircle2 size={14} /> Lahenda</button>}</div></article>)}{!quality.length && <div className="empty-state">Selles olekus andmekvaliteedi probleeme ei ole.</div>}</div></section>}
 
-    {tab === "losses" && <section className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">KAOTUSE PÕHJUSED</p><h3>Hallatav klassifikaator</h3></div><Settings2 size={19} /></div><div className="mb-5 grid gap-2 md:grid-cols-[220px_1fr_auto]"><input value={newReasonCode} onChange={(event) => setNewReasonCode(event.target.value)} placeholder="Kood, nt ACCESS" /><input value={newReasonLabel} onChange={(event) => setNewReasonLabel(event.target.value)} placeholder="Kasutajale nähtav põhjus" /><button className="secondary-action" onClick={() => void addLossReason()}>Lisa põhjus</button></div><div className="space-y-2">{lossReasons.map((reason) => <div className="flex items-center justify-between rounded-xl border border-border p-3" key={reason.id}><div><strong>{reason.code} · {reason.label}</strong><small className="block">{reason.description || "kirjeldus puudub"}</small></div><button className="secondary-action" onClick={() => void toggleLossReason(reason)}>{reason.active ? "Deaktiveeri" : "Aktiveeri"}</button></div>)}</div></section>}
+    {tab === "losses" && <section className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">KAOTUSE ANALÜÜS</p><h3>Põhjused, müüjad ja eelnev etapp</h3></div><Settings2 size={19} /></div><div className="mb-5 grid gap-2 md:grid-cols-5"><input type="date" value={lossFrom} onChange={(event) => setLossFrom(event.target.value)} aria-label="Kaotuste perioodi algus" /><input type="date" value={lossTo} onChange={(event) => setLossTo(event.target.value)} aria-label="Kaotuste perioodi lõpp" /><input value={lossSeller} onChange={(event) => setLossSeller(event.target.value)} placeholder="Müüja ID" aria-label="Müüja ID" /><select value={lossStage} onChange={(event) => setLossStage(event.target.value)} aria-label="Eelnev etapp"><option value="">Kõik etapid</option><option value="QUALIFICATION">Qualification</option><option value="EVALUATION">Evaluation</option><option value="NEGOTIATION">Negotiation</option></select><div className="flex gap-2"><button className="secondary-action" onClick={() => void refreshLossAnalysis()}>Rakenda</button><button className="secondary-action" onClick={exportLossAnalysis} disabled={!lossAnalysis.length}>CSV</button></div></div><div className="mb-6 overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="text-left">Põhjus</th><th className="text-left">Müüja</th><th className="text-left">Eelnev etapp</th><th className="text-right">Arv</th></tr></thead><tbody>{lossAnalysis.map((row) => <tr key={`${row.reasonCode}-${row.sellerId}-${row.previousStage}`}><td>{row.reasonLabel}</td><td>{row.sellerId || "—"}</td><td>{row.previousStage || "—"}</td><td className="text-right">{row.count}</td></tr>)}</tbody></table>{!lossAnalysis.length && <div className="empty-state">Valitud filtritega kaotusi ei ole.</div>}</div><div className="panel-heading"><div><p className="eyebrow">KLASSIFIKAATOR</p><h3>Hallatavad kaotuse põhjused</h3></div></div><div className="mb-5 grid gap-2 md:grid-cols-[220px_1fr_auto]"><input value={newReasonCode} onChange={(event) => setNewReasonCode(event.target.value)} placeholder="Kood, nt ACCESS" /><input value={newReasonLabel} onChange={(event) => setNewReasonLabel(event.target.value)} placeholder="Kasutajale nähtav põhjus" /><button className="secondary-action" onClick={() => void addLossReason()}>Lisa põhjus</button></div><div className="space-y-2">{lossReasons.map((reason) => <div className="flex items-center justify-between rounded-xl border border-border p-3" key={reason.id}><div><strong>{reason.code} · {reason.label}</strong><small className="block">{reason.description || "kirjeldus puudub"}</small></div><button className="secondary-action" onClick={() => void toggleLossReason(reason)}>{reason.active ? "Deaktiveeri" : "Aktiveeri"}</button></div>)}</div></section>}
 
     {tab === "contracts" && <section className="grid gap-5 xl:grid-cols-[1fr_1.2fr]"><article className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">LEPINGUD</p><h3>Vali kontrollitav leping</h3></div><BadgeEuro size={19} /></div><div className="space-y-2">{contracts.map((contract) => <button className="flex w-full items-center justify-between rounded-xl border border-border p-3 text-left" key={contract.id} onClick={() => void openContract(contract)}><span><strong>{contract.contractNo || contract.id}</strong><small className="block">{contract.sellers || "müüja"} · {contract.status}</small></span><span>→</span></button>)}</div></article><article className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">ALLKIRJASTAMINE JA VERSIOONID</p><h3>{selectedContract?.contractNo || selectedContract?.id || "Vali leping"}</h3></div><FileSignature size={19} /></div>{signing ? <><div className="mb-4 rounded-xl bg-muted p-3"><strong>{signing.state.replaceAll("_", " ")}</strong><p className="text-sm">Vastutaja {signing.responsible?.name || "määramata"} · tähtaeg {dateTime(signing.dueAt)}</p><p className="text-sm">Allkirjakontroll: {signing.verification.status.replaceAll("_", " ")}{signing.verification.verifiedAt ? ` · ${dateTime(signing.verification.verifiedAt)}` : ""}</p>{signing.verification.signer?.name && <p className="text-sm">Allkirjastaja {signing.verification.signer.name}</p>}{signing.verification.documentSha256 && <small className="block">Dokumendi SHA-256 {signing.verification.documentSha256.slice(0, 16)}…{signing.verification.integrityValid === false ? " · FAILI SISU ON MUUTUNUD" : ""}</small>}{signing.verification.failureReason && <p className="text-sm text-destructive">{signing.verification.failureReason}</p>}{signing.finalUrl && <p className="text-sm">{signing.finalUrl}</p>}</div><div className="flex flex-wrap gap-2">{signing.state === "PREPARING" && <button className="secondary-action" onClick={() => void sendForSignature()}>Saada allkirjastamisele</button>}{signing.state === "SENT_FOR_SIGNATURE" && <label className="secondary-action cursor-pointer">Lisa PDF/ASiC-E<input className="hidden" type="file" accept=".pdf,.asice" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadSignature(file); }} /></label>}<button className="secondary-action" disabled={!selectedContract?.version || !versions.length} onClick={() => void createReplacementVersion()}>Loo kontrollitud asendusversioon</button></div><div className="mt-5 space-y-2">{versions.map((version) => <div className="rounded-lg border border-border p-2 text-sm" key={version.id}><strong>Versioon {version.version}</strong> · {version.replacement ? "asendus" : "algne"}<small className="block">SHA-256 {version.pdfSha256.slice(0, 16)}… · {dateTime(version.createdAt)}</small>{version.changeReason && <p>{version.changeReason}</p>}</div>)}{!versions.length && <div className="empty-state">Kontrollitud lepinguversioone ei ole.</div>}</div></> : <div className="empty-state">Vali vasakult leping.</div>}</article></section>}
   </AppShell>;
