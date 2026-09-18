@@ -7,6 +7,7 @@ from datetime import timedelta
 
 from celery import shared_task
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from config.observability import current_correlation_id
@@ -21,7 +22,7 @@ from forestry.services.external_sync import (
     sync_optional_soos_wfs,
     sync_parimus_inheritance,
 )
-from forestry.services.metsaregister_full_import import import_metsaregister_delta
+from forestry.services.metsaregister_full_import import import_all_metsaregister, import_metsaregister_delta
 from forestry.services.wfs_generations import ensure_default_manifests, refresh_manifest
 from forestry.services.single_flight import SingleFlightLock
 from forestry.services.weasel_client import WeaselClientError
@@ -37,10 +38,20 @@ class CadastreSyncDispatch:
 
 
 def _start(run: DataSyncRun) -> None:
+    now = timezone.now()
     run.status = DataSyncRun.Status.RUNNING
-    run.started_at = timezone.now()
+    run.started_at = run.started_at or now
     run.error_message = ""
-    run.save(update_fields=("status", "started_at", "error_message"))
+    run.cursor = {**(run.cursor or {}), "heartbeatAt": now.isoformat()}
+    run.save(update_fields=("status", "started_at", "error_message", "cursor"))
+
+
+def _heartbeat(run: DataSyncRun, *, cursor: dict[str, object] | None = None, result: dict[str, object] | None = None) -> None:
+    now = timezone.now()
+    run.cursor = {**(run.cursor or {}), **(cursor or {}), "heartbeatAt": now.isoformat()}
+    if result is not None:
+        run.result = {**(run.result or {}), **result}
+    run.save(update_fields=("cursor", "result"))
 
 
 def _metric_total(result: dict[str, object]) -> int:
@@ -132,6 +143,31 @@ def _active_cadastre_run(cadastre_id: str) -> DataSyncRun | None:
     )
 
 
+def reconcile_stale_sync_runs(*, source: str, older_than_seconds: int | None = None) -> int:
+    """Fail old RUNNING audit rows so an expired single-flight lock can dispatch again."""
+
+    threshold = older_than_seconds or getattr(settings, "FORESTIQ_SYNC_RUN_STALE_AFTER_SECONDS", settings.FORESTIQ_SINGLE_FLIGHT_LOCK_TTL_SECONDS * 2)
+    cutoff = timezone.now() - timedelta(seconds=threshold)
+    with transaction.atomic():
+        stale = list(
+            DataSyncRun.objects.select_for_update()
+            .filter(source=source, status=DataSyncRun.Status.RUNNING, finished_at__isnull=True, started_at__lt=cutoff)
+            .order_by("id")
+        )
+        for run in stale:
+            _complete(
+                run,
+                {**(run.result or {}), "staleRecovered": True},
+                status=DataSyncRun.Status.FAILED,
+                error_message="Sync run exceeded heartbeat/stale threshold and was reconciled before a retry.",
+                pages_processed=run.pages_processed,
+                rows_processed=run.rows_processed,
+                cursor={**(run.cursor or {}), "staleRecoveredAt": timezone.now().isoformat()},
+                retry_count=run.retry_count,
+            )
+        return len(stale)
+
+
 @shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=3)
 def run_cadastre_sync(
     self,
@@ -180,6 +216,7 @@ def run_cadastre_sync(
             for source, importer in selected_importers:
                 try:
                     result[source] = importer(run.cadastre_id, organization_id=organization_id)
+                    _heartbeat(run, result={source: result[source]})
                 except Exception as exc:  # Keep successful source parts auditable and retryable.
                     errors[source] = str(exc)[:4000]
             if errors:
@@ -218,6 +255,7 @@ def enqueue_cadastre_sync(
     """Schedule a refresh once per tenant and cadastre, returning an existing run on conflict."""
 
     with organization_scope(organization_id):
+        reconcile_stale_sync_runs(source=source)
         cadastre = Cadastre.objects.get(id=cadastre_id)
         lock = SingleFlightLock.for_sync("cadastre-sync", organization_id, cadastre.id)
         if not lock.acquire():
@@ -326,56 +364,70 @@ def enqueue_all_organizations_metsaregister_delta_check() -> dict[str, int]:
     return {"organizations": queued}
 
 
-@shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=3)
-def run_parimus_official_notice_import(self, organization_id: str) -> dict[str, object]:
-    """Refresh Pärimus notices for one organization, even without a cadastre delta.
+@shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=settings.FORESTIQ_SYNC_RUN_MAX_RETRIES)
+def run_metsaregister_full_import(self, organization_id: str, run_id: int | None = None) -> dict[str, object]:
+    """Run one bounded full-import chunk and enqueue the next chunk until EOF."""
 
-    `InheritanceSignal` uses the provider's notice number together with the
-    organization and cadastre as its source key, so repeated polls update the
-    same projection instead of creating duplicate notices.
-    """
-
-    lock = SingleFlightLock.for_sync("parimus-official-notices", organization_id)
+    lock = SingleFlightLock.for_sync("metsaregister-full", organization_id)
     if not lock.acquire():
         return {"status": "already_running"}
     try:
         with organization_scope(organization_id):
-            now = timezone.now()
-            run = DataSyncRun.objects.create(
-                source="celery:parimus-official-notices",
-                status=DataSyncRun.Status.RUNNING,
-                started_at=now,
-                task_id=self.request.id or "",
-                correlation_id=current_correlation_id(),
-            )
+            source = "celery:metsaregister-full"
+            reconcile_stale_sync_runs(source=source)
+            if run_id is None:
+                run = DataSyncRun.objects.filter(source=source, status=DataSyncRun.Status.RUNNING).order_by("-id").first()
+                if run is None:
+                    run = DataSyncRun.objects.create(
+                        source=source,
+                        status=DataSyncRun.Status.QUEUED,
+                        correlation_id=current_correlation_id(),
+                    )
+            else:
+                run = DataSyncRun.objects.get(id=run_id, source=source)
+            if run.status == DataSyncRun.Status.SUCCESS:
+                return {"status": "already_finished", "runId": run.id}
+            if run.status == DataSyncRun.Status.FAILED:
+                run.status = DataSyncRun.Status.QUEUED
+                run.error_message = ""
+                run.save(update_fields=("status", "error_message"))
+            _start(run)
+            pages_per_task = max(int(getattr(settings, "FORESTIQ_METSAREGISTER_FULL_PAGES_PER_TASK", 1)), 1)
             try:
-                cadastres = Cadastre.objects.order_by("id")
-                notices = sum(
-                    sync_parimus_inheritance(cadastre.id, organization_id=organization_id)
-                    for cadastre in cadastres.iterator()
+                report = import_all_metsaregister(
+                    organization_id=organization_id,
+                    run=run,
+                    max_pages=pages_per_task,
                 )
-                result = {"cadastres": cadastres.count(), "notices": notices}
+                result = report.data()
+                _heartbeat(run, cursor={"startIndex": report.checkpoint_cursor}, result=result)
             except Exception as exc:
                 _fail(run, exc, retry_count=self.request.retries)
                 raise
-            return _succeed(
-                run,
-                result,
-                pages_processed=cadastres.count(),
-                rows_processed=notices,
-                cursor={"cadastres": cadastres.count()},
-                retry_count=self.request.retries,
-            )
+            if report.completed:
+                return _succeed(
+                    run,
+                    result,
+                    pages_processed=report.checkpoint_pages,
+                    rows_processed=report.features,
+                    cursor={"startIndex": report.checkpoint_cursor, "completed": True},
+                    retry_count=self.request.retries,
+                )
+            run.pages_processed = report.checkpoint_pages
+            run.rows_processed = report.features
+            run.cursor = {**(run.cursor or {}), "startIndex": report.checkpoint_cursor, "completed": False}
+            run.save(update_fields=("pages_processed", "rows_processed", "cursor"))
+            run_metsaregister_full_import.delay(str(organization_id), run.id)
+            return {"status": "continued", "runId": run.id, **result}
     finally:
         lock.release()
 
 
 @shared_task
-def enqueue_all_organizations_parimus_official_notice_import() -> dict[str, int]:
-    """Beat entry point for auditable Pärimus official-notice refreshes."""
+def enqueue_all_organizations_metsaregister_full_import() -> dict[str, int]:
     queued = 0
     for organization_id in Organization.objects.filter(is_active=True).values_list("id", flat=True):
-        result = run_parimus_official_notice_import.delay(str(organization_id))
+        result = run_metsaregister_full_import.delay(str(organization_id))
         queued += 1 if result else 0
     return {"organizations": queued}
 
@@ -433,6 +485,53 @@ def enqueue_all_organizations_weasel_ownership_delta() -> dict[str, int | str]:
         result = run_weasel_ownership_delta.delay(str(organization_id))
         queued += 1 if result else 0
     return {"organizations": queued, "status": "queued"}
+
+
+@shared_task
+def run_parimus_official_notice_import(organization_id: str) -> dict[str, object]:
+    """Refresh Pärimus notices for one organization, even without a cadastre delta."""
+
+    lock = SingleFlightLock.for_sync("parimus-official-notices", organization_id)
+    if not lock.acquire():
+        return {"status": "already_running"}
+    try:
+        with organization_scope(organization_id):
+            now = timezone.now()
+            run = DataSyncRun.objects.create(
+                source="celery:parimus-official-notices",
+                status=DataSyncRun.Status.RUNNING,
+                started_at=now,
+                correlation_id=current_correlation_id(),
+            )
+            try:
+                cadastres = Cadastre.objects.order_by("id")
+                notices = sum(
+                    sync_parimus_inheritance(cadastre.id, organization_id=organization_id)
+                    for cadastre in cadastres.iterator()
+                )
+                result = {"cadastres": cadastres.count(), "notices": notices}
+            except Exception as exc:
+                _fail(run, exc)
+                raise
+            return _succeed(
+                run,
+                result,
+                pages_processed=cadastres.count(),
+                rows_processed=notices,
+                cursor={"cadastres": cadastres.count()},
+            )
+    finally:
+        lock.release()
+
+
+@shared_task
+def enqueue_all_organizations_parimus_official_notice_import() -> dict[str, int]:
+    """Beat entry point for auditable Pärimus official-notice refreshes."""
+    queued = 0
+    for organization_id in Organization.objects.filter(is_active=True).values_list("id", flat=True):
+        result = run_parimus_official_notice_import.delay(str(organization_id))
+        queued += 1 if result else 0
+    return {"organizations": queued}
 
 
 @shared_task(name="forestry.refresh_wfs_generation")
