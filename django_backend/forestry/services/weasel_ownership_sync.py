@@ -52,8 +52,8 @@ def import_weasel_ownership_deltas(
             source_id = _value(event, "id", "eventId", "event_id", "reference")
             owner_id = _value(event, "ownerId", "owner_id", "ownerCode", "owner_code")
             cadastre_id = _value(event, "cadastreId", "cadastre_id", "cadastralCode", "cadastral_code")
-            owner = Owner.objects.filter(organization_id=organization_id, id=owner_id).first() if owner_id else None
-            cadastre = Cadastre.objects.filter(organization_id=organization_id, id=cadastre_id).first() if cadastre_id else None
+            owner = Owner.objects.filter(organization_id=organization_id, external_id=owner_id).first() if owner_id else None
+            cadastre = Cadastre.objects.filter(organization_id=organization_id, external_id=cadastre_id).first() if cadastre_id else None
             if not source_id or (owner is None and cadastre is None):
                 ignored += 1
                 continue

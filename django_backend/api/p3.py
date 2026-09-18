@@ -547,9 +547,9 @@ def admin_external_layer_detail(request, key: str):
 
 def _map_search_result(cadastre: Cadastre) -> dict:
     return {
-        "id": cadastre.id,
-        "label": cadastre.name or cadastre.address or cadastre.id,
-        "cadastreId": cadastre.id,
+        "id": cadastre.public_id,
+        "label": cadastre.name or cadastre.address or cadastre.public_id,
+        "cadastreId": cadastre.public_id,
         "address": cadastre.address or None,
         "source": "LOCAL",
     }

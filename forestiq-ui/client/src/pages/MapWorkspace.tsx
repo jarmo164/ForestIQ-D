@@ -161,7 +161,8 @@ function value(properties: MapProperties, key: string) {
 function normaliseProperties(properties: MapProperties): MapProperties {
   return {
     ...properties,
-    cadastreId: properties.cadastreId ?? properties.cadastre_id,
+    id: properties.id ?? properties.public_id,
+    cadastreId: properties.cadastreId ?? properties.public_cadastre_id ?? properties.cadastre_id,
     subpartCode: properties.subpartCode ?? properties.subpart_code,
     treeType: properties.treeType ?? properties.tree_type_code,
     workCode: properties.workCode ?? properties.work_code,

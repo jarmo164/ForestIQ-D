@@ -178,7 +178,7 @@ def sync_cadastre_wfs(cadastre_id: str, *, organization_id: str) -> int:
         settings.FORESTIQ_CADASTRE_WFS_URL,
         settings.FORESTIQ_CADASTRE_WFS_LAYER,
         field="tunnus",
-        value=cadastre.id,
+        value=cadastre.public_id,
     )
     if not features:
         return 0
@@ -228,7 +228,7 @@ def sync_metsaregister_wfs(cadastre_id: str, *, organization_id: str) -> int:
             settings.FORESTIQ_METSAREGISTER_WFS_URL,
             layer,
             field="katastri_nr",
-            value=cadastre.id,
+            value=cadastre.public_id,
             client=client,
         )
         retained_ids: list[str] = []
@@ -285,7 +285,7 @@ def sync_optional_soos_wfs(cadastre_id: str, *, organization_id: str) -> int:
         settings.FORESTIQ_SOOS_WFS_URL,
         layer,
         field=settings.FORESTIQ_SOOS_WFS_CADASTRE_FIELD,
-        value=cadastre.id,
+        value=cadastre.public_id,
     )
     source_layer = f"soos:{layer}"
     existing = ForestRegistryFeature.objects.filter(cadastre=cadastre, source_layer=source_layer)
@@ -333,7 +333,7 @@ def sync_forestek_owner_relations(cadastre_id: str, *, organization_id: str) -> 
     cadastre = Cadastre.objects.get(id=cadastre_id)
     count = 0
     client = AuthorizedApiClient(base_url=settings.FORESTEK_API_URL, token=settings.FORESTEK_API_TOKEN, request_get=requests.get)
-    for payload in client.get_pages(f"/owners/{cadastre.id}"):
+    for payload in client.get_pages(f"/owners/{cadastre.public_id}"):
         for row in _walk_owner_rows(payload):
             owner_id = str(row.get("nationalId") or row.get("personalCode") or row.get("ownerId") or "").strip()
             if not owner_id:
@@ -359,7 +359,7 @@ def sync_parimus_inheritance(cadastre_id: str, *, organization_id: str) -> int:
     saved = 0
     for owner in owners:
         client = AuthorizedApiClient(base_url=settings.PARIMUS_API_URL, token=settings.PARIMUS_API_TOKEN, request_get=requests.get)
-        for payload in client.get_pages("/api/v1/notices/", params={"personal_code": owner.id}, records_key="results"):
+        for payload in client.get_pages("/api/v1/notices/", params={"personal_code": owner.public_id}, records_key="results"):
             for notice in payload["results"]:
                 if not notice.get("notice_number"):
                     continue

@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.db import connection, transaction
-from django.db.models import Count, Max, Q, Sum
+from django.db.models import Count, F, Max, Q, Sum
 from django.db.models.functions import TruncDay, TruncHour, TruncMonth, TruncWeek
 from django.contrib.gis.geos import Polygon
 from django.http import FileResponse, HttpResponse
@@ -95,7 +95,7 @@ def _statistics_boundary(value: str | None, *, parameter: str, inclusive_day_end
 def _sync_run_data(run: DataSyncRun) -> dict:
     return {
         "id": run.id,
-        "cadastre": run.cadastre_id,
+        "cadastre": run.cadastre.public_id if run.cadastre else None,
         "taskId": run.task_id,
         "correlationId": run.correlation_id or None,
         "source": run.source,
@@ -128,7 +128,7 @@ def cadastre_sync(request, cadastre_id: str):
     """Queue one cadastral unit's source refresh through Celery."""
     cadastre = get_object_or_404(Cadastre, id=cadastre_id)
     dispatch = enqueue_cadastre_sync(
-        cadastre.id,
+        cadastre.public_id,
         organization_id=str(request_organization_id(request)),
         requested_by_id=request.user.id,
         source="api",
@@ -162,7 +162,7 @@ def retry_sync_run(request, run_id: int):
     if run.retry_count >= settings.FORESTIQ_SYNC_RUN_MAX_RETRIES:
         return _detail("The synchronization retry limit has been reached.", status.HTTP_409_CONFLICT)
     dispatch = enqueue_cadastre_sync(
-        run.cadastre_id,
+        run.cadastre.public_id,
         organization_id=str(request_organization_id(request)),
         requested_by_id=request.user.id,
         source=f"retry:{run.source}",
@@ -195,7 +195,7 @@ def cadastre_map_features(request):
     for cadastre in cadastres.order_by("id")[:_map_limit(request, settings.FORESTIQ_MAP_CADASTRE_LIMIT)]:
         geometry = cadastre.boundary.clone()
         geometry.transform(4326)
-        features.append({"type": "Feature", "id": cadastre.id, "geometry": json.loads(geometry.json), "properties": {"id": cadastre.id, "name": cadastre.name, "county": cadastre.county, "area": str(cadastre.area or "")}})
+        features.append({"type": "Feature", "id": cadastre.public_id, "geometry": json.loads(geometry.json), "properties": {"id": cadastre.public_id, "name": cadastre.name, "county": cadastre.county, "area": str(cadastre.area or "")}})
     return Response({"type": "FeatureCollection", "features": features})
 
 
@@ -222,7 +222,7 @@ def map_layer_features(request, layer: str):
         for record in records[:_map_limit(request, settings.FORESTIQ_MAP_FEATURE_LIMIT)]:
             geometry = record.boundary.clone()
             geometry.transform(4326)
-            features.append({"type": "Feature", "id": f"{record.cadastre_id}:{record.sub_part_code}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.cadastre_id}:{record.sub_part_code}", "cadastreId": record.cadastre_id, "subpartCode": record.sub_part_code, "treeType": record.tree_type_code, "area": str(record.area or ""), "discoveredAt": record.discovered_at.isoformat() if record.discovered_at else ""}})
+            features.append({"type": "Feature", "id": f"{record.cadastre.public_id}:{record.sub_part_code}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.cadastre.public_id}:{record.sub_part_code}", "cadastreId": record.cadastre.public_id, "subpartCode": record.sub_part_code, "treeType": record.tree_type_code, "area": str(record.area or ""), "discoveredAt": record.discovered_at.isoformat() if record.discovered_at else ""}})
     elif layer == "registry":
         records = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).filter(cadastre__in=cadastres).select_related("cadastre").order_by("cadastre_id", "source_layer", "source_id")
         if viewport:
@@ -230,7 +230,7 @@ def map_layer_features(request, layer: str):
         for record in records[:_map_limit(request, settings.FORESTIQ_MAP_FEATURE_LIMIT)]:
             geometry = record.spatial_geometry.clone()
             geometry.transform(4326)
-            features.append({"type": "Feature", "id": f"{record.source_layer}:{record.source_id}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.source_layer}:{record.source_id}", "cadastreId": record.cadastre_id, "subpartCode": record.subpart_code, "title": record.title, "workCode": record.work_code, "decision": record.decision, "area": str(record.area or "")}})
+            features.append({"type": "Feature", "id": f"{record.source_layer}:{record.source_id}", "geometry": json.loads(geometry.json), "properties": {"id": f"{record.source_layer}:{record.source_id}", "cadastreId": record.cadastre.public_id, "subpartCode": record.subpart_code, "title": record.title, "workCode": record.work_code, "decision": record.decision, "area": str(record.area or "")}})
     else:
         records = CadastreNotification.objects.exclude(cadastre_subpart_code__isnull=True).filter(cadastre__in=cadastres).select_related("cadastre").order_by("-registration_date", "-id")
         subparts = CadastreSubPart.objects.exclude(boundary__isnull=True).filter(cadastre__in=cadastres)
@@ -244,7 +244,7 @@ def map_layer_features(request, layer: str):
                 continue
             geometry = subpart.boundary.centroid
             geometry.transform(4326)
-            features.append({"type": "Feature", "id": str(record.id), "geometry": json.loads(geometry.json), "properties": {"id": str(record.id), "cadastreId": record.cadastre_id, "subpartCode": record.cadastre_subpart_code, "notificationNumber": record.notification_number, "workCode": record.work_code, "state": record.state, "registrationDate": record.registration_date.isoformat() if record.registration_date else "", "treeType": subpart.tree_type_code, "subpartArea": str(subpart.area or ""), "discoveredAt": subpart.discovered_at.isoformat() if subpart.discovered_at else ""}})
+            features.append({"type": "Feature", "id": str(record.id), "geometry": json.loads(geometry.json), "properties": {"id": str(record.id), "cadastreId": record.cadastre.public_id, "subpartCode": record.cadastre_subpart_code, "notificationNumber": record.notification_number, "workCode": record.work_code, "state": record.state, "registrationDate": record.registration_date.isoformat() if record.registration_date else "", "treeType": subpart.tree_type_code, "subpartArea": str(subpart.area or ""), "discoveredAt": subpart.discovered_at.isoformat() if subpart.discovered_at else ""}})
     return Response({"type": "FeatureCollection", "features": features})
 
 
@@ -264,16 +264,16 @@ def map_vector_tile(request, layer: str, z: int, x: int, y: int):
 
     cadastres = _map_cadastre_queryset(request)
     if layer == "cadastres":
-        queryset = cadastres.exclude(boundary__isnull=True)
-        properties = ("id", "name", "county", "municipality", "area")
+        queryset = cadastres.exclude(boundary__isnull=True).annotate(public_id=F("external_id"))
+        properties = ("public_id", "name", "county", "municipality", "area")
         geometry_field = "boundary"
     elif layer == "subparts":
-        queryset = CadastreSubPart.objects.exclude(boundary__isnull=True).filter(cadastre__in=cadastres)
-        properties = ("id", "cadastre_id", "sub_part_code", "tree_type_code", "area")
+        queryset = CadastreSubPart.objects.exclude(boundary__isnull=True).filter(cadastre__in=cadastres).annotate(public_cadastre_id=F("cadastre__external_id"))
+        properties = ("id", "public_cadastre_id", "sub_part_code", "tree_type_code", "area")
         geometry_field = "boundary"
     else:
-        queryset = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).filter(cadastre__in=cadastres)
-        properties = ("id", "cadastre_id", "subpart_code", "title", "work_code", "decision", "area", "volume")
+        queryset = ForestRegistryFeature.objects.exclude(spatial_geometry__isnull=True).filter(cadastre__in=cadastres).annotate(public_cadastre_id=F("cadastre__external_id"))
+        properties = ("id", "public_cadastre_id", "subpart_code", "title", "work_code", "decision", "area", "volume")
         geometry_field = "spatial_geometry"
 
     organization_id = str(request_organization_id(request))
@@ -453,7 +453,7 @@ def _owner_queryset(request):
             queryset = queryset.filter(**{f"{field}__icontains": value})
     cadastre = request.query_params.get("cadastre")
     if cadastre:
-        queryset = queryset.filter(cadastres__id__icontains=cadastre)
+        queryset = queryset.filter(cadastres__external_id__icontains=cadastre)
     statuses = request.query_params.get("statuses")
     if statuses:
         queryset = queryset.filter(status__in=[item for item in statuses.split(",") if item])
@@ -610,9 +610,9 @@ def owner_portfolio(request, owner_id: str):
     now = timezone.now()
     if not owner.phone or not owner.email:
         missing = ", ".join(item for item, empty in (("phone", not owner.phone), ("email", not owner.email)) if empty)
-        signals.append(_portfolio_signal("MISSING_CONTACT", "HIGH", f"Owner is missing {missing}.", "owner", now, "Complete owner contact data.", {"ownerId": owner.id}))
+        signals.append(_portfolio_signal("MISSING_CONTACT", "HIGH", f"Owner is missing {missing}.", "owner", now, "Complete owner contact data.", {"ownerId": owner.public_id}))
     if owner.last_cadastre_list_refresh is None or owner.last_cadastre_list_refresh < now - timedelta(days=90):
-        signals.append(_portfolio_signal("STALE_REGISTRY_DATA", "MEDIUM", "Owner cadastre list has not been refreshed within 90 days.", "owner.lastCadastreListRefresh", owner.last_cadastre_list_refresh, "Refresh the owner portfolio before making an offer.", {"ownerId": owner.id}))
+        signals.append(_portfolio_signal("STALE_REGISTRY_DATA", "MEDIUM", "Owner cadastre list has not been refreshed within 90 days.", "owner.lastCadastreListRefresh", owner.last_cadastre_list_refresh, "Refresh the owner portfolio before making an offer.", {"ownerId": owner.public_id}))
     fresh_cutoff = now - timedelta(days=30)
     for notice in active_notifications.filter(registration_date__gte=fresh_cutoff).order_by("-registration_date", "-id")[:5]:
         signals.append(_portfolio_signal("FRESH_FOREST_NOTICE", "MEDIUM", f"Active forest notice {notice.notification_number} was registered recently.", "metsaregister.notifications", notice.registration_date, "Review the notice before valuation.", {"cadastreId": notice.cadastre_id, "notificationId": notice.id}))
@@ -699,7 +699,7 @@ def owner_status(request, owner_id: str):
     OwnerStatusChange.objects.create(user=request.user, from_status=old_status, to_status=new_status)
     publish_org_event(
         "OWNER_STATUS_CHANGED",
-        {"ownerId": updated_owner.id, "fromStatus": old_status, "toStatus": new_status, "version": updated_owner.version},
+        {"ownerId": updated_owner.public_id, "fromStatus": old_status, "toStatus": new_status, "version": updated_owner.version},
         actor=request.user,
     )
     return Response(owner_data(updated_owner))
@@ -720,7 +720,7 @@ def owner_assignee(request, owner_id: str):
         return version_conflict_response(owner, expected_version)
     publish_org_event(
         "OWNER_ASSIGNEE_CHANGED",
-        {"ownerId": updated_owner.id, "assigneeId": updated_owner.assignee_id, "version": updated_owner.version},
+        {"ownerId": updated_owner.public_id, "assigneeId": updated_owner.assignee_id, "version": updated_owner.version},
         actor=request.user,
     )
     return Response(owner_data(updated_owner))
@@ -817,13 +817,13 @@ def cadastre_workspace(request, cadastre_id: str):
     activities = []
     owner_payloads = []
     for owner in owners:
-        logs = [owner_log_data(item) | {"ownerId": owner.id, "ownerName": owner.name, "kind": "OWNER_LOG"} for item in owner.logs.select_related("creator").all()[:40]]
+        logs = [owner_log_data(item) | {"ownerId": owner.public_id, "ownerName": owner.name, "kind": "OWNER_LOG"} for item in owner.logs.select_related("creator").all()[:40]]
         activities.extend(logs)
-        reminders = [{"id": str(item.id), "kind": "REMINDER", "ownerId": owner.id, "ownerName": owner.name, "text": item.text, "at": json_value(item.due_time), "createdAt": json_value(item.created_time)} for item in owner.reminders.filter(cadastre__in=("", cadastre.id)).order_by("-due_time")[:20]]
+        reminders = [{"id": str(item.id), "kind": "REMINDER", "ownerId": owner.public_id, "ownerName": owner.name, "text": item.text, "at": json_value(item.due_time), "createdAt": json_value(item.created_time)} for item in owner.reminders.filter(cadastre__in=("", cadastre.public_id)).order_by("-due_time")[:20]]
         activities.extend(reminders)
         deals = Deal.objects.filter(owner=owner, parcels=cadastre).distinct().order_by("-updated_at")
         deal_data = [{"id": str(item.id), "stage": item.stage, "saleSubject": item.sale_subject, "priceExpectation": json_value(item.price_expectation), "recommendedPurchasePrice": json_value(item.recommended_purchase_price), "updatedAt": json_value(item.updated_at), "closedAt": json_value(item.closed_at)} for item in deals[:20]]
-        activities.extend([{"id": item["id"], "kind": "DEAL", "ownerId": owner.id, "ownerName": owner.name, "text": f"Tehing {item['stage']}", "at": item["updatedAt"]} for item in deal_data])
+        activities.extend([{"id": item["id"], "kind": "DEAL", "ownerId": owner.public_id, "ownerName": owner.name, "text": f"Tehing {item['stage']}", "at": item["updatedAt"]} for item in deal_data])
         owner_payloads.append(owner_data(owner) | {"activityLog": logs, "reminders": reminders, "deals": deal_data, "customerRelationship": {"ownerStatus": owner.status or None, "isCustomer": deals.filter(stage=DealStage.WON).exists(), "activeDealCount": deals.exclude(stage__in=[DealStage.WON, DealStage.LOST, DealStage.CANCELLED]).count(), "wonDealCount": deals.filter(stage=DealStage.WON).count()}})
     activities.sort(key=lambda item: item.get("at") or item.get("createdAt") or 0, reverse=True)
     registry = [{"id": item.id, "title": item.title, "sourceLayer": item.source_layer, "subpartCode": item.subpart_code, "workCode": item.work_code, "decision": item.decision, "area": json_value(item.area), "volume": json_value(item.volume), "eventDate": json_value(item.event_date), "attributes": item.attributes} for item in cadastre.registry_features.all()[:100]]
@@ -939,7 +939,7 @@ def next_owner(request):
     owner = _owner_queryset(request).filter(assignee=request.user).order_by("status_set_at", "id").first()
     if not owner:
         return Response(status=status.HTTP_204_NO_CONTENT)
-    return Response({"id": owner.id})
+    return Response({"id": owner.public_id})
 
 
 @api_view(["GET"])

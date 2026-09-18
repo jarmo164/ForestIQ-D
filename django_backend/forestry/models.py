@@ -7,6 +7,47 @@ from django.contrib.gis.db import models as gis_models
 from django.db import models
 
 from accounts.models import OrganizationScopedModel
+from accounts.organization_context import OrganizationScopedManager, current_organization_id
+
+
+class TenantExternalIdentityQuerySet(models.QuerySet):
+    """Interpret id lookups as tenant-public identifiers inside an organization scope."""
+
+    def _filter_or_exclude(self, negate, args, kwargs):
+        if current_organization_id():
+            kwargs = dict(kwargs)
+            for key in tuple(kwargs):
+                if key == "id" or key.startswith("id__"):
+                    kwargs[f"external_{key}"] = kwargs.pop(key)
+        return super()._filter_or_exclude(negate, args, kwargs)
+
+
+class TenantExternalIdentityManager(OrganizationScopedManager.from_queryset(TenantExternalIdentityQuerySet)):
+    pass
+
+
+class TenantExternalIdentityMixin:
+    """Keep a stable public identifier while namespacing only colliding storage PKs."""
+
+    @property
+    def public_id(self) -> str:
+        return self.external_id or self.id
+
+    def save(self, *args, **kwargs):
+        active_organization_id = current_organization_id()
+        if self._state.adding and active_organization_id:
+            self.organization_id = active_organization_id
+        if not self.external_id:
+            self.external_id = self.id
+        if self._state.adding:
+            collision = (
+                self.__class__.all_objects.filter(id=self.id)
+                .exclude(organization_id=self.organization_id)
+                .exists()
+            )
+            if collision:
+                self.id = f"{self.organization_id}:{self.external_id}"
+        return super().save(*args, **kwargs)
 
 
 class OwnerType(models.TextChoices):
@@ -38,8 +79,11 @@ class OwnerStatus(OrganizationScopedModel):
         return self.id
 
 
-class Owner(OrganizationScopedModel):
-    id = models.CharField(primary_key=True, max_length=50)
+class Owner(TenantExternalIdentityMixin, OrganizationScopedModel):
+    id = models.CharField(primary_key=True, max_length=96)
+    external_id = models.CharField(max_length=50, blank=True, db_index=True)
+    objects = TenantExternalIdentityManager()
+    all_objects = models.Manager()
     name = models.CharField(max_length=100)
     type = models.CharField(max_length=20, choices=OwnerType.choices, blank=True)
     phone = models.CharField(max_length=100, blank=True)
@@ -69,14 +113,20 @@ class Owner(OrganizationScopedModel):
             models.Index(fields=("organization", "status"), name="owners_organization_status_idx"),
             models.Index(fields=("organization", "assignee"), name="owners_org_assignee_idx"),
         ]
-        constraints = [models.UniqueConstraint(fields=("organization", "id"), name="unique_owner_organization_id")]
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "id"), name="unique_owner_organization_id"),
+            models.UniqueConstraint(fields=("organization", "external_id"), name="unique_owner_org_external_id"),
+        ]
 
     def __str__(self) -> str:
-        return f"{self.id} — {self.name}"
+        return f"{self.public_id} — {self.name}"
 
 
-class Cadastre(OrganizationScopedModel):
-    id = models.CharField(primary_key=True, max_length=50)
+class Cadastre(TenantExternalIdentityMixin, OrganizationScopedModel):
+    id = models.CharField(primary_key=True, max_length=96)
+    external_id = models.CharField(max_length=50, blank=True, db_index=True)
+    objects = TenantExternalIdentityManager()
+    all_objects = models.Manager()
     name = models.CharField(max_length=100, blank=True)
     municipality = models.CharField(max_length=50, blank=True)
     county = models.CharField(max_length=100, blank=True)
@@ -109,10 +159,13 @@ class Cadastre(OrganizationScopedModel):
             models.Index(fields=("organization", "county", "municipality"), name="cad_org_location_idx"),
             models.Index(fields=("organization", "id"), name="cad_org_id_idx"),
         ]
-        constraints = [models.UniqueConstraint(fields=("organization", "id"), name="unique_cadastre_organization_id")]
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "id"), name="unique_cadastre_organization_id"),
+            models.UniqueConstraint(fields=("organization", "external_id"), name="unique_cadastre_org_external_id"),
+        ]
 
     def __str__(self) -> str:
-        return f"{self.id} — {self.name}"
+        return f"{self.public_id} — {self.name}"
 
 
 class OwnerCadastre(OrganizationScopedModel):
