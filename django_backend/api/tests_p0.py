@@ -58,6 +58,7 @@ class P0WfsGenerationOrganizationStampingTests(TestCase):
             self.assertFalse(ForestRegistryFeature.objects.filter(source_id="source-1").exists())
             self.assertTrue(ForestRegistryFeature.objects.filter(source_id="source-2").exists())
 
+            first.refresh_from_db()
             rollback_generation(first)
             self.assertTrue(ForestRegistryFeature.objects.filter(source_id="source-1").exists())
             self.assertFalse(ForestRegistryFeature.objects.filter(source_id="source-2").exists())
