@@ -32,6 +32,7 @@ from operations.p1_models import (
     ContractVersion,
     DataQualityIssue,
     DataQualityIssueEvent,
+    DataQualityScanRun,
     DecisionEvidenceSnapshot,
     DealLossOutcome,
     DealWorkState,
@@ -45,6 +46,7 @@ from operations.p1_models import (
     SalesStageProbability,
     WorkflowAuditEvent,
 )
+from operations.data_quality import run_data_quality_scan
 from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
 from operations.services.signature_verification import SignatureVerificationError, file_sha256, stored_file_integrity, verify_provider_evidence
 from operations.realtime import publish_org_event
@@ -1914,92 +1916,44 @@ def data_quality_issues(request):
     return Response([_quality_data(item) for item in records[:limit]])
 
 
-@api_view(["POST"])
+def _quality_scan_data(run: DataQualityScanRun | None) -> dict | None:
+    if run is None:
+        return None
+    return {
+        "id": str(run.id),
+        "status": run.status,
+        "trigger": run.trigger,
+        "detected": run.detected_count,
+        "created": run.created_count,
+        "autoResolved": run.auto_resolved_count,
+        "processedOwners": run.processed_owner_count,
+        "processedDeals": run.processed_deal_count,
+        "error": run.error_message or None,
+        "startedAt": json_value(run.started_at),
+        "finishedAt": json_value(run.finished_at),
+    }
+
+
+@api_view(["GET", "POST"])
 @permission_classes([IsAdmin])
 def data_quality_scan(request):
-    created = 0
-    seen = 0
-    owners = list(Owner.objects.select_related("assignee").all())
-    for owner in owners:
-        if not owner.phone or not owner.email:
-            _, was_created = _quality_upsert(
-                issue_type="MISSING_CONTACT",
-                fingerprint=_fingerprint("MISSING_CONTACT", owner.id),
-                severity=DataQualityIssue.Severity.HIGH if not owner.phone and not owner.email else DataQualityIssue.Severity.MEDIUM,
-                description="Owner contact data is incomplete.",
-                owner=owner,
-                suggested=owner.assignee,
-                evidence={"missingPhone": not bool(owner.phone), "missingEmail": not bool(owner.email)},
-            )
-            seen += 1; created += int(was_created)
-        if owner.last_cadastre_list_refresh is None or owner.last_cadastre_list_refresh < timezone.now() - timedelta(days=90):
-            _, was_created = _quality_upsert(
-                issue_type="STALE_OWNER_DATA",
-                fingerprint=_fingerprint("STALE_OWNER_DATA", owner.id),
-                severity=DataQualityIssue.Severity.MEDIUM,
-                description="Owner registry/portfolio data has not been refreshed within 90 days.",
-                owner=owner,
-                suggested=owner.assignee,
-                evidence={"lastCadastreListRefresh": json_value(owner.last_cadastre_list_refresh)},
-            )
-            seen += 1; created += int(was_created)
-    phone_groups = defaultdict(list)
-    email_groups = defaultdict(list)
-    for owner in owners:
-        phone = _phone_quality_key(owner.phone)
-        email = (owner.email or "").strip().lower()
-        if phone:
-            phone_groups[phone].append(owner)
-        if email:
-            email_groups[email].append(owner)
-    for kind, groups in (("DUPLICATE_PHONE", phone_groups), ("DUPLICATE_EMAIL", email_groups)):
-        for value, members in groups.items():
-            if len(members) < 2:
-                continue
-            ids = sorted(owner.id for owner in members)
-            _, was_created = _quality_upsert(
-                issue_type=kind,
-                fingerprint=_fingerprint(kind, *ids),
-                severity=DataQualityIssue.Severity.HIGH,
-                description=f"Possible duplicate owners share the same {'phone' if kind.endswith('PHONE') else 'email'}.",
-                suggested=members[0].assignee,
-                evidence={"value": value, "ownerIds": ids, "manualReviewRequired": True},
-            )
-            seen += 1; created += int(was_created)
-    active_deals = Deal.objects.select_related("owner", "owner__assignee", "evaluator", "created_by").exclude(stage__in=CLOSED_DEAL_STAGES)
-    for deal in active_deals:
-        suggested = deal.evaluator or deal.owner.assignee or deal.created_by
-        has_action = deal.next_actions.filter(status__in=[NextAction.Status.OPEN, NextAction.Status.POSTPONED]).exists()
-        if not has_action:
-            _, was_created = _quality_upsert(
-                issue_type="DEAL_NO_NEXT_ACTION",
-                fingerprint=_fingerprint("DEAL_NO_NEXT_ACTION", deal.id),
-                severity=DataQualityIssue.Severity.HIGH,
-                description="Active deal has no open next action.",
-                owner=deal.owner,
-                deal=deal,
-                suggested=suggested,
-                evidence={"stage": deal.stage},
-            )
-            seen += 1; created += int(was_created)
-        if deal.stage == DealStage.EVALUATION:
-            try:
-                due_at = deal.work_state.evaluation_due_at
-            except DealWorkState.DoesNotExist:
-                due_at = None
-            if due_at is None:
-                _, was_created = _quality_upsert(
-                    issue_type="EVALUATION_DEADLINE_MISSING",
-                    fingerprint=_fingerprint("EVALUATION_DEADLINE_MISSING", deal.id),
-                    severity=DataQualityIssue.Severity.HIGH,
-                    description="Evaluation-stage deal has no evaluation deadline.",
-                    owner=deal.owner,
-                    deal=deal,
-                    suggested=suggested,
-                    evidence={"stage": deal.stage},
-                )
-                seen += 1; created += int(was_created)
-    return Response({"detected": seen, "created": created, "queueSize": DataQualityIssue.objects.exclude(status=DataQualityIssue.Status.RESOLVED).count()})
+    """Return scan health or run the same bounded scanner used by Celery Beat."""
+
+    if request.method == "GET":
+        latest = DataQualityScanRun.objects.order_by("-started_at", "-id").first()
+        return Response({
+            "lastRun": _quality_scan_data(latest),
+            "queueSize": DataQualityIssue.objects.exclude(status=DataQualityIssue.Status.RESOLVED).count(),
+        })
+
+    run = run_data_quality_scan(
+        trigger="MANUAL",
+        batch_size=settings.FORESTIQ_DATA_QUALITY_BATCH_SIZE,
+    )
+    return Response({
+        **(_quality_scan_data(run) or {}),
+        "queueSize": DataQualityIssue.objects.exclude(status=DataQualityIssue.Status.RESOLVED).count(),
+    })
 
 
 @api_view(["PATCH"])

@@ -21,8 +21,10 @@ from operations.p1_models import (
     ContactActivity,
     ContractVersion,
     DataQualityIssue,
+    DataQualityScanRun,
     DecisionEvidenceSnapshot,
     DealLossOutcome,
+    LossReasonCode,
     MapWorkbasket,
     NextAction,
     OwnershipRelation,
@@ -296,6 +298,76 @@ class P1WorkflowApiTests(TestCase):
         issue.refresh_from_db()
         self.assertEqual(issue.status, "RESOLVED")
         self.assertEqual(DataQualityIssue.objects.filter(fingerprint=issue.fingerprint).count(), 1)
+
+    def test_data_quality_scan_reports_audited_status_and_auto_resolves_fixed_signal(self):
+        first = self.client.post("/api/services/admin/data-quality/scan", {}, format="json")
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(first.data["status"], DataQualityScanRun.Status.SUCCESS)
+        self.assertGreaterEqual(first.data["processedOwners"], 1)
+        self.assertTrue(DataQualityScanRun.objects.filter(id=first.data["id"]).exists())
+
+        missing = DataQualityIssue.objects.get(owner=self.owner, issue_type="MISSING_CONTACT")
+        self.owner.phone = "5551234"
+        self.owner.email = "fixed@example.test"
+        self.owner.save(update_fields=("phone", "email"))
+
+        second = self.client.post("/api/services/admin/data-quality/scan", {}, format="json")
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertGreaterEqual(second.data["autoResolved"], 1)
+        missing.refresh_from_db()
+        self.assertEqual(missing.status, DataQualityIssue.Status.RESOLVED)
+
+        status_response = self.client.get("/api/services/admin/data-quality/scan")
+        self.assertEqual(status_response.status_code, 200, status_response.data)
+        self.assertEqual(status_response.data["lastRun"]["id"], second.data["id"])
+        self.assertIn("queueSize", status_response.data)
+
+    def test_loss_analysis_filters_by_period_seller_and_previous_stage(self):
+        reason = LossReasonCode.objects.create(code="PRICE_TEST", label="Price test", sort_order=10, organization=self.organization)
+        evaluation = self.create_deal(stage=DealStage.LOST)
+        qualification = self.create_deal(stage=DealStage.LOST)
+        DealLossOutcome.objects.create(
+            deal=evaluation,
+            reason=reason,
+            previous_stage=DealStage.EVALUATION,
+            recorded_by=self.admin,
+        )
+        DealLossOutcome.objects.create(
+            deal=qualification,
+            reason=reason,
+            previous_stage=DealStage.QUALIFICATION,
+            recorded_by=self.admin,
+        )
+        today = timezone.localdate().isoformat()
+        response = self.client.get(
+            "/api/services/admin/loss-analysis",
+            {
+                "from": today,
+                "to": today,
+                "sellerId": str(self.admin.id),
+                "previousStage": DealStage.EVALUATION,
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["reasonCode"], "PRICE_TEST")
+        self.assertEqual(response.data[0]["previousStage"], DealStage.EVALUATION)
+        self.assertEqual(response.data[0]["count"], 1)
+
+    @override_settings(
+        CELERY_BEAT_SCHEDULE={
+            "forestiq-data-quality-scan": {
+                "task": "operations.run_scheduled_data_quality_scans",
+                "schedule": 21600.0,
+            }
+        }
+    )
+    def test_data_quality_schedule_contract_is_registered(self):
+        from django.conf import settings
+
+        schedule = settings.CELERY_BEAT_SCHEDULE["forestiq-data-quality-scan"]
+        self.assertEqual(schedule["task"], "operations.run_scheduled_data_quality_scans")
+        self.assertEqual(schedule["schedule"], 21600.0)
 
     def test_protected_manual_owner_cadastre_end_is_not_revived_by_legacy_sync_write(self):
         create = self.client.post(
