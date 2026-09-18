@@ -65,3 +65,47 @@ class P3NotificationHistoryTests(TestCase):
             {"from": timezone.localdate().isoformat(), "to": timezone.localdate().isoformat(), "cursor": "bad"},
         )
         self.assertEqual(bad.status_code, 400)
+
+
+class P3NotificationPreferenceTests(P3NotificationHistoryTests):
+    def test_preferences_are_user_scoped_and_validate_channels(self):
+        initial = self.client.get("/api/services/notification-preferences")
+        self.assertEqual(initial.status_code, 200, initial.data)
+        self.assertEqual(initial.data["channels"], ["IN_APP"])
+
+        updated = self.client.put(
+            "/api/services/notification-preferences",
+            {"enabled": False, "eventTypes": [], "channels": []},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertFalse(updated.data["enabled"])
+
+        invalid = self.client.put(
+            "/api/services/notification-preferences",
+            {"enabled": True, "eventTypes": ["REMINDER_DUE"], "channels": ["SMS"]},
+            format="json",
+        )
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_due_delivery_respects_preference_without_deleting_reminder(self):
+        from operations.models import ApplicationMessage, Reminder
+        from operations.notifications import deliver_reminder
+
+        reminder = Reminder.objects.create(
+            owner=self.owner,
+            creator=self.admin,
+            text="Call owner",
+            due_time=timezone.now(),
+            organization=self.organization,
+        )
+        disabled = self.client.put(
+            "/api/services/notification-preferences",
+            {"enabled": False, "eventTypes": ["REMINDER_DUE"], "channels": ["IN_APP"]},
+            format="json",
+        )
+        self.assertEqual(disabled.status_code, 200)
+        outcome = deliver_reminder(reminder)
+        self.assertEqual(outcome["sent"], 0)
+        self.assertTrue(Reminder.objects.filter(pk=reminder.pk).exists())
+        self.assertFalse(ApplicationMessage.objects.filter(recipient=self.admin, event_key__startswith="reminder:").exists())
