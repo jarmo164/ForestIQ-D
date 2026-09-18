@@ -89,7 +89,7 @@ def run_cadastre_import(
     """Run selected source importers synchronously and persist one audit record per cadastre."""
 
     with organization_scope(organization_id):
-        scoped_cadastre = Cadastre.objects.get(id=cadastre.id)
+        scoped_cadastre = Cadastre.objects.get(id=cadastre.public_id)
         run = DataSyncRun.objects.create(
             cadastre=scoped_cadastre,
             source=f"cli:{category}:{','.join(source.key for source in sources)}",
@@ -101,7 +101,7 @@ def run_cadastre_import(
         errors: dict[str, str] = {}
         for source in sources:
             try:
-                result[source.key] = source.importer(scoped_cadastre.id, organization_id=str(organization_id))
+                result[source.key] = source.importer(scoped_cadastre.public_id, organization_id=str(organization_id))
             except Exception as exc:  # External sources are intentionally surfaced in the durable audit record.
                 errors[source.key] = str(exc)[:4000]
                 if not continue_on_error:
@@ -110,7 +110,7 @@ def run_cadastre_import(
         run.result = result
         run.pages_processed = len(result)
         run.rows_processed = sum(value for value in result.values() if isinstance(value, int) and not isinstance(value, bool))
-        run.cursor = {"cadastreId": scoped_cadastre.id}
+        run.cursor = {"cadastreId": scoped_cadastre.public_id}
         if errors:
             run.status = DataSyncRun.Status.PARTIAL if result else DataSyncRun.Status.FAILED
             run.result = {**result, "failed_sources": errors}
