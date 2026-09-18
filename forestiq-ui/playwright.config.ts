@@ -16,7 +16,24 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "mobile-320",
+      testMatch: /accessibility-mobile\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 320, height: 800 }, hasTouch: true, isMobile: true },
+    },
+    {
+      name: "mobile-375",
+      testMatch: /accessibility-mobile\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true },
+    },
+    {
+      name: "tablet-768",
+      testMatch: /accessibility-mobile\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true },
+    },
+  ],
   webServer: {
     command: "pnpm exec vite --host 127.0.0.1 --port 4173",
     url: "http://127.0.0.1:4173",

@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef } from "react";
 
+import { trapDialogFocus } from "@/lib/dialogFocus";
+
 type ConfirmDialogProps = {
   open: boolean;
   title: string;
@@ -39,6 +41,7 @@ export function ConfirmDialog({ open, title, description, confirmLabel = "Kinnit
     className="w-[min(92vw,32rem)] rounded-2xl border border-border bg-background p-0 shadow-2xl backdrop:bg-black/40"
     aria-labelledby={titleId}
     aria-describedby={descriptionId}
+    onKeyDown={trapDialogFocus}
     onCancel={(event) => { event.preventDefault(); if (!busy) onCancel(); }}
   >
     <div className="p-5">
