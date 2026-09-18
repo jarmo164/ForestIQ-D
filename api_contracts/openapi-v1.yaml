@@ -2350,21 +2350,6 @@ paths:
   /api/v1/services/sales/funnel:
     get:
       operationId: services_sales_funnel_retrieve
-      parameters:
-      - in: query
-        name: from
-        schema:
-          type: string
-          format: date
-      - in: query
-        name: segmentId
-        schema:
-          type: string
-      - in: query
-        name: to
-        schema:
-          type: string
-          format: date
       tags:
       - services
       responses:
