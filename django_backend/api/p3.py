@@ -14,7 +14,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from forestry.models import Cadastre, CadastreNotification
-from .permissions import CanUseAssignedOwners, can_access_owner
+from operations.p3_models import NotificationPreference
+from operations.notifications import SUPPORTED_CHANNELS, SUPPORTED_EVENTS
+from .permissions import CanUseAssignedOwners, CanViewOrganizationData, can_access_owner
 from .serializers import notification_data
 
 
@@ -118,3 +120,39 @@ def cadastre_archived_notifications(request, cadastre_id: str):
     if (to_value - from_value).days > _ARCHIVE_RANGE_MAX_DAYS:
         return _detail(f"Archive range must not exceed {_ARCHIVE_RANGE_MAX_DAYS} days.")
     return _notification_page(request, cadastre=cadastre, archived=True, from_date=from_value, to_date=to_value)
+
+
+@api_view(["GET", "PUT"])
+@permission_classes([CanViewOrganizationData])
+def notification_preferences(request):
+    """Read or replace only the authenticated user's delivery policy."""
+    preference = NotificationPreference.objects.filter(user=request.user).first()
+    if request.method == "GET":
+        return Response({
+            "enabled": preference.enabled if preference else True,
+            "eventTypes": preference.event_types if preference else ["REMINDER_DUE"],
+            "channels": preference.channels if preference else ["IN_APP"],
+            "supportedEventTypes": sorted(SUPPORTED_EVENTS),
+            "supportedChannels": sorted(SUPPORTED_CHANNELS),
+        })
+
+    event_types = request.data.get("eventTypes", ["REMINDER_DUE"])
+    channels = request.data.get("channels", ["IN_APP"])
+    if not isinstance(event_types, list) or any(item not in SUPPORTED_EVENTS for item in event_types):
+        return _detail("eventTypes contains an unsupported notification event.")
+    if not isinstance(channels, list) or any(item not in SUPPORTED_CHANNELS for item in channels):
+        return _detail("channels contains an unsupported notification channel.")
+    enabled = request.data.get("enabled", True)
+    if not isinstance(enabled, bool):
+        return _detail("enabled must be a boolean.")
+    preference, _ = NotificationPreference.objects.update_or_create(
+        user=request.user,
+        defaults={"enabled": enabled, "event_types": event_types, "channels": channels},
+    )
+    return Response({
+        "enabled": preference.enabled,
+        "eventTypes": preference.event_types,
+        "channels": preference.channels,
+        "supportedEventTypes": sorted(SUPPORTED_EVENTS),
+        "supportedChannels": sorted(SUPPORTED_CHANNELS),
+    })
