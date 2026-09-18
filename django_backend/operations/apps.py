@@ -9,3 +9,4 @@ class OperationsConfig(AppConfig):
         # P1 models live in a separate module to keep the legacy operations model file stable.
         from . import p1_models  # noqa: F401
         from . import p1_signals  # noqa: F401
+        from . import p3_models  # noqa: F401
