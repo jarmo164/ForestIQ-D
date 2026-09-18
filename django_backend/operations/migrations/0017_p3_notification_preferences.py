@@ -38,13 +38,18 @@ class Migration(migrations.Migration):
             name="NotificationPreference",
             fields=[
                 ("organization", models.ForeignKey(default=accounts.models.default_organization_id, on_delete=django.db.models.deletion.CASCADE, related_name="+", to="accounts.organization")),
-                ("user", models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, primary_key=True, related_name="notification_preference", serialize=False, to=settings.AUTH_USER_MODEL)),
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ("user", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="notification_preferences", to=settings.AUTH_USER_MODEL)),
                 ("enabled", models.BooleanField(default=True)),
                 ("event_types", models.JSONField(default=operations.p3_models.default_notification_events)),
                 ("channels", models.JSONField(default=operations.p3_models.default_notification_channels)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
             ],
             options={"db_table": "p3_notification_preferences"},
+        ),
+        migrations.AddConstraint(
+            model_name="notificationpreference",
+            constraint=models.UniqueConstraint(fields=("organization", "user"), name="p3_uq_notification_preference_user"),
         ),
         migrations.CreateModel(
             name="ReminderNotificationDelivery",
