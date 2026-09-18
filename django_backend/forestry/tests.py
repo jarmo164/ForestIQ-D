@@ -22,13 +22,15 @@ from operations.models import Deal, DealStage, OwnershipTransitionEvent
 from forestry.services import import_runner
 from forestry.services.authorized_api_client import AuthorizedApiClient, AuthorizedApiError
 from forestry.services.external_sync import ExternalSourceError, sync_cadastre_wfs, sync_metsaregister_wfs, sync_parimus_inheritance, wfs_features
-from forestry.services.metsaregister_full_import import FullImportReport, _refresh_notifications_for_subpart, import_all_metsaregister, import_metsaregister_delta
+from forestry.services.metsaregister_full_import import FullImportReport, _refresh_notifications_for_subpart, import_all_metsaregister, import_metsaregister_chunk, import_metsaregister_delta
 from forestry.tasks import (
     enqueue_cadastre_sync,
     run_cadastre_sync,
     run_metsaregister_delta_check,
     run_parimus_official_notice_import,
     enqueue_all_organizations_weasel_ownership_delta,
+    reconcile_stale_sync_runs,
+    run_metsaregister_full_import,
     run_weasel_ownership_delta,
 )
 from forestry.services.single_flight import SingleFlightLock
@@ -490,6 +492,84 @@ class MetsaregisterFullImportTests(TestCase):
         params = get.call_args.kwargs["params"]
         self.assertIn("registreerimise_kp >=", params["CQL_FILTER"])
         self.assertNotIn("eraldis_nr=10", params["CQL_FILTER"])
+
+    @override_settings(
+        FORESTIQ_METSAREGISTER_WFS_URL="https://metsaregister.example.test/ows",
+        FORESTIQ_METSAREGISTER_FULL_WFS_LAYER="metsaregister:eraldis",
+        FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER="",
+        FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE=1,
+        FORESTIQ_WFS_MAX_FEATURES=2,
+    )
+    def test_full_import_chunk_stops_at_budget_and_resumes_until_eof(self):
+        geometry = {"type": "Polygon", "coordinates": [[[500000, 6500000], [500100, 6500000], [500000, 6500100], [500000, 6500000]]]}
+        features = [
+            {"id": f"chunk-{code}", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": code, "pindala": "1.0"}, "geometry": geometry}
+            for code in (30, 31, 32)
+        ]
+        pages = [[features[0]], [features[1]], [features[2]], []]
+
+        with organization_scope(self.organization.id):
+            with patch("forestry.services.metsaregister_full_import._feature_page", side_effect=pages):
+                first, completed = import_metsaregister_chunk(
+                    organization_id=str(self.organization.id),
+                    page_size=1,
+                    fetch_notifications=False,
+                    max_features=2,
+                )
+                self.assertFalse(completed)
+                self.assertEqual(first.features, 2)
+                self.assertEqual(first.checkpoint_cursor, 2)
+
+                second, completed = import_metsaregister_chunk(
+                    organization_id=str(self.organization.id),
+                    page_size=1,
+                    fetch_notifications=False,
+                    max_features=2,
+                )
+
+        self.assertTrue(completed)
+        self.assertEqual(second.resumed_from, 2)
+        self.assertEqual(second.features, 1)
+        self.assertEqual(second.checkpoint_cursor, 3)
+        checkpoint = ImportCheckpoint.objects.get(source="metsaregister-full")
+        self.assertTrue(checkpoint.completed)
+        self.assertEqual(CadastreSubPart.objects.filter(sub_part_code__in=(30, 31, 32)).count(), 3)
+
+    @override_settings(FORESTIQ_SYNC_RUN_STALE_SECONDS=60)
+    def test_stale_running_sync_is_failed_by_watchdog(self):
+        stale = DataSyncRun.objects.create(
+            source="celery:metsaregister-full",
+            status=DataSyncRun.Status.RUNNING,
+            started_at=timezone.now() - timedelta(minutes=10),
+            cursor={"heartbeatAt": (timezone.now() - timedelta(minutes=10)).isoformat()},
+        )
+
+        result = reconcile_stale_sync_runs.run()
+
+        stale.refresh_from_db()
+        self.assertEqual(result["recovered"], 1)
+        self.assertEqual(stale.status, DataSyncRun.Status.FAILED)
+        self.assertIsNotNone(stale.finished_at)
+        self.assertIn("heartbeat expired", stale.error_message)
+
+    @override_settings(FORESTIQ_WFS_MAX_FEATURES=2)
+    @patch("forestry.tasks.run_metsaregister_full_import.apply_async")
+    @patch("forestry.tasks.import_metsaregister_chunk")
+    def test_celery_full_import_chains_next_chunk_on_same_run(self, import_chunk, apply_async):
+        apply_async.return_value.id = "next-task"
+        import_chunk.return_value = (
+            FullImportReport(features=2, checkpoint_cursor=2, checkpoint_pages=2),
+            False,
+        )
+
+        result = run_metsaregister_full_import.run(str(self.organization.id))
+
+        run = DataSyncRun.objects.get(source="celery:metsaregister-full")
+        self.assertEqual(result["status"], "CONTINUE")
+        self.assertEqual(run.status, DataSyncRun.Status.RUNNING)
+        self.assertEqual(run.rows_processed, 2)
+        self.assertEqual(run.cursor["startIndex"], 2)
+        apply_async.assert_called_once()
 
     @patch("forestry.tasks.import_metsaregister_delta", return_value=FullImportReport(features=1, new_subparts=1, notifications=2))
     def test_celery_delta_task_creates_audited_run(self, import_delta):
