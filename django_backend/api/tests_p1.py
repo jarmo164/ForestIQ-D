@@ -22,6 +22,8 @@ from operations.p1_models import (
     MapWorkbasket,
     NextAction,
     OwnershipRelation,
+    SalesSegment,
+    SalesStageProbability,
     WorkflowAuditEvent,
 )
 
@@ -36,6 +38,7 @@ class P1WorkflowApiTests(TestCase):
             default_organization=self.organization,
         )
         Privilege.objects.create(user=self.admin, code=PrivilegeCode.ADMIN)
+        self.admin.organization_memberships.filter(organization=self.organization).update(roles=[OrganizationRole.ADMIN])
         self.client = APIClient()
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(self.admin)['actualToken']['token']}")
         self.owner = Owner.objects.create(
@@ -424,3 +427,88 @@ class P1WorkflowApiTests(TestCase):
             format="json",
         )
         self.assertEqual(cross_user.status_code, 403, cross_user.data)
+
+    def test_sales_funnel_uses_configured_probabilities_and_documented_weighted_value(self):
+        older = timezone.now() - timedelta(days=5)
+        won = self.create_deal(stage=DealStage.WON)
+        won.closed_at = older + timedelta(days=4)
+        won.save(update_fields=("closed_at",))
+        DealOffer.objects.create(
+            deal=won,
+            revision=1,
+            kind=DealOffer.Kind.OFFER,
+            status=DealOffer.Status.ACCEPTED,
+            amount=Decimal("125000.00"),
+            created_by=self.admin,
+            organization=self.organization,
+        )
+        evaluation = self.create_deal(stage=DealStage.EVALUATION)
+        evaluation.recommended_purchase_price = Decimal("100000.00")
+        evaluation.save(update_fields=("recommended_purchase_price",))
+        Deal.objects.filter(id__in=[won.id, evaluation.id]).update(created_at=older, updated_at=older + timedelta(days=2))
+
+        probability = self.client.post(
+            "/api/services/admin/sales/stage-probabilities",
+            {"stage": "EVALUATION", "probability": "0.5000", "validFrom": (timezone.localdate() - timedelta(days=1)).isoformat(), "note": "Regression fixture"},
+            format="json",
+        )
+        self.assertEqual(probability.status_code, 201, probability.data)
+        self.assertEqual(SalesStageProbability.objects.filter(stage=DealStage.EVALUATION).count(), 1)
+
+        response = self.client.get("/api/services/sales/funnel")
+        self.assertEqual(response.status_code, 200, response.data)
+        stages = {item["stage"]: item for item in response.data["stages"]}
+        self.assertIn("weightedValue = deterministic deal value", response.data["formula"])
+        self.assertEqual(stages["EVALUATION"]["volume"], 1)
+        self.assertEqual(stages["EVALUATION"]["probability"], 0.5)
+        self.assertEqual(stages["EVALUATION"]["probabilitySource"], "configured")
+        self.assertEqual(stages["EVALUATION"]["weightedValue"], 50000.0)
+        self.assertEqual(stages["WON"]["weightedValue"], 125000.0)
+        self.assertGreaterEqual(stages["QUALIFICATION"]["conversionToNext"], 0)
+
+    def test_sales_segments_preview_token_required_before_assignment_apply(self):
+        stale = self.create_deal(stage=DealStage.QUALIFICATION)
+        stale.price_expectation = Decimal("40000.00")
+        stale.save(update_fields=("price_expectation",))
+        fresh = self.create_deal(stage=DealStage.EVALUATION)
+        fresh.price_expectation = Decimal("80000.00")
+        fresh.save(update_fields=("price_expectation",))
+        Deal.objects.filter(id__in=[stale.id, fresh.id]).update(updated_at=timezone.now() - timedelta(days=20))
+        target = User.objects.create_user("sales-target", "Sales Target", "very-secure-password", default_organization=self.organization)
+        target.organization_memberships.filter(organization=self.organization).update(roles=[OrganizationRole.CRM_MANAGER])
+
+        created = self.client.post(
+            "/api/services/sales/segments",
+            {"name": "Stale qualification", "filters": {"stages": ["QUALIFICATION"], "staleDays": 7, "activeOnly": True, "minValue": "10000"}, "shared": True},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(SalesSegment.objects.filter(name="Stale qualification").count(), 1)
+        segment_id = created.data["id"]
+
+        blocked = self.client.post(
+            f"/api/services/sales/segments/{segment_id}/assignment-apply",
+            {"targetAssigneeId": target.id},
+            format="json",
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+
+        preview = self.client.post(
+            f"/api/services/sales/segments/{segment_id}/assignment-preview",
+            {"targetAssigneeId": target.id},
+            format="json",
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["dealCount"], 1)
+        self.assertEqual(preview.data["ownerCount"], 1)
+        self.assertTrue(preview.data["previewToken"])
+
+        applied = self.client.post(
+            f"/api/services/sales/segments/{segment_id}/assignment-apply",
+            {"targetAssigneeId": target.id, "previewToken": preview.data["previewToken"]},
+            format="json",
+        )
+        self.assertEqual(applied.status_code, 200, applied.data)
+        self.assertEqual(applied.data["changedOwnerCount"], 1)
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.assignee_id, target.id)
