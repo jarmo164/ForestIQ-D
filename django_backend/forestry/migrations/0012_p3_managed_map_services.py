@@ -36,6 +36,7 @@ class Migration(migrations.Migration):
                 ("name", models.CharField(max_length=160)),
                 ("service_type", models.CharField(choices=[("WMS", "WMS"), ("MVT", "MVT")], max_length=10)),
                 ("url_template", models.URLField(max_length=1500)),
+                ("source_layer", models.CharField(blank=True, max_length=160)),
                 ("visible", models.BooleanField(default=False)),
                 ("opacity", models.DecimalField(decimal_places=3, default=0.75, max_digits=4)),
                 ("usage_rights", models.TextField(blank=True)),
