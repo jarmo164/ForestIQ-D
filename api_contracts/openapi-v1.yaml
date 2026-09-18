@@ -132,8 +132,19 @@ paths:
         '200':
           description: No response body
   /api/v1/services/admin/data-quality/scan:
+    get:
+      operationId: services_admin_data_quality_scan_retrieve
+      description: Return scan health or run the same bounded scanner used by Celery
+        Beat.
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
     post:
       operationId: services_admin_data_quality_scan_create
+      description: Return scan health or run the same bounded scanner used by Celery
+        Beat.
       tags:
       - services
       responses:
