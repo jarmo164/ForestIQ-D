@@ -4,10 +4,18 @@ from __future__ import annotations
 import base64
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 import json
+import ipaddress
+import math
+import time
+from urllib.parse import urlparse
+
+import requests
 
 from django.conf import settings
 from django.db.models import DateTimeField, F, Q, Value
+from django.core.cache import cache
 from django.db.models.functions import Coalesce
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -16,11 +24,13 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from forestry.models import Cadastre, CadastreNotification
+from forestry.p3_models import BasemapDefinition, ExternalMapLayer
 from operations.models import ApplicationMessage
 from operations.p3_models import NotificationPreference
 from operations.realtime import publish_org_event, unread_application_message_count
 from operations.notifications import SUPPORTED_CHANNELS, SUPPORTED_EVENTS
-from .permissions import CanUseAssignedOwners, CanViewOrganizationData, can_access_owner
+from .organization import request_organization_id
+from .permissions import CanUseAssignedOwners, CanViewOrganizationData, IsAdmin, can_access_owner
 from .serializers import notification_data
 
 
@@ -239,3 +249,373 @@ def application_message_detail(request, message_id: int):
 @permission_classes([CanViewOrganizationData])
 def application_message_unread_count(request):
     return Response({"unreadCount": unread_application_message_count(request.user)})
+
+
+_MAP_TILE_MAX_BYTES = 3 * 1024 * 1024
+
+
+def _basemap_data(item: BasemapDefinition | None = None) -> dict:
+    if item is None:
+        return {
+            "key": "default",
+            "name": "OpenFreeMap",
+            "attribution": "© OpenFreeMap",
+            "enabled": True,
+            "maxZoom": 19,
+            "cacheSeconds": settings.FORESTIQ_MAP_BASEMAP_CACHE_SECONDS,
+            "tileTemplate": "/api/services/map/basemaps/default/{z}/{x}/{y}",
+        }
+    return {
+        "key": item.key,
+        "name": item.name,
+        "attribution": item.attribution,
+        "enabled": item.enabled,
+        "maxZoom": item.max_zoom,
+        "cacheSeconds": item.cache_seconds,
+        "tileTemplate": f"/api/services/map/basemaps/{item.key}/{{z}}/{{x}}/{{y}}",
+    }
+
+
+def _external_layer_data(item: ExternalMapLayer) -> dict:
+    return {
+        "id": str(item.id),
+        "key": item.key,
+        "name": item.name,
+        "serviceType": item.service_type,
+        "sourceLayer": item.source_layer or None,
+        "visible": item.visible,
+        "opacity": float(item.opacity),
+        "usageRights": item.usage_rights or None,
+        "attribution": item.attribution or None,
+        "freshnessAt": int(item.freshness_at.timestamp() * 1000) if item.freshness_at else None,
+        "minZoom": item.min_zoom,
+        "maxZoom": item.max_zoom,
+        "tileTemplate": f"/api/services/map/external-layers/{item.key}/{{z}}/{{x}}/{{y}}",
+        "updatedAt": int(item.updated_at.timestamp() * 1000),
+    }
+
+
+def _validate_external_template(value: str) -> str:
+    value = str(value or "").strip()
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("External map URL must use https.")
+    hostname = parsed.hostname.lower()
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".local"):
+        raise ValueError("Local network map targets are not allowed.")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+    if address and (address.is_private or address.is_loopback or address.is_link_local or address.is_reserved):
+        raise ValueError("Private or reserved map targets are not allowed.")
+    if not any(token in value for token in ("{z}", "{bbox}")):
+        raise ValueError("Map URL template must contain {z} or {bbox}.")
+    return value
+
+
+def _tile_bbox_3857(z: int, x: int, y: int) -> str:
+    origin = 20037508.342789244
+    tiles = 2 ** z
+    size = (origin * 2) / tiles
+    min_x = -origin + x * size
+    max_x = min_x + size
+    max_y = origin - y * size
+    min_y = max_y - size
+    return f"{min_x:.3f},{min_y:.3f},{max_x:.3f},{max_y:.3f}"
+
+
+def _render_tile_url(template: str, z: int, x: int, y: int) -> str:
+    return (
+        template.replace("{z}", str(z))
+        .replace("{x}", str(x))
+        .replace("{y}", str(y))
+        .replace("{bbox}", _tile_bbox_3857(z, x, y))
+    )
+
+
+def _proxy_tile(url: str, *, cache_key: str, cache_seconds: int):
+    cached = cache.get(cache_key)
+    if cached is not None:
+        body, content_type = cached
+        response = HttpResponse(body, content_type=content_type)
+        response["Cache-Control"] = f"private, max-age={cache_seconds}"
+        response["X-ForestIQ-Map-Cache"] = "HIT"
+        return response
+    last_error = None
+    for attempt in range(settings.FORESTIQ_MAP_PROXY_RETRIES + 1):
+        try:
+            response = requests.get(
+                url,
+                timeout=settings.FORESTIQ_MAP_PROXY_TIMEOUT_SECONDS,
+                headers={"User-Agent": settings.FORESTIQ_SYNC_USER_AGENT, "Accept": "image/*,application/x-protobuf,application/vnd.mapbox-vector-tile,*/*"},
+            )
+            response.raise_for_status()
+            if len(response.content) > _MAP_TILE_MAX_BYTES:
+                return _detail("Upstream map tile exceeded the response-size policy.", status.HTTP_502_BAD_GATEWAY)
+            content_type = response.headers.get("Content-Type", "application/octet-stream").split(";", 1)[0]
+            cache.set(cache_key, (response.content, content_type), timeout=cache_seconds)
+            proxied = HttpResponse(response.content, content_type=content_type)
+            proxied["Cache-Control"] = f"private, max-age={cache_seconds}"
+            proxied["X-ForestIQ-Map-Cache"] = "MISS"
+            return proxied
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < settings.FORESTIQ_MAP_PROXY_RETRIES:
+                time.sleep(min(0.15 * (2 ** attempt), 0.6))
+    return _detail(f"Upstream map service is unavailable: {last_error}", status.HTTP_502_BAD_GATEWAY)
+
+
+@api_view(["GET"])
+@permission_classes([CanViewOrganizationData])
+def map_configuration(request):
+    basemaps = list(BasemapDefinition.objects.filter(enabled=True))
+    return Response({
+        "basemaps": [_basemap_data(item) for item in basemaps] or [_basemap_data()],
+        "externalLayers": [_external_layer_data(item) for item in ExternalMapLayer.objects.all()],
+    })
+
+
+@api_view(["GET"])
+@permission_classes([CanViewOrganizationData])
+def basemap_tile(request, key: str, z: int, x: int, y: int):
+    if z < 0 or z > 22 or x < 0 or y < 0 or x >= 2 ** z or y >= 2 ** z:
+        return _detail("Invalid tile coordinates.")
+    item = BasemapDefinition.objects.filter(key=key, enabled=True).first()
+    if item:
+        template, ttl = item.tile_url_template, item.cache_seconds
+    elif key == "default":
+        template, ttl = settings.FORESTIQ_DEFAULT_BASEMAP_TILE_URL, settings.FORESTIQ_MAP_BASEMAP_CACHE_SECONDS
+    else:
+        return _detail("Unknown basemap.", status.HTTP_404_NOT_FOUND)
+    url = _render_tile_url(template, z, x, y)
+    return _proxy_tile(url, cache_key=f"p3:basemap:{request_organization_id(request)}:{key}:{z}:{x}:{y}", cache_seconds=ttl)
+
+
+@api_view(["GET"])
+@permission_classes([CanViewOrganizationData])
+def external_layer_tile(request, key: str, z: int, x: int, y: int):
+    if z < 0 or z > 22 or x < 0 or y < 0 or x >= 2 ** z or y >= 2 ** z:
+        return _detail("Invalid tile coordinates.")
+    layer = get_object_or_404(ExternalMapLayer, key=key)
+    if z < layer.min_zoom or z > layer.max_zoom:
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    url = _render_tile_url(layer.url_template, z, x, y)
+    return _proxy_tile(
+        url,
+        cache_key=f"p3:external:{request_organization_id(request)}:{key}:{z}:{x}:{y}",
+        cache_seconds=layer.cache_seconds,
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdmin])
+def admin_basemaps(request):
+    if request.method == "GET":
+        return Response([_basemap_data(item) for item in BasemapDefinition.objects.all()])
+    try:
+        template = _validate_external_template(request.data.get("tileUrlTemplate"))
+    except ValueError as exc:
+        return _detail(str(exc))
+    key = str(request.data.get("key", "")).strip().lower()
+    name = str(request.data.get("name", "")).strip()
+    if not key or not name:
+        return _detail("key and name are required.")
+    item = BasemapDefinition.objects.create(
+        key=key,
+        name=name,
+        tile_url_template=template,
+        attribution=str(request.data.get("attribution", "")),
+        enabled=bool(request.data.get("enabled", True)),
+        max_zoom=min(max(int(request.data.get("maxZoom", 19)), 0), 22),
+        cache_seconds=min(max(int(request.data.get("cacheSeconds", 3600)), 30), 86400),
+    )
+    return Response(_basemap_data(item), status=status.HTTP_201_CREATED)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAdmin])
+def admin_basemap_detail(request, key: str):
+    item = get_object_or_404(BasemapDefinition, key=key)
+    if request.method == "DELETE":
+        item.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    if "tileUrlTemplate" in request.data:
+        try:
+            item.tile_url_template = _validate_external_template(request.data.get("tileUrlTemplate"))
+        except ValueError as exc:
+            return _detail(str(exc))
+    for field, api_key in (("name", "name"), ("attribution", "attribution")):
+        if api_key in request.data:
+            setattr(item, field, str(request.data.get(api_key, "")).strip())
+    if "enabled" in request.data:
+        if not isinstance(request.data["enabled"], bool):
+            return _detail("enabled must be a boolean.")
+        item.enabled = request.data["enabled"]
+    item.save()
+    return Response(_basemap_data(item))
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdmin])
+def admin_external_layers(request):
+    if request.method == "GET":
+        return Response([_external_layer_data(item) for item in ExternalMapLayer.objects.all()])
+    try:
+        template = _validate_external_template(request.data.get("urlTemplate"))
+        opacity = float(request.data.get("opacity", 0.75))
+    except (ValueError, TypeError) as exc:
+        return _detail(str(exc))
+    service_type = str(request.data.get("serviceType", "")).upper()
+    if service_type not in ExternalMapLayer.ServiceType.values:
+        return _detail("serviceType must be WMS or MVT.")
+    if opacity < 0 or opacity > 1:
+        return _detail("opacity must be between 0 and 1.")
+    key = str(request.data.get("key", "")).strip().lower()
+    name = str(request.data.get("name", "")).strip()
+    if not key or not name:
+        return _detail("key and name are required.")
+    item = ExternalMapLayer.objects.create(
+        key=key,
+        name=name,
+        service_type=service_type,
+        url_template=template,
+        source_layer=str(request.data.get("sourceLayer", "")).strip(),
+        visible=bool(request.data.get("visible", False)),
+        opacity=opacity,
+        usage_rights=str(request.data.get("usageRights", "")).strip(),
+        attribution=str(request.data.get("attribution", "")).strip(),
+        min_zoom=min(max(int(request.data.get("minZoom", 0)), 0), 22),
+        max_zoom=min(max(int(request.data.get("maxZoom", 22)), 0), 22),
+        cache_seconds=min(max(int(request.data.get("cacheSeconds", 300)), 30), 86400),
+    )
+    return Response(_external_layer_data(item), status=status.HTTP_201_CREATED)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAdmin])
+def admin_external_layer_detail(request, key: str):
+    item = get_object_or_404(ExternalMapLayer, key=key)
+    if request.method == "DELETE":
+        item.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    if "urlTemplate" in request.data:
+        try:
+            item.url_template = _validate_external_template(request.data.get("urlTemplate"))
+        except ValueError as exc:
+            return _detail(str(exc))
+    if "serviceType" in request.data:
+        value = str(request.data.get("serviceType", "")).upper()
+        if value not in ExternalMapLayer.ServiceType.values:
+            return _detail("serviceType must be WMS or MVT.")
+        item.service_type = value
+    scalar_fields = {
+        "name": "name", "sourceLayer": "source_layer", "usageRights": "usage_rights", "attribution": "attribution",
+    }
+    for api_key, field in scalar_fields.items():
+        if api_key in request.data:
+            setattr(item, field, str(request.data.get(api_key, "")).strip())
+    if "visible" in request.data:
+        if not isinstance(request.data["visible"], bool):
+            return _detail("visible must be a boolean.")
+        item.visible = request.data["visible"]
+    if "opacity" in request.data:
+        try:
+            opacity = float(request.data["opacity"])
+        except (TypeError, ValueError):
+            return _detail("opacity must be numeric.")
+        if opacity < 0 or opacity > 1:
+            return _detail("opacity must be between 0 and 1.")
+        item.opacity = opacity
+    if "freshnessAt" in request.data:
+        from django.utils.dateparse import parse_datetime
+        parsed = parse_datetime(str(request.data["freshnessAt"]).replace("Z", "+00:00"))
+        if parsed is None:
+            return _detail("freshnessAt must be an ISO datetime.")
+        item.freshness_at = parsed
+    item.save()
+    return Response(_external_layer_data(item))
+
+
+def _map_search_result(cadastre: Cadastre) -> dict:
+    return {
+        "id": cadastre.id,
+        "label": cadastre.name or cadastre.address or cadastre.id,
+        "cadastreId": cadastre.id,
+        "address": cadastre.address or None,
+        "source": "LOCAL",
+    }
+
+
+def _inaks_rate_allowed(request) -> bool:
+    minute = int(time.time() // 60)
+    key = f"p3:inaks-rate:{request_organization_id(request)}:{request.user.id}:{minute}"
+    if cache.add(key, 1, timeout=70):
+        return True
+    try:
+        return cache.incr(key) <= settings.FORESTIQ_INAKS_RATE_PER_MINUTE
+    except ValueError:
+        cache.set(key, 1, timeout=70)
+        return True
+
+
+@api_view(["GET"])
+@permission_classes([CanViewOrganizationData])
+def map_search(request):
+    query = str(request.query_params.get("q", "")).strip()
+    if len(query) < 2 or len(query) > settings.FORESTIQ_MAP_SEARCH_MAX_QUERY_LENGTH:
+        return _detail(f"q must contain 2-{settings.FORESTIQ_MAP_SEARCH_MAX_QUERY_LENGTH} characters.")
+    local = list(
+        Cadastre.objects.prefetch_related("owners")
+        .filter(Q(id__icontains=query) | Q(name__icontains=query) | Q(address__icontains=query))
+        .order_by("id")[: settings.FORESTIQ_MAP_SEARCH_RESULT_LIMIT]
+    )
+    allowed = [item for item in local if any(can_access_owner(request, owner) for owner in item.owners.all())]
+    if allowed:
+        return Response({"source": "LOCAL", "results": [_map_search_result(item) for item in allowed]})
+
+    if not settings.FORESTIQ_INAKS_SEARCH_URL:
+        return Response({"source": "IN_AKS", "results": [], "externalConfigured": False})
+    if not _inaks_rate_allowed(request):
+        return _detail("Address search rate limit exceeded.", status.HTTP_429_TOO_MANY_REQUESTS)
+
+    cache_key = f"p3:inaks:{request_organization_id(request)}:{query.lower()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response({"source": "IN_AKS", "results": cached, "externalConfigured": True, "cached": True})
+
+    last_error = None
+    for attempt in range(settings.FORESTIQ_MAP_PROXY_RETRIES + 1):
+        try:
+            response = requests.get(
+                settings.FORESTIQ_INAKS_SEARCH_URL,
+                params={settings.FORESTIQ_INAKS_QUERY_PARAM: query, "limit": settings.FORESTIQ_MAP_SEARCH_RESULT_LIMIT},
+                timeout=settings.FORESTIQ_MAP_PROXY_TIMEOUT_SECONDS,
+                headers={"Accept": "application/json", "User-Agent": settings.FORESTIQ_SYNC_USER_AGENT},
+            )
+            response.raise_for_status()
+            if len(response.content) > settings.FORESTIQ_INAKS_MAX_RESPONSE_BYTES:
+                return _detail("Address-search response exceeded the size policy.", status.HTTP_502_BAD_GATEWAY)
+            payload = response.json()
+            raw = payload.get("features", payload.get("results", [])) if isinstance(payload, dict) else []
+            results = []
+            for item in raw[: settings.FORESTIQ_MAP_SEARCH_RESULT_LIMIT]:
+                if not isinstance(item, dict):
+                    continue
+                properties = item.get("properties") if isinstance(item.get("properties"), dict) else item
+                geometry = item.get("geometry") if isinstance(item.get("geometry"), dict) else None
+                results.append({
+                    "id": str(properties.get("id") or properties.get("tunnus") or properties.get("ads_oid") or ""),
+                    "label": str(properties.get("label") or properties.get("name") or properties.get("tais_aadress") or properties.get("aadress") or ""),
+                    "cadastreId": properties.get("tunnus") or properties.get("katastritunnus"),
+                    "address": properties.get("tais_aadress") or properties.get("aadress"),
+                    "geometry": geometry,
+                    "source": "IN_AKS",
+                })
+            cache.set(cache_key, results, timeout=settings.FORESTIQ_INAKS_CACHE_SECONDS)
+            return Response({"source": "IN_AKS", "results": results, "externalConfigured": True, "cached": False})
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            if attempt < settings.FORESTIQ_MAP_PROXY_RETRIES:
+                time.sleep(min(0.15 * (2 ** attempt), 0.6))
+    return _detail(f"Address search is temporarily unavailable: {last_error}", status.HTTP_502_BAD_GATEWAY)
