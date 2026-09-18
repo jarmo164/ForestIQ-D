@@ -210,12 +210,22 @@ def _upsert_notification(*, cadastre: Cadastre, subpart_code: int, feature: dict
     return True
 
 
-def _import_notifications_for_new_subpart(*, cadastre: Cadastre, subpart_code: int) -> int:
+def _refresh_notifications_for_subpart(*, cadastre: Cadastre, subpart_code: int) -> int:
+    """Refresh every notification page for a subpart using idempotent upserts."""
+
     layer = settings.FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER
     if not layer:
         return 0
     cql = _cql_equals({settings.FORESTIQ_METSAREGISTER_NOTIFICATION_CADASTRE_FIELD: cadastre.id, settings.FORESTIQ_METSAREGISTER_NOTIFICATION_SUBPART_FIELD: subpart_code})
-    return sum(_upsert_notification(cadastre=cadastre, subpart_code=subpart_code, feature=feature) for feature in _feature_page(layer=layer, start_index=0, page_size=settings.FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE, cql_filter=cql))
+    return sum(
+        _upsert_notification(cadastre=cadastre, subpart_code=subpart_code, feature=feature)
+        for page in _pages(
+            layer=layer,
+            page_size=settings.FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE,
+            cql_filter=cql,
+        )
+        for feature in page
+    )
 
 
 def _store_allocation(*, report: FullImportReport, layer: str, feature: dict[str, Any], fetch_notifications: bool) -> None:
@@ -235,10 +245,14 @@ def _store_allocation(*, report: FullImportReport, layer: str, feature: dict[str
         ForestRegistryFeature.objects.update_or_create(source_layer=layer, source_id=_source_id(feature), defaults={"cadastre": cadastre, "subpart_code": subpart_code, "title": f"Eraldis {subpart_code}", "work_code": str(properties.get("raie_liik") or ""), "decision": str(properties.get("otsus") or ""), "area": _number(properties.get("pindala")), "volume": _number(properties.get("tagavara_l_ha")), "attributes": properties, "geometry": geometry, "spatial_geometry": geometry_from_geojson(geometry)})
         if was_new:
             report.new_subparts += 1
-            if fetch_notifications:
-                report.notifications += _import_notifications_for_new_subpart(cadastre=cadastre, subpart_code=subpart_code)
         else:
             report.updated_subparts += 1
+    # Provider I/O must not keep the allocation database transaction open.
+    if fetch_notifications:
+        report.notifications += _refresh_notifications_for_subpart(
+            cadastre=cadastre,
+            subpart_code=subpart_code,
+        )
 
 
 def import_all_metsaregister(

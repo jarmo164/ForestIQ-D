@@ -93,7 +93,7 @@ python manage.py import_external_api_sources --organization forestiq-default --a
 
 ### Metsaregistri esmane täisimport ja uued teatised
 
-Kui metsaregister on põhiandmeallikas, käivita esmalt täisimport. Käsk loeb `FORESTIQ_METSAREGISTER_FULL_WFS_LAYER` kihist kõik eraldised lehekülgede kaupa. Iga eraldis salvestatakse `CadastreSubPart`-ina; ainult juhul, kui kombinatsiooni **katastriüksus + eraldise number** veel andmebaasis ei ole, tehakse teatiste kihile sihitud CQL-päring. Juba olemasolevate eraldiste teatisi ei laadita selle käsuga uuesti.
+Kui metsaregister on põhiandmeallikas, käivita esmalt täisimport. Käsk loeb `FORESTIQ_METSAREGISTER_FULL_WFS_LAYER` kihist kõik eraldised lehekülgede kaupa. Iga eraldis salvestatakse `CadastreSubPart`-ina ning teatiste kiht värskendatakse idempotentse, lehekülgede kaupa CQL-päringuga nii uutele kui olemasolevatele eraldistele.
 
 ```sh
 cd django_backend
@@ -110,7 +110,7 @@ python manage.py import_metsaregister_full --organization forestiq-default --wit
 
 Teatiste automaatseks järelpäringuks seadista lisaks metsaregistri URL-ile ja eraldiste kihile `FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER`. Vajadusel saab CQL-väljade nimed määrata muutujatega `FORESTIQ_METSAREGISTER_NOTIFICATION_CADASTRE_FIELD` ja `FORESTIQ_METSAREGISTER_NOTIFICATION_SUBPART_FIELD`; vaikimisi kasutatakse `katastri_nr` ja `eraldis_nr`. Käsk jätab kogu täisimpordi kohta ühe `DataSyncRun` auditikirje, mis sisaldab eraldiste, uute eraldiste ja imporditud teatiste arvu.
 
-Kõik Maa-ameti ja Metsaregistri WFS-päringud läbivad sama piiratud kliendi. See kasutab `startIndex`-põhist paginationi, piirab ühe impordi funktsioonide arvu (`FORESTIQ_WFS_MAX_FEATURES`) ning ühe vastuse mahtu (`FORESTIQ_WFS_MAX_PAYLOAD_BYTES`). Ajutised võrguvead ning vastused `429` ja `5xx` proovib klient piiratud eksponentsiaalse backoff’iga uuesti; muud HTTP vead, vigane GeoJSON FeatureCollection või liiga suur payload lõpetavad sünkroonimisjooksu selge `DataSyncRun` veateatega. Teenuse koormuse piiramiseks on kõigi ühe impordi WFS-päringute vahel seadistatav minimaalne intervall (`FORESTIQ_WFS_MIN_REQUEST_INTERVAL_SECONDS`).
+Kõik Maa-ameti ja Metsaregistri WFS-päringud läbivad sama piiratud kliendi. See kasutab `startIndex`-põhist paginationi, piirab ühe impordi funktsioonide arvu (`FORESTIQ_WFS_MAX_FEATURES`) ning ühe vastuse mahtu (`FORESTIQ_WFS_MAX_PAYLOAD_BYTES`). Ajutised võrguvead ning vastused `429` ja `5xx` proovib klient piiratud eksponentsiaalse backoff’iga uuesti; muud HTTP vead, vigane GeoJSON FeatureCollection või liiga suur payload lõpetavad sünkroonimisjooksu selge `DataSyncRun` veateatega. Teenuse koormuse piiramiseks on kõigi ühe impordi WFS-päringute vahel seadistatav minimaalne intervall (`FORESTIQ_WFS_MIN_REQUEST_INTERVAL_SECONDS`). Retained-ID cleanup peatub ja jätab varasemad andmed alles, kui uus tulemus on tühi või langeb alla `FORESTIQ_WFS_MIN_RETAINED_RATIO` katvuse.
 
 ### Perioodiline metsaregistri CQL-deltakontroll
 

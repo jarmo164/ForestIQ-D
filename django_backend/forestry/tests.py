@@ -20,8 +20,8 @@ from api.auth import token_pair
 from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, ImportCheckpoint, Owner, OwnerLog
 from operations.models import Deal, DealStage, OwnershipTransitionEvent
 from forestry.services import import_runner
-from forestry.services.external_sync import sync_cadastre_wfs, sync_parimus_inheritance, wfs_features
-from forestry.services.metsaregister_full_import import FullImportReport, import_all_metsaregister, import_metsaregister_delta
+from forestry.services.external_sync import ExternalSourceError, sync_cadastre_wfs, sync_metsaregister_wfs, sync_parimus_inheritance, wfs_features
+from forestry.services.metsaregister_full_import import FullImportReport, _refresh_notifications_for_subpart, import_all_metsaregister, import_metsaregister_delta
 from forestry.tasks import (
     enqueue_cadastre_sync,
     run_cadastre_sync,
@@ -84,6 +84,27 @@ class CadastreWfsTests(TestCase):
         self.assertIsNotNone(self.cadastre.boundary)
         self.assertEqual(self.cadastre.boundary.srid, 3301)
         self.assertTrue(self.cadastre.marked)
+
+    @override_settings(
+        FORESTIQ_METSAREGISTER_WFS_URL="https://metsaregister.example.test/ows",
+        FORESTIQ_METSAREGISTER_WFS_LAYERS=("metsaregister:eraldis",),
+    )
+    @patch("forestry.services.external_sync.wfs_features", return_value=[])
+    def test_empty_metsaregister_response_preserves_existing_layer(self, _features):
+        ForestRegistryFeature.objects.create(
+            cadastre=self.cadastre,
+            source_layer="metsaregister:eraldis",
+            source_id="known-feature",
+        )
+
+        with organization_scope(self.cadastre.organization_id):
+            with self.assertRaisesMessage(ExternalSourceError, "retained data was preserved"):
+                sync_metsaregister_wfs(
+                    self.cadastre.id,
+                    organization_id=str(self.cadastre.organization_id),
+                )
+
+        self.assertTrue(ForestRegistryFeature.objects.filter(source_id="known-feature").exists())
 
 
 class InheritanceApiTests(TestCase):
@@ -304,33 +325,54 @@ class MetsaregisterFullImportTests(TestCase):
         FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE=100,
     )
     @patch("forestry.services.metsaregister_full_import.requests.get")
-    def test_full_import_fetches_notifications_only_for_new_subparts(self, get):
+    def test_full_import_refreshes_notifications_for_existing_and_new_subparts(self, get):
         geometry = {"type": "Polygon", "coordinates": [[[500000, 6500000], [500100, 6500000], [500000, 6500100], [500000, 6500000]]]}
         allocations = Mock()
         allocations.json.return_value = {"features": [
             {"id": "existing-10", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 10, "pindala": "1.2"}, "geometry": geometry},
             {"id": "new-11", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 11, "pindala": "2.4"}, "geometry": geometry},
         ]}
-        notifications = Mock()
-        notifications.json.return_value = {"features": [{"id": "9001", "properties": {"teatise_nr": "7001", "eraldis_nr": 11, "raie_liik": "RAIE", "pindala": "2.4"}, "geometry": geometry}]}
-        get.side_effect = [allocations, notifications]
+        existing_notifications = Mock()
+        existing_notifications.json.return_value = {"features": [{"id": "9000", "properties": {"teatise_nr": "7000", "eraldis_nr": 10, "raie_liik": "RAIE", "pindala": "1.2"}, "geometry": geometry}]}
+        new_notifications = Mock()
+        new_notifications.json.return_value = {"features": [{"id": "9001", "properties": {"teatise_nr": "7001", "eraldis_nr": 11, "raie_liik": "RAIE", "pindala": "2.4"}, "geometry": geometry}]}
+        get.side_effect = [allocations, existing_notifications, new_notifications]
 
         call_command("import_metsaregister_full", "--page-size", "100", "--organization", str(self.organization.id))
 
         self.assertTrue(CadastreSubPart.objects.filter(cadastre=self.cadastre, sub_part_code=11).exists())
-        self.assertEqual(CadastreNotification.objects.filter(cadastre=self.cadastre, cadastre_subpart_code=11).count(), 1)
-        self.assertEqual(get.call_count, 2)
-        notification_params = get.call_args_list[1].kwargs["params"]
-        self.assertIn("eraldis_nr=11", notification_params["CQL_FILTER"])
-        self.assertNotIn("eraldis_nr=10", notification_params["CQL_FILTER"])
+        self.assertEqual(CadastreNotification.objects.filter(cadastre=self.cadastre).count(), 2)
+        self.assertEqual(get.call_count, 3)
+        filters = [call.kwargs["params"]["CQL_FILTER"] for call in get.call_args_list[1:]]
+        self.assertTrue(any("eraldis_nr=10" in value for value in filters))
+        self.assertTrue(any("eraldis_nr=11" in value for value in filters))
         run = DataSyncRun.objects.get(source="cli:metsaregister-full")
         self.assertEqual(run.status, DataSyncRun.Status.SUCCESS)
         self.assertEqual(run.result["new_subparts"], 1)
-        self.assertEqual(run.result["notifications"], 1)
+        self.assertEqual(run.result["notifications"], 2)
         checkpoint = ImportCheckpoint.objects.get(source="metsaregister-full")
         self.assertEqual(checkpoint.last_run_id, run.id)
         self.assertTrue(checkpoint.completed)
         self.assertEqual(checkpoint.cursor, 2)
+
+    @override_settings(
+        FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER="metsaregister:teatis",
+        FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE=2,
+    )
+    def test_notification_refresh_consumes_all_pages_and_is_idempotent(self):
+        geometry = {"type": "Polygon", "coordinates": [[[500000, 6500000], [500100, 6500000], [500000, 6500100], [500000, 6500000]]]}
+        pages = [
+            [{"id": "9100", "properties": {"teatise_nr": "7100", "eraldis_nr": 10}, "geometry": geometry}],
+            [{"id": "9101", "properties": {"teatise_nr": "7101", "eraldis_nr": 10}, "geometry": geometry}],
+        ]
+
+        with organization_scope(self.organization.id):
+            with patch("forestry.services.metsaregister_full_import._pages", return_value=iter(pages)):
+                self.assertEqual(_refresh_notifications_for_subpart(cadastre=self.cadastre, subpart_code=10), 2)
+            with patch("forestry.services.metsaregister_full_import._pages", return_value=iter(pages)):
+                self.assertEqual(_refresh_notifications_for_subpart(cadastre=self.cadastre, subpart_code=10), 2)
+
+        self.assertEqual(CadastreNotification.objects.filter(cadastre=self.cadastre).count(), 2)
 
     @override_settings(FORESTIQ_METSAREGISTER_FULL_WFS_LAYER="metsaregister:eraldis")
     @patch("forestry.services.metsaregister_full_import.requests.get")
