@@ -1,12 +1,14 @@
 /** ForestIQ API client with internal JWT and Keycloak Authorization Code + PKCE support. */
 import type { AppUser } from "./types";
 
-const BASE_URL = (import.meta.env.VITE_API_BASE || "/api").replace(/\/$/, "");
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE || "/api").replace(/\/$/, "");
+const BASE_URL = API_BASE_URL;
 const ACCESS_TOKEN_KEY = "forestiq_access_token";
 const REFRESH_TOKEN_KEY = "forestiq_refresh_token";
 const OIDC_STATE_KEY = "forestiq_oidc_state";
 const OIDC_VERIFIER_KEY = "forestiq_oidc_verifier";
 const OIDC_NONCE_KEY = "forestiq_oidc_nonce";
+let apiResourceRewriteInstalled = false;
 
 export type OidcConfiguration = {
   enabled: boolean;
@@ -25,6 +27,50 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+export function apiUrl(path: string): string {
+  const base = new URL(BASE_URL, window.location.origin);
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  return new URL(`${base.pathname.replace(/\/$/, "")}${suffix}`, base.origin).toString();
+}
+
+export function normalizeApiResourceUrl(url: string): string {
+  const candidate = new URL(url, window.location.origin);
+  if (candidate.origin === window.location.origin && candidate.pathname.startsWith("/api/")) {
+    return `${BASE_URL}${candidate.pathname.replace(/^\/api/, "")}${candidate.search}${candidate.hash}`;
+  }
+  return candidate.toString();
+}
+
+export function apiAccessToken(): string | null {
+  return localStorage.getItem(ACCESS_TOKEN_KEY);
+}
+
+export function installApiResourceRewrite(): void {
+  if (apiResourceRewriteInstalled || typeof window === "undefined") return;
+  apiResourceRewriteInstalled = true;
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    if (typeof input === "string" || input instanceof URL) {
+      return nativeFetch(normalizeApiResourceUrl(String(input)), init);
+    }
+    const rewritten = normalizeApiResourceUrl(input.url);
+    if (rewritten !== input.url) {
+      return nativeFetch(new Request(rewritten, input), init);
+    }
+    return nativeFetch(input, init);
+  };
+}
+
+installApiResourceRewrite();
+
+export function mapResourceRequest(url: string): { url: string; headers?: Record<string, string> } {
+  const token = apiAccessToken();
+  const normalized = normalizeApiResourceUrl(url);
+  return token && normalized.includes("/api/")
+    ? { url: normalized, headers: { Authorization: `Bearer ${token}` } }
+    : { url: normalized };
 }
 
 export function decodeToken(token: string): AppUser | null {
