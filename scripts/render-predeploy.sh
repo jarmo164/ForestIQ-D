@@ -5,3 +5,4 @@ set -eu
 # database before GeoDjango migrations create geometry columns.
 python manage.py shell -c "from django.db import connection; connection.cursor().execute('CREATE EXTENSION IF NOT EXISTS postgis')"
 python manage.py migrate --noinput
+python manage.py check_integration_runtime --check-redis

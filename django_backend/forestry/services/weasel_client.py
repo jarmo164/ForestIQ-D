@@ -5,10 +5,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import json
 import time
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import requests
 from django.conf import settings
+from django.utils import timezone
 
 
 class WeaselClientError(RuntimeError):
@@ -72,6 +74,21 @@ class WeaselOwnershipClient:
             "User-Agent": settings.FORESTIQ_SYNC_USER_AGENT,
         }
 
+    def _retry_delay(self, attempt: int, response: requests.Response | None) -> float:
+        retry_after = str(getattr(response, "headers", {}).get("Retry-After", "")).strip()
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                try:
+                    parsed = parsedate_to_datetime(retry_after)
+                    if parsed.tzinfo is None:
+                        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+                    return max(0.0, (parsed - timezone.now()).total_seconds())
+                except (TypeError, ValueError, OverflowError):
+                    pass
+        return self.policy.retry_backoff_seconds * (2**attempt)
+
     def _payload_size(self, response: requests.Response, payload: dict[str, Any]) -> int:
         content_length = str(getattr(response, "headers", {}).get("Content-Length", ""))
         try:
@@ -96,14 +113,14 @@ class WeaselOwnershipClient:
                     self._url(), params=params, headers=self._headers(), timeout=settings.FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS
                 )
                 if response.status_code in self._RETRYABLE_STATUS_CODES and attempt < self.policy.max_retries:
-                    self.sleep(self.policy.retry_backoff_seconds * (2**attempt))
+                    self.sleep(self._retry_delay(attempt, response))
                     continue
                 response.raise_for_status()
                 break
             except requests.RequestException as exc:
                 if attempt == self.policy.max_retries:
                     raise WeaselClientError(f"Weasel request failed after {attempt + 1} attempt(s): {exc}") from exc
-                self.sleep(self.policy.retry_backoff_seconds * (2**attempt))
+                self.sleep(self._retry_delay(attempt, response))
         else:  # pragma: no cover - loop either raises or returns a response
             raise WeaselClientError("Weasel request did not produce a response.")
         try:

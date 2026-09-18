@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from accounts.organization_selection import active_organization
 from accounts.organization_context import organization_scope
-from forestry.models import DataSyncRun
+from forestry.models import DataSyncRun, ImportCheckpoint
 from forestry.services.import_runner import API_SOURCES, configured_sources, run_cadastre_import, selected_cadastres
 
 
@@ -33,10 +33,15 @@ class Command(BaseCommand):
             raise CommandError(str(exc)) from exc
         source_names = ", ".join(source.key for source in sources)
         forestek_selected = any(source.key == "forestek" for source in sources)
-        with organization_scope(organization.id):
-            forestek_completed = DataSyncRun.objects.filter(source__icontains="forestek", status=DataSyncRun.Status.SUCCESS).exists()
-        if forestek_selected and forestek_completed:
-            raise CommandError("Forestek initial import has already completed and is intentionally one-time only.")
+        if forestek_selected:
+            with organization_scope(organization.id):
+                completed_ids = set(
+                    ImportCheckpoint.objects.filter(source="forestek-initial", completed=True)
+                    .values_list("source_layer", flat=True)
+                )
+            cadastres = [cadastre for cadastre in cadastres if cadastre.id not in completed_ids]
+            if not cadastres:
+                raise CommandError("Forestek initial import has already completed for the selected cadastral scope.")
         if options["dry_run"]:
             mode = "; Forestek is an unrepeatable initial import" if forestek_selected else ""
             self.stdout.write(f"Dry run: would import authorised API sources [{source_names}] for {len(cadastres)} cadastral unit(s): {', '.join(item.id for item in cadastres)}{mode}")
@@ -45,7 +50,20 @@ class Command(BaseCommand):
         for cadastre in cadastres:
             run = run_cadastre_import(cadastre=cadastre, organization_id=str(organization.id), sources=sources, category="api", continue_on_error=options["continue_on_error"])
             self.stdout.write(f"{cadastre.id}: run {run.id} {run.status} {run.result}")
-            if run.status == "FAILED":
+            if forestek_selected:
+                with organization_scope(organization.id):
+                    checkpoint, _ = ImportCheckpoint.objects.get_or_create(
+                        source="forestek-initial",
+                        source_layer=cadastre.id,
+                        defaults={"last_run": run},
+                    )
+                    checkpoint.last_run = run
+                    checkpoint.completed = run.status == DataSyncRun.Status.SUCCESS
+                    checkpoint.last_error = "" if checkpoint.completed else run.error_message
+                    checkpoint.rows_completed = int(run.result.get("forestek", 0))
+                    checkpoint.pages_completed = 1 if checkpoint.completed else 0
+                    checkpoint.save(update_fields=("last_run", "completed", "last_error", "rows_completed", "pages_completed", "checkpointed_at"))
+            if run.status != DataSyncRun.Status.SUCCESS:
                 failed += 1
                 if not options["continue_on_error"]:
                     raise CommandError(f"Import failed for {cadastre.id}: {run.error_message}")

@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 import json
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import requests
 
@@ -20,6 +20,7 @@ from api.auth import token_pair
 from forestry.models import Cadastre, CadastreNotification, CadastreSubPart, DataSyncRun, ForestRegistryFeature, ImportCheckpoint, Owner, OwnerLog
 from operations.models import Deal, DealStage, OwnershipTransitionEvent
 from forestry.services import import_runner
+from forestry.services.authorized_api_client import AuthorizedApiClient, AuthorizedApiError
 from forestry.services.external_sync import ExternalSourceError, sync_cadastre_wfs, sync_metsaregister_wfs, sync_parimus_inheritance, wfs_features
 from forestry.services.metsaregister_full_import import FullImportReport, _refresh_notifications_for_subpart, import_all_metsaregister, import_metsaregister_delta
 from forestry.tasks import (
@@ -304,10 +305,19 @@ class ImportCommandTests(TestCase):
         run = DataSyncRun.objects.get(cadastre=self.cadastre)
         self.assertEqual(run.status, DataSyncRun.Status.SUCCESS)
         self.assertEqual(run.result, {"forestek": 2})
+        checkpoint = ImportCheckpoint.objects.get(source="forestek-initial", source_layer=self.cadastre.id)
+        self.assertTrue(checkpoint.completed)
+        self.assertEqual(checkpoint.rows_completed, 2)
 
     @override_settings(FORESTEK_API_URL="https://forestek.example.test", FORESTEK_API_TOKEN="test-token")
     def test_forestek_command_refuses_a_second_successful_initial_import(self):
-        DataSyncRun.objects.create(cadastre=self.cadastre, source="cli:api:forestek", status=DataSyncRun.Status.SUCCESS)
+        run = DataSyncRun.objects.create(cadastre=self.cadastre, source="cli:api:forestek", status=DataSyncRun.Status.SUCCESS)
+        ImportCheckpoint.objects.create(
+            source="forestek-initial",
+            source_layer=self.cadastre.id,
+            completed=True,
+            last_run=run,
+        )
         with self.assertRaises(CommandError):
             call_command("import_external_api_sources", "--cadastre", self.cadastre.id, "--source", "forestek", "--dry-run", "--organization", str(self.organization.id))
 
@@ -970,6 +980,15 @@ class ScheduledParimusNoticeImportTests(TestCase):
         self.assertEqual(schedule["task"], "forestry.tasks.enqueue_all_organizations_parimus_official_notice_import")
         self.assertGreater(schedule["schedule"], 0)
 
+    @override_settings(PARIMUS_API_URL="", PARIMUS_API_TOKEN="")
+    def test_unconfigured_parimus_schedule_is_not_reported_as_success(self):
+        from forestry.tasks import enqueue_all_organizations_parimus_official_notice_import
+
+        self.assertEqual(
+            enqueue_all_organizations_parimus_official_notice_import.run(),
+            {"organizations": 0, "status": "not_configured"},
+        )
+
 
 class WeaselOwnershipClientTests(SimpleTestCase):
     @override_settings(WEASEL_API_URL="https://weasel.example.test", WEASEL_API_TOKEN="weasel-test-token")
@@ -1001,6 +1020,22 @@ class WeaselOwnershipClientTests(SimpleTestCase):
         self.assertEqual(client.ownership_change_page().events, [])
         self.assertEqual(request_get.call_count, 2)
         sleep.assert_called_once_with(2)
+
+    @override_settings(WEASEL_API_URL="https://weasel.example.test", WEASEL_API_TOKEN="weasel-test-token")
+    def test_client_honours_retry_after(self):
+        retry = Mock(status_code=429, headers={"Retry-After": "7"}, content=b"")
+        success = Mock(status_code=200, headers={}, content=b"{}")
+        success.json.return_value = {"events": []}
+        sleep = Mock()
+        client = WeaselOwnershipClient(
+            WeaselPolicy(page_size=10, max_events=10, max_payload_bytes=1024, max_retries=1, retry_backoff_seconds=2),
+            request_get=Mock(side_effect=[retry, success]),
+            sleep=sleep,
+        )
+
+        client.ownership_change_page()
+
+        sleep.assert_called_once_with(7)
 
 
 class WeaselOwnershipImportTests(TestCase):
@@ -1046,21 +1081,70 @@ class WeaselOwnershipImportTests(TestCase):
 
     @patch("forestry.tasks.SingleFlightLock.for_sync")
     @patch("forestry.tasks.import_weasel_ownership_deltas")
+    @override_settings(WEASEL_API_URL="https://weasel.example.test", WEASEL_API_TOKEN="weasel-test-token")
     def test_task_resumes_after_last_success_and_only_records_confirmed_cursor(self, importer, lock_factory):
         lock = Mock()
         lock.acquire.return_value = True
         lock_factory.return_value = lock
         DataSyncRun.objects.create(source="weasel:ownership-delta", status=DataSyncRun.Status.SUCCESS, finished_at=timezone.now(), cursor={"cursor": "confirmed-cursor"}, organization=self.organization)
-        importer.return_value = {"events": 1, "duplicates": 0, "ignored": 0, "nextCursor": "next-cursor"}
+        importer.side_effect = [
+            {"events": 1, "duplicates": 0, "ignored": 0, "nextCursor": "next-cursor"},
+            {"events": 2, "duplicates": 1, "ignored": 0, "nextCursor": None},
+        ]
 
         run_weasel_ownership_delta.run(str(self.organization.id))
 
-        importer.assert_called_once_with(organization_id=str(self.organization.id), cursor="confirmed-cursor")
+        self.assertEqual(
+            importer.call_args_list,
+            [
+                call(organization_id=str(self.organization.id), cursor="confirmed-cursor"),
+                call(organization_id=str(self.organization.id), cursor="next-cursor"),
+            ],
+        )
         current = DataSyncRun.objects.filter(source="weasel:ownership-delta").order_by("-id").first()
         self.assertEqual(current.status, DataSyncRun.Status.SUCCESS)
-        self.assertEqual(current.cursor, {"cursor": "next-cursor"})
+        self.assertEqual(current.cursor, {})
+        self.assertEqual(current.pages_processed, 2)
+        self.assertEqual(current.rows_processed, 3)
         lock.release.assert_called_once()
 
     @override_settings(WEASEL_API_URL="", WEASEL_API_TOKEN="")
     def test_unconfigured_scheduled_delta_does_not_enqueue_work(self):
         self.assertEqual(enqueue_all_organizations_weasel_ownership_delta.run(), {"organizations": 0, "status": "not_configured"})
+
+
+class AuthorizedApiClientTests(SimpleTestCase):
+    @override_settings(
+        FORESTIQ_AUTH_API_MAX_PAGES=3,
+        FORESTIQ_AUTH_API_MAX_RETRIES=1,
+        FORESTIQ_AUTH_API_RETRY_BACKOFF_SECONDS=1,
+        FORESTIQ_AUTH_API_MAX_PAYLOAD_BYTES=1024,
+    )
+    def test_client_retries_and_consumes_cursor_pages(self):
+        retry = Mock(status_code=503, headers={"Retry-After": "2"}, content=b"")
+        first = Mock(status_code=200, headers={}, content=b"{}")
+        first.json.return_value = {"results": [{"id": 1}], "nextCursor": "page-2"}
+        second = Mock(status_code=200, headers={}, content=b"{}")
+        second.json.return_value = {"results": [{"id": 2}]}
+        sleep = Mock()
+        request_get = Mock(side_effect=[retry, first, second])
+        client = AuthorizedApiClient(base_url="https://provider.example", token="secret-token", request_get=request_get, sleep=sleep)
+
+        pages = list(client.get_pages("/records", params={"owner": "123"}, records_key="results"))
+
+        self.assertEqual([page["results"][0]["id"] for page in pages], [1, 2])
+        self.assertEqual(request_get.call_args_list[-1].kwargs["params"], {"owner": "123", "cursor": "page-2"})
+        sleep.assert_called_once_with(2)
+
+    @override_settings(
+        FORESTIQ_AUTH_API_MAX_PAGES=2,
+        FORESTIQ_AUTH_API_MAX_RETRIES=0,
+        FORESTIQ_AUTH_API_MAX_PAYLOAD_BYTES=1024,
+    )
+    def test_client_rejects_malformed_record_schema(self):
+        response = Mock(status_code=200, headers={}, content=b"{}")
+        response.json.return_value = {"results": ["invalid"]}
+        client = AuthorizedApiClient(base_url="https://provider.example", token="secret-token", request_get=Mock(return_value=response))
+
+        with self.assertRaisesRegex(AuthorizedApiError, "object array"):
+            list(client.get_pages("/records", records_key="results"))

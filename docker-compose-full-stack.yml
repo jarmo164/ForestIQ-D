@@ -43,6 +43,12 @@ services:
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       FORESTIQ_DEVMODE: ${FORESTIQ_DEVMODE:-false}
+      WEASEL_API_URL: ${WEASEL_API_URL:-}
+      WEASEL_API_TOKEN: ${WEASEL_API_TOKEN:-}
+      FORESTEK_API_URL: ${FORESTEK_API_URL:-}
+      FORESTEK_API_TOKEN: ${FORESTEK_API_TOKEN:-}
+      PARIMUS_API_URL: ${PARIMUS_API_URL:-}
+      PARIMUS_API_TOKEN: ${PARIMUS_API_TOKEN:-}
       TIME_ZONE: Europe/Tallinn
     command: >
       sh -c "python manage.py migrate --noinput &&
@@ -89,8 +95,12 @@ services:
       FORESTEK_API_TOKEN: ${FORESTEK_API_TOKEN:-}
       PARIMUS_API_URL: ${PARIMUS_API_URL:-}
       PARIMUS_API_TOKEN: ${PARIMUS_API_TOKEN:-}
+      WEASEL_API_URL: ${WEASEL_API_URL:-}
+      WEASEL_API_TOKEN: ${WEASEL_API_TOKEN:-}
       TIME_ZONE: Europe/Tallinn
-    command: celery -A config worker --loglevel=INFO --concurrency=${CELERY_WORKER_CONCURRENCY:-2}
+    command: >
+      sh -c "python manage.py check_integration_runtime --check-redis &&
+      celery -A config worker --loglevel=INFO --concurrency=${CELERY_WORKER_CONCURRENCY:-2}"
     networks:
       - apidb
     volumes:
@@ -113,7 +123,15 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
-    command: celery -A config beat --loglevel=INFO
+      WEASEL_API_URL: ${WEASEL_API_URL:-}
+      WEASEL_API_TOKEN: ${WEASEL_API_TOKEN:-}
+      FORESTEK_API_URL: ${FORESTEK_API_URL:-}
+      FORESTEK_API_TOKEN: ${FORESTEK_API_TOKEN:-}
+      PARIMUS_API_URL: ${PARIMUS_API_URL:-}
+      PARIMUS_API_TOKEN: ${PARIMUS_API_TOKEN:-}
+    command: >
+      sh -c "python manage.py check_integration_runtime --check-redis &&
+      celery -A config beat --loglevel=INFO"
     networks:
       - apidb
 

@@ -120,3 +120,15 @@ envVarGroups:
         value: "false"
       - key: FORESTIQ_METSAREGISTER_DELTA_INTERVAL_SECONDS
         value: "3600"
+      - key: WEASEL_API_URL
+        sync: false
+      - key: WEASEL_API_TOKEN
+        sync: false
+      - key: FORESTEK_API_URL
+        sync: false
+      - key: FORESTEK_API_TOKEN
+        sync: false
+      - key: PARIMUS_API_URL
+        sync: false
+      - key: PARIMUS_API_TOKEN
+        sync: false
