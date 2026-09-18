@@ -323,7 +323,7 @@ class P1WorkflowApiTests(TestCase):
         self.assertIn("queueSize", status_response.data)
 
     def test_loss_analysis_filters_by_period_seller_and_previous_stage(self):
-        reason = LossReasonCode.objects.create(code="PRICE_TEST", label="Price test", sort_order=10)
+        reason = LossReasonCode.objects.create(code="PRICE_TEST", label="Price test", sort_order=10, organization=self.organization)
         evaluation = self.create_deal(stage=DealStage.LOST)
         qualification = self.create_deal(stage=DealStage.LOST)
         DealLossOutcome.objects.create(
