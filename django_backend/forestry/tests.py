@@ -404,12 +404,13 @@ class MetsaregisterFullImportTests(TestCase):
         first = {"id": "checkpoint-20", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 20, "pindala": "1.0"}, "geometry": geometry}
         second = {"id": "checkpoint-21", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 21, "pindala": "2.0"}, "geometry": geometry}
 
-        def interrupted_pages(**_kwargs):
-            yield [first]
+        def interrupted_page(**kwargs):
+            if kwargs["start_index"] == 0:
+                return [first]
             raise ConnectionError("WFS connection interrupted after the first page")
 
         with organization_scope(self.organization.id):
-            with patch("forestry.services.metsaregister_full_import._pages", side_effect=interrupted_pages):
+            with patch("forestry.services.metsaregister_full_import._feature_page", side_effect=interrupted_page):
                 with self.assertRaises(ConnectionError):
                     import_all_metsaregister(organization_id=str(self.organization.id), page_size=1, fetch_notifications=False)
 
@@ -419,12 +420,14 @@ class MetsaregisterFullImportTests(TestCase):
         self.assertEqual(checkpoint.rows_completed, 1)
         self.assertFalse(checkpoint.completed)
 
-        def resumed_pages(**kwargs):
-            self.assertEqual(kwargs["start_index"], 1)
-            yield [second]
+        def resumed_page(**kwargs):
+            if kwargs["start_index"] == 1:
+                return [second]
+            self.assertEqual(kwargs["start_index"], 2)
+            return []
 
         with organization_scope(self.organization.id):
-            with patch("forestry.services.metsaregister_full_import._pages", side_effect=resumed_pages):
+            with patch("forestry.services.metsaregister_full_import._feature_page", side_effect=resumed_page):
                 report = import_all_metsaregister(organization_id=str(self.organization.id), page_size=1, fetch_notifications=False)
 
         checkpoint.refresh_from_db()
@@ -444,12 +447,9 @@ class MetsaregisterFullImportTests(TestCase):
         geometry = {"type": "Polygon", "coordinates": [[[500000, 6500000], [500100, 6500000], [500000, 6500100], [500000, 6500000]]]}
         feature = {"id": "checkpoint-replay-22", "properties": {"katastri_nr": self.cadastre.id, "eraldis_nr": 22, "pindala": "3.0"}, "geometry": geometry}
 
-        def one_page(**_kwargs):
-            yield [feature]
-
         with organization_scope(self.organization.id):
             with (
-                patch("forestry.services.metsaregister_full_import._pages", side_effect=one_page),
+                patch("forestry.services.metsaregister_full_import._feature_page", return_value=[feature]),
                 patch("forestry.services.metsaregister_full_import._confirm_checkpoint_page", side_effect=RuntimeError("checkpoint storage interrupted")),
             ):
                 with self.assertRaises(RuntimeError):
@@ -460,7 +460,10 @@ class MetsaregisterFullImportTests(TestCase):
         self.assertFalse(checkpoint.completed)
 
         with organization_scope(self.organization.id):
-            with patch("forestry.services.metsaregister_full_import._pages", side_effect=one_page):
+            with patch(
+                "forestry.services.metsaregister_full_import._feature_page",
+                side_effect=([feature], []),
+            ):
                 import_all_metsaregister(organization_id=str(self.organization.id), page_size=1, fetch_notifications=False)
 
         checkpoint.refresh_from_db()
