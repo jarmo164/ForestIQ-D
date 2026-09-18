@@ -5,8 +5,8 @@ import hashlib
 from datetime import timedelta
 from typing import Iterable
 
-from django.db.models import Case, CharField, Count, F, Value, When
-from django.db.models.functions import Lower, Replace, Substr, Trim
+from django.db.models import Case, CharField, Count, F, Func, Value, When
+from django.db.models.functions import Length, Lower, Substr, Trim
 from django.utils import timezone
 
 from forestry.models import Owner
@@ -53,10 +53,23 @@ def _auto_resolve(fingerprint: str, *, reason: str) -> int:
 
 
 def _phone_annotations(queryset):
-    compact = Replace(Replace(Replace(Replace(Replace(F("phone"), Value(" "), Value("")), Value("-"), Value("")), Value("("), Value("")), Value(")"), Value("")), Value("+"), Value(""))
-    queryset = queryset.annotate(_phone_compact=compact)
+    """Normalize phones exactly like the legacy Python scanner, but in PostgreSQL."""
+
+    compact = Func(
+        F("phone"),
+        Value(r"\D"),
+        Value(""),
+        Value("g"),
+        function="REGEXP_REPLACE",
+        output_field=CharField(),
+    )
+    queryset = queryset.annotate(_phone_compact=compact).annotate(_phone_length=Length("_phone_compact"))
     return queryset.annotate(
-        _quality_key=Case(When(_phone_compact__startswith="372", then=Substr("_phone_compact", 4)), default=F("_phone_compact"), output_field=CharField())
+        _quality_key=Case(
+            When(_phone_compact__startswith="372", _phone_length__in=(10, 11), then=Substr("_phone_compact", 4)),
+            default=F("_phone_compact"),
+            output_field=CharField(),
+        )
     )
 
 
