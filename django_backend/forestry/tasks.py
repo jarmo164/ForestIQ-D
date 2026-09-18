@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from celery import shared_task
 from django.conf import settings
@@ -21,7 +21,7 @@ from forestry.services.external_sync import (
     sync_optional_soos_wfs,
     sync_parimus_inheritance,
 )
-from forestry.services.metsaregister_full_import import import_metsaregister_delta
+from forestry.services.metsaregister_full_import import import_metsaregister_chunk, import_metsaregister_delta
 from forestry.services.wfs_generations import ensure_default_manifests, refresh_manifest
 from forestry.services.single_flight import SingleFlightLock
 from forestry.services.weasel_client import WeaselClientError
@@ -37,10 +37,76 @@ class CadastreSyncDispatch:
 
 
 def _start(run: DataSyncRun) -> None:
+    now = timezone.now()
     run.status = DataSyncRun.Status.RUNNING
-    run.started_at = timezone.now()
+    run.started_at = run.started_at or now
     run.error_message = ""
-    run.save(update_fields=("status", "started_at", "error_message"))
+    run.cursor = {**(run.cursor or {}), "heartbeatAt": now.isoformat()}
+    run.save(update_fields=("status", "started_at", "error_message", "cursor"))
+
+
+def _heartbeat(run: DataSyncRun, *, cursor: dict[str, object] | None = None) -> None:
+    """Persist liveness without requiring a schema migration for heartbeat state."""
+
+    payload = dict(run.cursor or {})
+    if cursor:
+        payload.update(cursor)
+    payload["heartbeatAt"] = timezone.now().isoformat()
+    run.cursor = payload
+    run.save(update_fields=("cursor",))
+
+
+def _heartbeat_time(run: DataSyncRun):
+    value = (run.cursor or {}).get("heartbeatAt")
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if timezone.is_naive(parsed):
+                parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+            return parsed
+        except ValueError:
+            pass
+    return run.started_at
+
+
+def _is_stale_run(run: DataSyncRun, *, now=None) -> bool:
+    if run.status != DataSyncRun.Status.RUNNING:
+        return False
+    heartbeat = _heartbeat_time(run)
+    if heartbeat is None:
+        return True
+    cutoff = (now or timezone.now()) - timedelta(seconds=settings.FORESTIQ_SYNC_RUN_STALE_SECONDS)
+    return heartbeat < cutoff
+
+
+def _fail_stale_run(run: DataSyncRun) -> None:
+    _complete(
+        run,
+        run.result or {},
+        status=DataSyncRun.Status.FAILED,
+        error_message="Synchronization heartbeat expired; the worker is presumed lost and the run may be retried.",
+        pages_processed=run.pages_processed,
+        rows_processed=run.rows_processed,
+        cursor=run.cursor or {},
+        retry_count=run.retry_count,
+    )
+
+
+@shared_task(name="forestry.tasks.reconcile_stale_sync_runs")
+def reconcile_stale_sync_runs() -> dict[str, int]:
+    """Fail orphaned RUNNING audit rows so expired Redis locks cannot block dispatch forever."""
+
+    now = timezone.now()
+    checked = 0
+    recovered = 0
+    for organization_id in Organization.objects.filter(is_active=True).values_list("id", flat=True):
+        with organization_scope(str(organization_id)):
+            for run in DataSyncRun.objects.filter(status=DataSyncRun.Status.RUNNING).iterator():
+                checked += 1
+                if _is_stale_run(run, now=now):
+                    _fail_stale_run(run)
+                    recovered += 1
+    return {"checked": checked, "recovered": recovered}
 
 
 def _metric_total(result: dict[str, object]) -> int:
@@ -120,16 +186,17 @@ def _succeed(
 
 
 def _active_cadastre_run(cadastre_id: str) -> DataSyncRun | None:
-    """Find the audit row owned by a queued or executing cadastre refresh."""
+    """Find a live audit row and retire an orphaned RUNNING row on sight."""
 
-    return (
-        DataSyncRun.objects.filter(
-            cadastre_id=cadastre_id,
-            status__in=(DataSyncRun.Status.QUEUED, DataSyncRun.Status.RUNNING),
-        )
-        .order_by("-id")
-        .first()
-    )
+    for run in DataSyncRun.objects.filter(
+        cadastre_id=cadastre_id,
+        status__in=(DataSyncRun.Status.QUEUED, DataSyncRun.Status.RUNNING),
+    ).order_by("-id"):
+        if _is_stale_run(run):
+            _fail_stale_run(run)
+            continue
+        return run
+    return None
 
 
 @shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=3)
@@ -324,6 +391,93 @@ def enqueue_all_organizations_metsaregister_delta_check() -> dict[str, int]:
         result = run_metsaregister_delta_check.delay(str(organization_id))
         queued += 1 if result else 0
     return {"organizations": queued}
+
+
+@shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=3)
+def run_metsaregister_full_import(self, organization_id: str, run_id: int | None = None) -> dict[str, object]:
+    """Drain one bounded full-import chunk and chain another task until WFS EOF."""
+
+    lock = SingleFlightLock.for_sync("metsaregister-full", organization_id)
+    if not lock.acquire():
+        return {"status": "already_running", "runId": run_id}
+    try:
+        with organization_scope(organization_id):
+            if run_id is None:
+                existing = DataSyncRun.objects.filter(
+                    source="celery:metsaregister-full",
+                    status__in=(DataSyncRun.Status.QUEUED, DataSyncRun.Status.RUNNING),
+                ).order_by("-id").first()
+                if existing and not _is_stale_run(existing):
+                    return {"status": "already_running", "runId": existing.id}
+                if existing and _is_stale_run(existing):
+                    _fail_stale_run(existing)
+                run = DataSyncRun.objects.create(
+                    source="celery:metsaregister-full",
+                    status=DataSyncRun.Status.QUEUED,
+                    task_id=self.request.id or "",
+                    correlation_id=current_correlation_id(),
+                )
+            else:
+                run = DataSyncRun.objects.get(id=run_id, source="celery:metsaregister-full")
+                if run.status in (DataSyncRun.Status.SUCCESS, DataSyncRun.Status.FAILED):
+                    return {"status": run.status, "runId": run.id, **(run.result or {})}
+            if run.status == DataSyncRun.Status.QUEUED:
+                _start(run)
+            else:
+                _heartbeat(run)
+
+            try:
+                chunk, completed = import_metsaregister_chunk(
+                    organization_id=organization_id,
+                    run=run,
+                    max_features=settings.FORESTIQ_WFS_MAX_FEATURES,
+                )
+            except Exception as exc:
+                _fail(run, exc, retry_count=self.request.retries)
+                raise
+
+            aggregate = dict(run.result or {})
+            data = chunk.data()
+            for key in ("features", "cadastres", "new_subparts", "updated_subparts", "notifications", "skipped_features"):
+                aggregate[key] = int(aggregate.get(key, 0)) + int(data.get(key, 0))
+            aggregate["resumed_from"] = aggregate.get("resumed_from", data["resumed_from"])
+            aggregate["checkpoint_cursor"] = data["checkpoint_cursor"]
+            aggregate["checkpoint_pages"] = data["checkpoint_pages"]
+            aggregate["completed"] = completed
+            run.result = aggregate
+            run.pages_processed = data["checkpoint_pages"]
+            run.rows_processed = int(aggregate.get("features", 0))
+            _heartbeat(run, cursor={"startIndex": data["checkpoint_cursor"]})
+            run.result = aggregate
+            run.pages_processed = data["checkpoint_pages"]
+            run.rows_processed = int(aggregate.get("features", 0))
+            run.save(update_fields=("result", "pages_processed", "rows_processed"))
+
+            if completed:
+                result = _succeed(
+                    run,
+                    aggregate,
+                    pages_processed=run.pages_processed,
+                    rows_processed=run.rows_processed,
+                    cursor=run.cursor,
+                    retry_count=self.request.retries,
+                )
+                return {"status": DataSyncRun.Status.SUCCESS, "runId": run.id, **result}
+
+            continuation = run_metsaregister_full_import.apply_async(
+                args=[organization_id, run.id],
+                countdown=0,
+            )
+            run.task_id = continuation.id
+            run.save(update_fields=("task_id",))
+            return {
+                "status": "CONTINUE",
+                "runId": run.id,
+                "nextTaskId": continuation.id,
+                "startIndex": data["checkpoint_cursor"],
+            }
+    finally:
+        lock.release()
 
 
 @shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=3)
