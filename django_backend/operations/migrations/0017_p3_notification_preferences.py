@@ -27,12 +27,12 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="applicationmessage",
             name="category",
-            field=models.CharField(blank=True, max_length=80),
+            field=models.CharField(blank=True, default="", max_length=80),
         ),
         migrations.AddField(
             model_name="applicationmessage",
             name="event_key",
-            field=models.CharField(blank=True, max_length=120),
+            field=models.CharField(blank=True, default="", max_length=120),
         ),
         migrations.CreateModel(
             name="NotificationPreference",
