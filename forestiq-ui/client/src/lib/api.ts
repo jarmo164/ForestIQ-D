@@ -196,3 +196,14 @@ export const api = {
     [ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, OIDC_STATE_KEY, OIDC_VERIFIER_KEY, OIDC_NONCE_KEY].forEach((key) => localStorage.removeItem(key));
   },
 };
+
+export function realtimeWebSocketUrl(): string | null {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token) return null;
+  const base = new URL(BASE_URL, window.location.origin);
+  base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  base.pathname = base.pathname.replace(/\/api\/?$/, "") + "/ws/events/";
+  base.search = "";
+  base.searchParams.set("token", token);
+  return base.toString();
+}
