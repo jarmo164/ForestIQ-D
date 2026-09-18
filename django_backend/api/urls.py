@@ -175,4 +175,7 @@ urlpatterns = [
     path("services/messages/usernames", views.message_users),
     path("services/messages/new-count", views.new_messages_count),
     path("services/messages/new/count", views.new_messages_count),
+    path("services/application-messages", p3.application_messages),
+    path("services/application-messages/unread-count", p3.application_message_unread_count),
+    path("services/application-messages/<int:message_id>", p3.application_message_detail),
 ]
