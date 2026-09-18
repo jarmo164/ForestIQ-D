@@ -5,6 +5,7 @@ import { Link } from "wouter";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
+import { lossAnalysisCsv, lossAnalysisQuery, type LossAnalysisRow } from "@/lib/p1Operations";
 
 
 type DealHealthReason = { code: string; severity: string; message: string };
@@ -24,7 +25,6 @@ type DealWorkItem = {
 };
 
 type LossReason = { id: string; code: string; label: string; description: string | null; active: boolean; sortOrder: number };
-type LossAnalysisRow = { reasonCode: string; reasonLabel: string; sellerId: string | null; previousStage: string; count: number };
 type QualityScanRun = { id: string; status: string; trigger: string; detected: number; created: number; autoResolved: number; processedOwners: number; processedDeals: number; error: string | null; startedAt: number; finishedAt: number | null };
 type QualityScanStatus = { lastRun: QualityScanRun | null; queueSize: number };
 type QualityIssue = {
@@ -135,12 +135,8 @@ export default function P1Operations() {
 
   const refreshLossAnalysis = useCallback(async () => {
     try {
-      const params = new URLSearchParams();
-      if (lossFrom) params.set("from", lossFrom);
-      if (lossTo) params.set("to", lossTo);
-      if (lossSeller.trim()) params.set("sellerId", lossSeller.trim());
-      if (lossStage) params.set("previousStage", lossStage);
-      const suffix = params.toString() ? `?${params}` : "";
+      const query = lossAnalysisQuery({ from: lossFrom, to: lossTo, sellerId: lossSeller, previousStage: lossStage });
+      const suffix = query ? `?${query}` : "";
       setLossAnalysis(await api.get<LossAnalysisRow[]>(`/services/admin/loss-analysis${suffix}`));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Kaotuste analüüsi ei saanud laadida."); }
   }, [lossFrom, lossSeller, lossStage, lossTo]);
@@ -278,10 +274,7 @@ export default function P1Operations() {
   const healthCodes = useMemo(() => Array.from(new Set(deals.flatMap((deal) => deal.health.map((reason) => reason.code)))).sort(), [deals]);
 
   const exportLossAnalysis = () => {
-    const header = ["reasonCode", "reasonLabel", "sellerId", "previousStage", "count"];
-    const rows = lossAnalysis.map((row) => [row.reasonCode, row.reasonLabel, row.sellerId || "", row.previousStage, row.count]);
-    const csv = [header, ...rows].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const url = URL.createObjectURL(new Blob([lossAnalysisCsv(lossAnalysis)], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
     link.download = "forestiq-loss-analysis.csv";
