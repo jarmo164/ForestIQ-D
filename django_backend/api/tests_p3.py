@@ -166,6 +166,16 @@ class P3RealtimeIsolationTests(TransactionTestCase):
         user_b.organization_memberships.filter(organization=org_b).update(roles=[OrganizationRole.ADMIN])
         token_a = token_pair(user_a)["actualToken"]["token"]
 
+        async def emit(organization_id, actor, owner_id):
+            from channels.db import database_sync_to_async
+
+            @database_sync_to_async
+            def _emit():
+                with organization_scope(organization_id):
+                    return str(publish_org_event("OWNER_STATUS_CHANGED", {"ownerId": owner_id}, actor=actor).id)
+
+            return await _emit()
+
         async def scenario():
             denied = WebsocketCommunicator(application, "/ws/events/")
             connected, _ = await denied.connect()
@@ -175,12 +185,10 @@ class P3RealtimeIsolationTests(TransactionTestCase):
             connected, _ = await socket.connect()
             self.assertTrue(connected)
 
-            with organization_scope(org_b.id):
-                publish_org_event("OWNER_STATUS_CHANGED", {"ownerId": "other"}, actor=user_b)
+            await emit(org_b.id, user_b, "other")
             self.assertTrue(await socket.receive_nothing(timeout=0.15))
 
-            with organization_scope(org_a.id):
-                publish_org_event("OWNER_STATUS_CHANGED", {"ownerId": "mine"}, actor=user_a)
+            await emit(org_a.id, user_a, "mine")
             payload = await socket.receive_json_from(timeout=1)
             self.assertEqual(payload["eventType"], "OWNER_STATUS_CHANGED")
             self.assertEqual(payload["payload"]["ownerId"], "mine")
