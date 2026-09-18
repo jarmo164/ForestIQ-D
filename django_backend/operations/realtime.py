@@ -55,7 +55,11 @@ def publish_org_event(
     layer = get_channel_layer()
     if layer is not None:
         group = user_group(organization_id, recipient.id) if recipient is not None else organization_group(organization_id)
-        async_to_sync(layer.group_send)(group, message)
+        try:
+            async_to_sync(layer.group_send)(group, message)
+        except Exception:
+            # Realtime transport is advisory; the durable event/business write remains authoritative.
+            pass
     return event
 
 
