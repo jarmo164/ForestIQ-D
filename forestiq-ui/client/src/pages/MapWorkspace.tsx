@@ -40,6 +40,32 @@ type MapFilters = {
   activityDays: string;
   dealStage: string;
 };
+type ManagedMapLayer = {
+  key: string;
+  name: string;
+  serviceType: "WMS" | "MVT";
+  sourceLayer?: string | null;
+  visible: boolean;
+  opacity: number;
+  usageRights?: string | null;
+  attribution?: string | null;
+  freshnessAt?: number | null;
+  minZoom: number;
+  maxZoom: number;
+  tileTemplate: string;
+};
+type MapServerConfig = {
+  basemaps: { key: string; name: string; attribution?: string | null; tileTemplate: string }[];
+  externalLayers: ManagedMapLayer[];
+};
+type MapSearchResult = {
+  id: string;
+  label: string;
+  cadastreId?: string | null;
+  address?: string | null;
+  source: "LOCAL" | "IN_AKS";
+};
+
 type MapWorkbasket = {
   id: string;
   name: string;
@@ -67,9 +93,9 @@ const STYLE: maplibregl.StyleSpecification = {
   sources: {
     openfreemap: {
       type: "raster",
-      tiles: ["https://tiles.openfreemap.org/styles/liberty/{z}/{x}/{y}.png"],
+      tiles: ["/api/services/map/basemaps/default/{z}/{x}/{y}"],
       tileSize: 256,
-      attribution: "© OpenFreeMap",
+      attribution: "Hallatud ForestIQ aluskaart",
     },
   },
   layers: [{ id: "base", type: "raster", source: "openfreemap" }],
@@ -234,6 +260,10 @@ export default function MapWorkspace() {
   const [workbaskets, setWorkbaskets] = useState<MapWorkbasket[]>([]);
   const [activeBasket, setActiveBasket] = useState<MapWorkbasket | null>(null);
   const [basketStatus, setBasketStatus] = useState<string | null>(null);
+  const [managedLayers, setManagedLayers] = useState<ManagedMapLayer[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<MapSearchResult[]>([]);
+  const [searchStatus, setSearchStatus] = useState("");
 
   const loadWorkbaskets = useCallback(async () => {
     try {
@@ -257,6 +287,13 @@ export default function MapWorkspace() {
       center: [25.6, 58.7],
       zoom: 7.2,
       fadeDuration: 0,
+      transformRequest: (url) => {
+        const token = localStorage.getItem("forestiq_access_token");
+        if (token && url.includes("/api/")) {
+          return { url, headers: { Authorization: `Bearer ${token}` } };
+        }
+        return { url };
+      },
     });
     instance.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
 
@@ -435,6 +472,48 @@ export default function MapWorkspace() {
             .addTo(instance);
         });
       }
+      void api.get<MapServerConfig>("/services/map/config").then((config) => {
+        setManagedLayers(config.externalLayers);
+        for (const layer of config.externalLayers.filter((item) => item.visible)) {
+          const sourceId = `managed-${layer.key}`;
+          const layerId = `managed-${layer.key}-layer`;
+          if (instance.getSource(sourceId) || instance.getLayer(layerId)) continue;
+          if (layer.serviceType === "WMS") {
+            instance.addSource(sourceId, {
+              type: "raster",
+              tiles: [layer.tileTemplate],
+              tileSize: 256,
+              minzoom: layer.minZoom,
+              maxzoom: layer.maxZoom,
+              attribution: layer.attribution || undefined,
+            });
+            instance.addLayer({
+              id: layerId,
+              type: "raster",
+              source: sourceId,
+              minzoom: layer.minZoom,
+              maxzoom: layer.maxZoom,
+              paint: { "raster-opacity": layer.opacity },
+            });
+          } else if (layer.sourceLayer) {
+            instance.addSource(sourceId, {
+              type: "vector",
+              tiles: [layer.tileTemplate],
+              minzoom: layer.minZoom,
+              maxzoom: layer.maxZoom,
+            });
+            instance.addLayer({
+              id: layerId,
+              type: "line",
+              source: sourceId,
+              "source-layer": layer.sourceLayer,
+              minzoom: layer.minZoom,
+              maxzoom: layer.maxZoom,
+              paint: { "line-width": 2, "line-opacity": layer.opacity },
+            });
+          }
+        }
+      }).catch(() => setManagedLayers([]));
       refreshMap.current();
     });
     instance.on("moveend", refreshMap.current);
@@ -549,6 +628,30 @@ export default function MapWorkspace() {
     refreshMap.current();
   };
 
+  const runMapSearch = async () => {
+    if (searchQuery.trim().length < 2) return;
+    try {
+      setSearchStatus("Otsin…");
+      const result = await api.get<{ source: string; results: MapSearchResult[] }>(
+        `/services/map/search?q=${encodeURIComponent(searchQuery.trim())}`,
+      );
+      setSearchResults(result.results);
+      setSearchStatus(result.results.length ? `${result.results.length} tulemust · ${result.source}` : "Tulemusi ei leitud.");
+    } catch (error) {
+      setSearchStatus(error instanceof Error ? error.message : "Otsing ebaõnnestus.");
+    }
+  };
+
+  const openSearchResult = (result: MapSearchResult) => {
+    if (!result.cadastreId) return;
+    setWorkspaceId(result.cadastreId);
+    setWorkspace(null);
+    setWorkspaceError(null);
+    void api.get<CadastreWorkspace>(`/services/cadastres/${encodeURIComponent(result.cadastreId)}/workspace`)
+      .then(setWorkspace)
+      .catch((error: unknown) => setWorkspaceError(error instanceof Error ? error.message : "Katastri detailandmeid ei saanud laadida."));
+  };
+
   return (
     <main className="min-h-screen bg-[#f5f7f2] p-4 text-[#17342a] md:p-7">
       <section className="mx-auto max-w-7xl overflow-hidden rounded-[2rem] border border-[#d7e1d5] bg-white shadow-[0_24px_80px_rgba(22,54,42,0.12)]">
@@ -574,6 +677,30 @@ export default function MapWorkspace() {
           />
           <aside className="border-t border-[#e7eee5] bg-[#fbfdf9] p-6 lg:border-l lg:border-t-0">
             <div className="flex items-center gap-2 text-sm font-bold text-[#28624d]">
+              <MapPinned className="h-4 w-4" /> Ühtne kaardiotsing
+            </div>
+            <div className="mt-3 rounded-xl border border-[#e2eae0] bg-white p-3">
+              <div className="flex gap-2">
+                <input
+                  className="min-w-0 flex-1 rounded-lg border border-[#dbe8d8] px-2 py-1.5 text-sm"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") void runMapSearch(); }}
+                  placeholder="Katastritunnus või aadress"
+                />
+                <button className="secondary-action" onClick={() => void runMapSearch()}>Otsi</button>
+              </div>
+              {searchStatus && <p className="mt-2 text-xs text-[#65756b]">{searchStatus}</p>}
+              <div className="mt-2 space-y-1">
+                {searchResults.slice(0, 6).map((result) => (
+                  <button key={`${result.source}-${result.id}-${result.label}`} className="block w-full rounded-lg bg-[#f5f8f3] px-2 py-1.5 text-left text-xs" onClick={() => openSearchResult(result)}>
+                    <strong>{result.label || result.cadastreId || result.id}</strong>
+                    <span className="ml-2 text-[#718176]">{result.source}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mt-7 flex items-center gap-2 text-sm font-bold text-[#28624d]">
               <SlidersHorizontal className="h-4 w-4" /> Kaardifiltrid
             </div>
             <div className="mt-3 space-y-3 rounded-xl border border-[#e2eae0] bg-white p-3 text-sm">
@@ -655,6 +782,21 @@ export default function MapWorkspace() {
                   )}
                 </button>
               ))}
+            </div>
+            <div className="mt-7 border-t border-[#e3ebe1] pt-5">
+              <div className="flex items-center gap-2 text-sm font-bold text-[#28624d]">
+                <Layers3 className="h-4 w-4" /> Hallatud väliskihid
+              </div>
+              <div className="mt-3 space-y-2">
+                {managedLayers.map((layer) => (
+                  <div key={layer.key} className="rounded-xl border border-[#e2eae0] bg-white p-3 text-xs">
+                    <div className="flex items-center justify-between gap-2"><strong>{layer.name}</strong><span>{layer.serviceType} · {layer.visible ? "nähtav" : "peidetud"}</span></div>
+                    <p className="mt-1 text-[#65756b]">{layer.usageRights || "Kasutusõiguse märkus puudub."}</p>
+                    <small>{layer.freshnessAt ? `Värskus ${new Date(layer.freshnessAt).toLocaleString("et-EE")}` : "Värskuse aeg puudub"}</small>
+                  </div>
+                ))}
+                {!managedLayers.length && <p className="text-xs text-[#65756b]">Hallatud väliskihte ei ole seadistatud.</p>}
+              </div>
             </div>
             <div className="mt-7 border-t border-[#e3ebe1] pt-5">
               <div className="flex items-center gap-2 text-sm font-bold text-[#28624d]">
