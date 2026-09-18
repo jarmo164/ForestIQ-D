@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -146,7 +146,7 @@ class P3ApplicationMessageTests(P3NotificationHistoryTests):
         self.assertEqual(retained.status_code, 409)
 
 
-class P3RealtimeIsolationTests(TestCase):
+class P3RealtimeIsolationTests(TransactionTestCase):
     def test_websocket_rejects_unauthenticated_and_does_not_cross_organizations(self):
         from asgiref.sync import async_to_sync
         from channels.testing import WebsocketCommunicator
@@ -254,3 +254,125 @@ class P3ManagedMapTests(P3NotificationHistoryTests):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(getter.call_count, 1)
         self.assertEqual(second["X-ForestIQ-Map-Cache"], "HIT")
+
+
+class P3WfsGenerationTests(P3NotificationHistoryTests):
+    def _generation(self, manifest, sequence, source_id, title, *, status="READY"):
+        from forestry.p3_models import WfsGeneration, WfsGenerationFeature
+
+        generation = WfsGeneration.objects.create(
+            manifest=manifest,
+            sequence=sequence,
+            status=status,
+            feature_count=1,
+            cadastre_count=1,
+            schema_hash=f"hash-{sequence}",
+            schema_fields={"title": ["string"]},
+            validation={"featureCount": 1, "schemaDrift": False, "emptyGeneration": False},
+            organization=self.organization,
+        )
+        WfsGenerationFeature.objects.create(
+            generation=generation,
+            source_id=source_id,
+            cadastre_id=self.cadastre.id,
+            properties={"title": title},
+            geometry={"type": "Point", "coordinates": [500000, 6500000]},
+            organization=self.organization,
+        )
+        return generation
+
+    def test_publish_second_generation_and_rollback_restore_previous_projection(self):
+        from forestry.models import ForestRegistryFeature
+        from forestry.p3_models import WfsGeneration, WfsLayerManifest
+        from forestry.services.wfs_generations import cleanup_retired_generations, publish_generation, rollback_generation
+
+        manifest = WfsLayerManifest.objects.create(
+            organization=self.organization,
+            key="test-layer",
+            source_layer="metsaregister:test",
+            retention_generations=1,
+        )
+        first = self._generation(manifest, 1, "source-1", "First")
+        publish_generation(first)
+        first.refresh_from_db()
+        self.assertEqual(first.status, WfsGeneration.Status.ACTIVE)
+        self.assertTrue(ForestRegistryFeature.objects.filter(source_layer=manifest.source_layer, source_id="source-1").exists())
+
+        second = self._generation(manifest, 2, "source-2", "Second")
+        publish_generation(second)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.status, WfsGeneration.Status.RETIRED)
+        self.assertEqual(second.status, WfsGeneration.Status.ACTIVE)
+        self.assertFalse(ForestRegistryFeature.objects.filter(source_id="source-1").exists())
+        self.assertTrue(ForestRegistryFeature.objects.filter(source_id="source-2").exists())
+
+        rollback_generation(first)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.status, WfsGeneration.Status.ACTIVE)
+        self.assertEqual(second.status, WfsGeneration.Status.RETIRED)
+        self.assertTrue(ForestRegistryFeature.objects.filter(source_id="source-1").exists())
+        self.assertFalse(ForestRegistryFeature.objects.filter(source_id="source-2").exists())
+
+        old = WfsGeneration.objects.create(
+            manifest=manifest,
+            sequence=0,
+            status=WfsGeneration.Status.RETIRED,
+            feature_count=0,
+            organization=self.organization,
+        )
+        self.assertEqual(cleanup_retired_generations(manifest), 1)
+        self.assertFalse(WfsGeneration.objects.filter(id=old.id).exists())
+        self.assertTrue(WfsGeneration.objects.filter(id=first.id, status=WfsGeneration.Status.ACTIVE).exists())
+        self.assertTrue(WfsGeneration.objects.filter(id=second.id, status=WfsGeneration.Status.RETIRED).exists())
+
+    def test_schema_drift_requires_policy_and_audited_reason(self):
+        from forestry.p3_models import WfsGeneration, WfsLayerManifest
+        from forestry.services.wfs_generations import approve_schema_drift
+
+        manifest = WfsLayerManifest.objects.create(
+            organization=self.organization,
+            key="drift-layer",
+            source_layer="metsaregister:drift",
+            allow_schema_drift=True,
+            expected_schema_hash="old-hash",
+        )
+        generation = WfsGeneration.objects.create(
+            manifest=manifest,
+            sequence=1,
+            status=WfsGeneration.Status.FAILED,
+            feature_count=1,
+            schema_hash="new-hash",
+            schema_fields={"new_field": ["string"]},
+            validation={"schemaDrift": True},
+            organization=self.organization,
+        )
+        with self.assertRaises(ValueError):
+            approve_schema_drift(generation, actor=self.admin, reason="")
+        approved = approve_schema_drift(generation, actor=self.admin, reason="Provider contract version changed")
+        self.assertEqual(approved.status, WfsGeneration.Status.READY)
+        self.assertEqual(approved.schema_drift_approved_by_id, self.admin.id)
+        self.assertEqual(approved.schema_drift_reason, "Provider contract version changed")
+
+    def test_wfs_admin_list_exposes_health_and_deep_verify(self):
+        from forestry.p3_models import WfsLayerManifest
+        from forestry.services.wfs_generations import publish_generation
+
+        manifest = WfsLayerManifest.objects.create(
+            organization=self.organization,
+            key="health-layer",
+            source_layer="metsaregister:health",
+        )
+        generation = self._generation(manifest, 1, "health-1", "Health")
+        publish_generation(generation)
+
+        listing = self.client.get("/api/services/admin/wfs/layers")
+        self.assertEqual(listing.status_code, 200, listing.data)
+        item = next(row for row in listing.data if row["id"] == str(manifest.id))
+        self.assertEqual(item["health"], "HEALTHY")
+        self.assertEqual(item["activeGeneration"]["featureCount"], 1)
+
+        verification = self.client.post(f"/api/services/admin/wfs/layers/{manifest.id}/verify", {}, format="json")
+        self.assertEqual(verification.status_code, 200, verification.data)
+        self.assertTrue(verification.data["verification"]["ok"])
