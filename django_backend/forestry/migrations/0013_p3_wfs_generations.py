@@ -72,7 +72,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(model_name="wfslayermanifest", constraint=models.UniqueConstraint(fields=("organization", "source_layer"), name="p3_uq_wfs_manifest_layer")),
         migrations.AddConstraint(model_name="wfsgeneration", constraint=models.UniqueConstraint(fields=("organization", "manifest", "sequence"), name="p3_uq_wfs_generation_sequence")),
         migrations.AddIndex(model_name="wfsgeneration", index=models.Index(fields=["organization", "manifest", "status"], name="p3_wfs_generation_status_idx")),
-        migrations.AddConstraint(model_name="wfsgenerationfeature", constraint=models.UniqueConstraint(fields=("organization", "generation", "source_id"), name="p3_uq_wfs_generation_source")),
+        migrations.AddConstraint(model_name="wfsgenerationfeature", constraint=models.UniqueConstraint(fields=("organization", "generation", "cadastre_id", "source_id"), name="p3_uq_wfs_generation_source")),
         migrations.AddIndex(model_name="wfsgenerationfeature", index=models.Index(fields=["organization", "generation", "cadastre_id"], name="p3_wfs_feature_cadastre_idx")),
         migrations.AlterModelManagers(name="wfslayermanifest", managers=[("objects", django.db.models.manager.Manager()), ("all_objects", django.db.models.manager.Manager())]),
         migrations.AlterModelManagers(name="wfsgeneration", managers=[("objects", django.db.models.manager.Manager()), ("all_objects", django.db.models.manager.Manager())]),
