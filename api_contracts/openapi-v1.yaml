@@ -1226,6 +1226,20 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/contracts/{contract_id}/signing/verification:
+    post:
+      operationId: services_contracts_signing_verification_create
+      parameters:
+      - in: path
+        name: contract_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/contracts/{contract_id}/versions:
     get:
       operationId: services_contracts_versions_retrieve

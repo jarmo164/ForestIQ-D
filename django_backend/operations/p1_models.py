@@ -248,6 +248,12 @@ class ContractSigning(OrganizationScopedModel):
         SIGNED = "SIGNED", "Signed"
         CANCELLED = "CANCELLED", "Cancelled"
 
+    class VerificationStatus(models.TextChoices):
+        NOT_SUBMITTED = "NOT_SUBMITTED", "Not submitted"
+        PENDING = "PENDING", "Pending"
+        VERIFIED = "VERIFIED", "Verified"
+        FAILED = "FAILED", "Failed"
+
     contract = models.OneToOneField("operations.Contract", on_delete=models.CASCADE, primary_key=True, related_name="signing")
     state = models.CharField(max_length=30, choices=State.choices, default=State.PREPARING)
     responsible = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="responsible_contract_signings")
@@ -256,6 +262,13 @@ class ContractSigning(OrganizationScopedModel):
     final_document = models.FileField(upload_to="contract-signatures/%Y/%m", null=True, blank=True)
     final_url = models.URLField(max_length=1000, blank=True)
     final_content_type = models.CharField(max_length=120, blank=True)
+    verification_status = models.CharField(max_length=20, choices=VerificationStatus.choices, default=VerificationStatus.NOT_SUBMITTED)
+    document_sha256 = models.CharField(max_length=64, blank=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    verification_reference = models.CharField(max_length=255, blank=True)
+    signer_metadata = models.JSONField(default=dict, blank=True)
+    certificate_metadata = models.JSONField(default=dict, blank=True)
+    verification_failure_reason = models.TextField(blank=True)
     version = models.PositiveBigIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

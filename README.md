@@ -236,6 +236,8 @@ Django API kasutab organisatsiooniga seotud sisemist Bearer JWT-d. Reacti tööl
 
 Ära kasuta `.env.example` väärtusi tootmises. Määra unikaalne `DJANGO_SECRET_KEY`, tugev PostgreSQL parool, `DJANGO_DEBUG=false`, korrektne `DJANGO_ALLOWED_HOSTS` ning päris TOTP saladused.
 
+Lepingu olek `SIGNED` tekib ainult autoriseeritud allkirjapakkuja kontrollitõendi järel. Sea `CONTRACT_SIGNATURE_WEBHOOK_SECRET` eraldi tugevale väärtusele; `POST /api/services/contracts/<id>/signing/verification` kontrollib selle abil HMAC-tõendit, dokumendi SHA-256 räsi, lepingujärgset allkirjastajat, usaldatud ja allkirjastamise hetkel kehtinud sertifikaati ning ajatemplit. Faili üleslaadimine jätab töövoo olekusse `SENT_FOR_SIGNATURE` ja kontrolli olekusse `PENDING`. Migratsioon viib varasemad kontrollimata `SIGNED` kirjed samasse uuesti kontrollimise järjekorda.
+
 ## Kontrollimine
 
 Django ruumiandmete migratsioon ning kaart eeldavad PostGIS-i, seega kontrolli integraatsiooni Compose’i PostGIS-teenusega.
