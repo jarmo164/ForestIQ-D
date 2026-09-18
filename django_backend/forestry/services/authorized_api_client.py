@@ -92,7 +92,9 @@ class AuthorizedApiClient:
                 raise AuthorizedApiError("Provider returned non-JSON data.") from exc
             if not isinstance(payload, dict):
                 raise AuthorizedApiError("Provider response must be a JSON object.")
-            payload_size = len(getattr(response, "content", b"") or json.dumps(payload, separators=(",", ":")).encode())
+            response_content = getattr(response, "content", None)
+            encoded_payload = json.dumps(payload, separators=(",", ":")).encode()
+            payload_size = len(response_content) if isinstance(response_content, (bytes, bytearray)) else len(encoded_payload)
             if payload_size > settings.FORESTIQ_AUTH_API_MAX_PAYLOAD_BYTES:
                 raise AuthorizedApiError("Provider response exceeds the configured payload limit.")
             if records_key is not None:

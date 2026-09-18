@@ -1081,6 +1081,7 @@ class WeaselOwnershipImportTests(TestCase):
 
     @patch("forestry.tasks.SingleFlightLock.for_sync")
     @patch("forestry.tasks.import_weasel_ownership_deltas")
+    @override_settings(WEASEL_API_URL="https://weasel.example.test", WEASEL_API_TOKEN="weasel-test-token")
     def test_task_resumes_after_last_success_and_only_records_confirmed_cursor(self, importer, lock_factory):
         lock = Mock()
         lock.acquire.return_value = True
