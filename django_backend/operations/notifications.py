@@ -9,8 +9,9 @@ from django.utils import timezone
 
 from accounts.models import Organization
 from accounts.organization_context import organization_scope
-from operations.models import ApplicationMessage, Reminder
+from operations.models import Reminder
 from operations.p3_models import NotificationPreference, ReminderNotificationDelivery
+from operations.realtime import create_application_message
 
 SUPPORTED_EVENTS = frozenset({"REMINDER_DUE"})
 SUPPORTED_CHANNELS = frozenset({"IN_APP"})
@@ -63,8 +64,8 @@ def deliver_reminder(reminder: Reminder) -> dict:
                 )
                 if not created:
                     continue
-                ApplicationMessage.objects.create(
-                    organization=reminder.organization,
+                create_application_message(
+                    organization_id=reminder.organization_id,
                     recipient=recipient,
                     text=reminder.text or "Meeldetuletuse tähtaeg on saabunud.",
                     category="REMINDER",
