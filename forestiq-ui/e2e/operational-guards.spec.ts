@@ -51,7 +51,8 @@ test("destructive profile deletion can be cancelled and cannot double-submit", a
   });
 
   await page.goto("/contracts");
-  await page.getByRole("button", { name: "Mallid ja ettevõtted" }).click();
+  await expect(page.getByRole("heading", { name: "Lepingute tööala" })).toBeVisible();
+  await page.getByRole("tab", { name: "Mallid ja ettevõtted" }).click();
 
   await page.getByRole("button", { name: "Kustuta" }).click();
   const firstDialog = page.getByRole("dialog", { name: "Kustuta ettevõtteprofiil?" });
