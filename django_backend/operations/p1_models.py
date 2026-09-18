@@ -373,6 +373,30 @@ class DataQualityIssueEvent(OrganizationScopedModel):
         ordering = ("created_at", "id")
 
 
+class DataQualityScanRun(OrganizationScopedModel):
+    class Status(models.TextChoices):
+        RUNNING = "RUNNING", "Running"
+        SUCCESS = "SUCCESS", "Success"
+        FAILED = "FAILED", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.RUNNING)
+    trigger = models.CharField(max_length=30, default="MANUAL")
+    detected_count = models.PositiveIntegerField(default=0)
+    created_count = models.PositiveIntegerField(default=0)
+    auto_resolved_count = models.PositiveIntegerField(default=0)
+    processed_owner_count = models.PositiveIntegerField(default=0)
+    processed_deal_count = models.PositiveIntegerField(default=0)
+    error_message = models.TextField(blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "p1_data_quality_scan_runs"
+        ordering = ("-started_at", "-id")
+        indexes = [models.Index(fields=("organization", "started_at"), name="p1_quality_scan_time_idx")]
+
+
 class OwnershipRelation(OrganizationScopedModel):
     class Source(models.TextChoices):
         LEGACY = "LEGACY", "Legacy"

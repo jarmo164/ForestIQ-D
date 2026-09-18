@@ -217,6 +217,8 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 # Redis võtme TTL väldib igavest lukku, kui worker või host katkeb keset sünkroonimist.
 # Vaikimisi 15 minutit katab Celery 5-minutilise tööläve koos retry-varuga.
 FORESTIQ_SINGLE_FLIGHT_LOCK_TTL_SECONDS = int(os.getenv("FORESTIQ_SINGLE_FLIGHT_LOCK_TTL_SECONDS", "900"))
+FORESTIQ_DATA_QUALITY_BATCH_SIZE = int(os.getenv("FORESTIQ_DATA_QUALITY_BATCH_SIZE", "250"))
+FORESTIQ_DATA_QUALITY_STALE_AFTER_SECONDS = int(os.getenv("FORESTIQ_DATA_QUALITY_STALE_AFTER_SECONDS", "43200"))
 FORESTIQ_SYNC_RUN_STALE_SECONDS = int(os.getenv("FORESTIQ_SYNC_RUN_STALE_SECONDS", "1200"))
 CELERY_BEAT_SCHEDULE = {
     "forestiq-daily-portfolio-sync": {
@@ -238,6 +240,10 @@ CELERY_BEAT_SCHEDULE = {
     "forestiq-reminder-notifications": {
         "task": "operations.dispatch_due_reminder_notifications",
         "schedule": float(os.getenv("FORESTIQ_REMINDER_NOTIFICATION_INTERVAL_SECONDS", "300")),
+    },
+    "forestiq-data-quality-scan": {
+        "task": "operations.run_scheduled_data_quality_scans",
+        "schedule": float(os.getenv("FORESTIQ_DATA_QUALITY_SCAN_INTERVAL_SECONDS", "21600")),
     },
     "forestiq-stale-sync-run-watchdog": {
         "task": "forestry.tasks.reconcile_stale_sync_runs",
