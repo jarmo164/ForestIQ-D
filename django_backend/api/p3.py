@@ -24,11 +24,20 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from forestry.models import Cadastre, CadastreNotification
-from forestry.p3_models import BasemapDefinition, ExternalMapLayer
+from forestry.p3_models import BasemapDefinition, ExternalMapLayer, WfsGeneration, WfsLayerManifest
 from operations.models import ApplicationMessage
 from operations.p3_models import NotificationPreference
 from operations.realtime import publish_org_event, unread_application_message_count
 from operations.notifications import SUPPORTED_CHANNELS, SUPPORTED_EVENTS
+from forestry.services.external_sync import ExternalSourceError
+from forestry.services.wfs_generations import (
+    approve_schema_drift,
+    cleanup_retired_generations,
+    deep_verify,
+    ensure_default_manifests,
+    publish_generation,
+    rollback_generation,
+)
 from .organization import request_organization_id
 from .permissions import CanUseAssignedOwners, CanViewOrganizationData, IsAdmin, can_access_owner
 from .serializers import notification_data
@@ -619,3 +628,181 @@ def map_search(request):
             if attempt < settings.FORESTIQ_MAP_PROXY_RETRIES:
                 time.sleep(min(0.15 * (2 ** attempt), 0.6))
     return _detail(f"Address search is temporarily unavailable: {last_error}", status.HTTP_502_BAD_GATEWAY)
+
+
+def _generation_data(item: WfsGeneration | None) -> dict | None:
+    if item is None:
+        return None
+    return {
+        "id": str(item.id),
+        "sequence": item.sequence,
+        "status": item.status,
+        "featureCount": item.feature_count,
+        "cadastreCount": item.cadastre_count,
+        "schemaHash": item.schema_hash or None,
+        "validation": item.validation,
+        "createdBy": getattr(item.created_by, "id", None),
+        "createdAt": int(item.created_at.timestamp() * 1000),
+        "observedAt": int(item.observed_at.timestamp() * 1000) if item.observed_at else None,
+        "publishedAt": int(item.published_at.timestamp() * 1000) if item.published_at else None,
+        "retiredAt": int(item.retired_at.timestamp() * 1000) if item.retired_at else None,
+        "schemaDriftApprovedBy": getattr(item.schema_drift_approved_by, "id", None),
+        "schemaDriftReason": item.schema_drift_reason or None,
+    }
+
+
+def _manifest_data(item: WfsLayerManifest) -> dict:
+    active = item.generations.filter(status=WfsGeneration.Status.ACTIVE).first()
+    latest = item.generations.first()
+    rollback = item.generations.filter(status=WfsGeneration.Status.RETIRED).first()
+    observed_at = active.observed_at if active else None
+    stale = (
+        observed_at is None
+        or (timezone.now() - observed_at).total_seconds() > settings.FORESTIQ_INTEGRATION_STALE_AFTER_SECONDS
+    )
+    if latest and latest.status == WfsGeneration.Status.FAILED:
+        health = "FAILED"
+    elif active is None:
+        health = "NO_ACTIVE_GENERATION"
+    elif stale:
+        health = "STALE"
+    else:
+        health = "HEALTHY"
+    return {
+        "id": str(item.id),
+        "key": item.key,
+        "sourceLayer": item.source_layer,
+        "cadastreField": item.cadastre_field,
+        "enabled": item.enabled,
+        "allowSchemaDrift": item.allow_schema_drift,
+        "expectedSchemaHash": item.expected_schema_hash or None,
+        "expectedSchemaFields": item.expected_schema_fields,
+        "retentionGenerations": item.retention_generations,
+        "lastVerifiedAt": int(item.last_verified_at.timestamp() * 1000) if item.last_verified_at else None,
+        "health": health,
+        "freshnessAt": int(observed_at.timestamp() * 1000) if observed_at else None,
+        "activeGeneration": _generation_data(active),
+        "latestGeneration": _generation_data(latest),
+        "rollbackGeneration": _generation_data(rollback),
+    }
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdmin])
+def admin_wfs_layers(request):
+    if request.method == "GET":
+        ensure_default_manifests(organization_id=request_organization_id(request))
+        records = WfsLayerManifest.objects.prefetch_related("generations").all()
+        return Response([_manifest_data(item) for item in records])
+
+    key = str(request.data.get("key", "")).strip().lower()
+    source_layer = str(request.data.get("sourceLayer", "")).strip()
+    if not key or not source_layer:
+        return _detail("key and sourceLayer are required.")
+    item = WfsLayerManifest.objects.create(
+        key=key,
+        source_layer=source_layer,
+        cadastre_field=str(request.data.get("cadastreField", "katastri_nr")).strip() or "katastri_nr",
+        enabled=bool(request.data.get("enabled", True)),
+        allow_schema_drift=bool(request.data.get("allowSchemaDrift", False)),
+        retention_generations=min(max(int(request.data.get("retentionGenerations", 2)), 1), 20),
+    )
+    return Response(_manifest_data(item), status=status.HTTP_201_CREATED)
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAdmin])
+def admin_wfs_layer_detail(request, manifest_id):
+    item = get_object_or_404(WfsLayerManifest, id=manifest_id)
+    if "enabled" in request.data:
+        if not isinstance(request.data["enabled"], bool):
+            return _detail("enabled must be a boolean.")
+        item.enabled = request.data["enabled"]
+    if "allowSchemaDrift" in request.data:
+        if not isinstance(request.data["allowSchemaDrift"], bool):
+            return _detail("allowSchemaDrift must be a boolean.")
+        item.allow_schema_drift = request.data["allowSchemaDrift"]
+    if "cadastreField" in request.data:
+        item.cadastre_field = str(request.data["cadastreField"]).strip()
+    if "retentionGenerations" in request.data:
+        try:
+            item.retention_generations = min(max(int(request.data["retentionGenerations"]), 1), 20)
+        except (TypeError, ValueError):
+            return _detail("retentionGenerations must be an integer.")
+    item.save()
+    return Response(_manifest_data(item))
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def admin_wfs_layer_refresh(request, manifest_id):
+    from forestry.tasks import refresh_wfs_generation
+
+    item = get_object_or_404(WfsLayerManifest, id=manifest_id)
+    if not item.enabled:
+        return _detail("This WFS layer is disabled.", status.HTTP_409_CONFLICT)
+    result = refresh_wfs_generation.delay(str(request_organization_id(request)), str(item.id), request.user.id)
+    return Response({"queued": True, "taskId": str(result.id), "manifest": _manifest_data(item)}, status=status.HTTP_202_ACCEPTED)
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def admin_wfs_refresh_all(request):
+    from forestry.tasks import refresh_all_wfs_generations
+
+    ensure_default_manifests(organization_id=request_organization_id(request))
+    result = refresh_all_wfs_generations.delay(str(request_organization_id(request)), request.user.id)
+    return Response({"queued": True, "taskId": str(result.id)}, status=status.HTTP_202_ACCEPTED)
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def admin_wfs_layer_verify(request, manifest_id):
+    item = get_object_or_404(WfsLayerManifest, id=manifest_id)
+    result = deep_verify(item)
+    return Response({"manifest": _manifest_data(item), "verification": result})
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def admin_wfs_generation_approve(request, generation_id):
+    generation = get_object_or_404(WfsGeneration.objects.select_related("manifest"), id=generation_id)
+    try:
+        generation = approve_schema_drift(
+            generation,
+            actor=request.user,
+            reason=str(request.data.get("reason", "")),
+        )
+    except ValueError as exc:
+        return _detail(str(exc), status.HTTP_409_CONFLICT)
+    return Response(_generation_data(generation))
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def admin_wfs_generation_publish(request, generation_id):
+    generation = get_object_or_404(WfsGeneration.objects.select_related("manifest"), id=generation_id)
+    try:
+        generation = publish_generation(generation)
+    except (ValueError, ExternalSourceError) as exc:
+        return _detail(str(exc), status.HTTP_409_CONFLICT)
+    return Response(_generation_data(generation))
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def admin_wfs_generation_rollback(request, generation_id):
+    generation = get_object_or_404(WfsGeneration.objects.select_related("manifest"), id=generation_id)
+    try:
+        generation = rollback_generation(generation)
+    except (ValueError, ExternalSourceError) as exc:
+        return _detail(str(exc), status.HTTP_409_CONFLICT)
+    return Response(_generation_data(generation))
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def admin_wfs_layer_cleanup(request, manifest_id):
+    item = get_object_or_404(WfsLayerManifest, id=manifest_id)
+    removed = cleanup_retired_generations(item)
+    return Response({"removed": removed, "manifest": _manifest_data(item)})
