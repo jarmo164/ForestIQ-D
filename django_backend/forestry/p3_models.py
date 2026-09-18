@@ -145,7 +145,7 @@ class WfsGenerationFeature(OrganizationScopedModel):
         db_table = "p3_wfs_generation_features"
         ordering = ("generation_id", "cadastre_id", "source_id")
         constraints = [
-            models.UniqueConstraint(fields=("organization", "generation", "source_id"), name="p3_uq_wfs_generation_source"),
+            models.UniqueConstraint(fields=("organization", "generation", "cadastre_id", "source_id"), name="p3_uq_wfs_generation_source"),
         ]
         indexes = [
             models.Index(fields=("organization", "generation", "cadastre_id"), name="p3_wfs_feature_cadastre_idx"),
