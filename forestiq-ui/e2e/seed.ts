@@ -73,6 +73,7 @@ export async function installSeededApi(page: Page) {
   const contracts: Array<Record<string, unknown>> = [];
   const companyProfiles = [{ id: "company-0001", legalName: "ForestIQ OÜ", version: 1 }];
   const contractTemplates = [{ id: "template-0001", companyProfileId: "company-0001", templateKey: "forest-sale", name: "Metsamüügi leping", description: "QA lepingumall", html: "<h1>{{ company.legalName }}</h1><p>{{ deal.ownerName }}</p>", version: 1, isActive: true }];
+  const workbaskets: Array<Record<string, unknown>> = [];
   const inheritanceCases = [
     {
       id: "case-0001",
@@ -132,7 +133,7 @@ export async function installSeededApi(page: Page) {
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
-    const { pathname } = new URL(request.url());
+    const pathname = decodeURIComponent(new URL(request.url()).pathname);
     const method = request.method();
     if (
       pathname === "/api/services/admin/integrations/health" &&
@@ -171,6 +172,12 @@ export async function installSeededApi(page: Page) {
       return json(route, {
         actualToken: { token: seededTokens.admin },
         refreshToken: { token: seededTokens.admin },
+      });
+    if (pathname === "/api/services/owners" && method === "GET")
+      return json(route, {
+        items: [{ ...owner, assignee: { id: "qa-admin", name: "QA Admin" } }],
+        nextCursor: null,
+        pageSize: 50,
       });
     if (pathname === `/api/services/owners/${owner.id}` && method === "GET")
       return json(route, owner);
@@ -362,6 +369,38 @@ export async function installSeededApi(page: Page) {
       });
     if (pathname === "/api/services/owners/imports/commit" && method === "POST")
       return json(route, { created: 1, updated: 0 }, 201);
+    if (pathname === "/api/services/map/config" && method === "GET")
+      return json(route, { externalLayers: [] });
+    if (pathname === "/api/services/map/search" && method === "GET")
+      return json(route, {
+        source: "LOCAL",
+        results: [{
+          id: owner.cadastres[0].id,
+          cadastreId: owner.cadastres[0].id,
+          label: owner.cadastres[0].name,
+          address: owner.address,
+          source: "cadastre",
+        }],
+      });
+    if (pathname === "/api/services/map/workbaskets" && method === "GET")
+      return json(route, workbaskets);
+    if (pathname === "/api/services/map/workbaskets" && method === "POST") {
+      const payload = request.postDataJSON() as { name?: string; purpose?: string; cadastreIds?: string[] };
+      const basket = {
+        id: "basket-0001",
+        name: payload.name || "Kaarditöökorv",
+        purpose: payload.purpose || "",
+        status: "ACTIVE",
+        permission: "EDIT",
+        editable: true,
+        cadastreCount: payload.cadastreIds?.length || 0,
+        items: (payload.cadastreIds || []).map((id) => ({ cadastre: { id } })),
+      };
+      workbaskets.splice(0, workbaskets.length, basket);
+      return json(route, basket, 201);
+    }
+    if (pathname === "/api/services/map/workbaskets/basket-0001" && method === "GET")
+      return json(route, workbaskets[0]);
     if (pathname === "/api/services/map/cadastres")
       return json(route, {
         type: "FeatureCollection",
