@@ -47,6 +47,10 @@ class ApplicationMessage(OrganizationScopedModel):
         db_column="recipient",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    category = models.CharField(max_length=80, blank=True, default="")
+    event_key = models.CharField(max_length=120, blank=True, default="")
     organization_parent_fields = ("recipient",)
 
     class Meta:

@@ -8,7 +8,7 @@ services:
     branch: main
     dockerfilePath: django_backend/Dockerfile
     dockerContext: .
-    dockerCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3 --access-logfile - --error-logfile -
+    dockerCommand: daphne -b 0.0.0.0 -p $PORT config.asgi:application
     preDeployCommand: sh scripts/render-predeploy.sh
     healthCheckPath: /api/health/live
     plan: starter

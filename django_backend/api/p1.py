@@ -45,6 +45,7 @@ from operations.p1_models import (
     WorkflowAuditEvent,
 )
 from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
+from operations.realtime import publish_org_event
 
 from .concurrency import requested_version, version_conflict_response
 from .contract_templates import render_template_preview_html
@@ -149,7 +150,7 @@ def _deal_or_403(request, deal_id: str):
 
 
 def _audit(*, owner=None, deal=None, activity=None, next_action=None, actor=None, event_type: str, payload=None):
-    return WorkflowAuditEvent.objects.create(
+    event = WorkflowAuditEvent.objects.create(
         owner=owner,
         deal=deal,
         activity=activity,
@@ -158,6 +159,18 @@ def _audit(*, owner=None, deal=None, activity=None, next_action=None, actor=None
         event_type=event_type,
         payload=payload or {},
     )
+    publish_org_event(
+        "WORKFLOW_EVENT",
+        {
+            "workflowEventId": event.pk,
+            "type": event_type,
+            "ownerId": getattr(owner, "id", None),
+            "dealId": str(getattr(deal, "id", "")) or None,
+            "payload": payload or {},
+        },
+        actor=actor,
+    )
+    return event
 
 
 def _action_data(action: NextAction | None):

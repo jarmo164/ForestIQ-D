@@ -39,6 +39,7 @@ from forestry.models import (
     OwnerStatusChange,
 )
 from operations.models import ApplicationMessage, Contract, ContractHistory, ContractStatus, Deal, DealStage, DirectMessage, InheritanceCase, PersonDump, Reminder
+from operations.realtime import publish_org_event
 
 from .concurrency import delete_if_current, missing_version_response, requested_version, update_if_current, version_conflict_response
 from .organization import organization_user_or_404, organization_users, request_organization_id
@@ -696,6 +697,11 @@ def owner_status(request, owner_id: str):
         owner.refresh_from_db(fields=["version"])
         return version_conflict_response(owner, expected_version)
     OwnerStatusChange.objects.create(user=request.user, from_status=old_status, to_status=new_status)
+    publish_org_event(
+        "OWNER_STATUS_CHANGED",
+        {"ownerId": updated_owner.id, "fromStatus": old_status, "toStatus": new_status, "version": updated_owner.version},
+        actor=request.user,
+    )
     return Response(owner_data(updated_owner))
 
 
@@ -712,6 +718,11 @@ def owner_assignee(request, owner_id: str):
     if updated_owner is None:
         owner.refresh_from_db(fields=["version"])
         return version_conflict_response(owner, expected_version)
+    publish_org_event(
+        "OWNER_ASSIGNEE_CHANGED",
+        {"ownerId": updated_owner.id, "assigneeId": updated_owner.assignee_id, "version": updated_owner.version},
+        actor=request.user,
+    )
     return Response(owner_data(updated_owner))
 
 

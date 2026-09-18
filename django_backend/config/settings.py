@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
     "drf_spectacular",
+    "channels",
     "accounts",
     "forestry",
     "operations",
@@ -233,12 +234,27 @@ CELERY_BEAT_SCHEDULE = {
         "task": "forestry.tasks.enqueue_all_organizations_weasel_ownership_delta",
         "schedule": float(os.getenv("FORESTIQ_WEASEL_DELTA_INTERVAL_SECONDS", "3600")),
     },
+    "forestiq-reminder-notifications": {
+        "task": "operations.dispatch_due_reminder_notifications",
+        "schedule": float(os.getenv("FORESTIQ_REMINDER_NOTIFICATION_INTERVAL_SECONDS", "300")),
+    },
 }
 FORESTIQ_TASKS_INLINE = env_bool("FORESTIQ_TASKS_INLINE", False)
 FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS = int(os.getenv("FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS", "30"))
 FORESTIQ_SYNC_RUN_MAX_RETRIES = int(os.getenv("FORESTIQ_SYNC_RUN_MAX_RETRIES", "3"))
 # Contracts are archived first; physical deletion is permitted only after this retention period.
 FORESTIQ_CONTRACT_RETENTION_DAYS = int(os.getenv("FORESTIQ_CONTRACT_RETENTION_DAYS", "2555"))
+FORESTIQ_APPLICATION_MESSAGE_DELETE_AFTER_DAYS = int(os.getenv("FORESTIQ_APPLICATION_MESSAGE_DELETE_AFTER_DAYS", "30"))
+CHANNEL_REDIS_URL = os.getenv("CHANNEL_REDIS_URL", os.getenv("REDIS_URL", ""))
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {"hosts": [CHANNEL_REDIS_URL]},
+    }
+} if CHANNEL_REDIS_URL else {
+    "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
+}
+
 FORESTIQ_METRICS_BEARER_TOKEN = os.getenv("FORESTIQ_METRICS_BEARER_TOKEN", "")
 FORESTIQ_INTEGRATION_STALE_AFTER_SECONDS = int(os.getenv("FORESTIQ_INTEGRATION_STALE_AFTER_SECONDS", "28800"))
 FORESTIQ_SYNC_USER_AGENT = os.getenv("FORESTIQ_SYNC_USER_AGENT", "ForestIQ data synchronizer/1.0")
@@ -274,6 +290,21 @@ FORESTIQ_METSAREGISTER_DELTA_FIELD = os.getenv("FORESTIQ_METSAREGISTER_DELTA_FIE
 FORESTIQ_METSAREGISTER_DELTA_LOOKBACK_HOURS = int(os.getenv("FORESTIQ_METSAREGISTER_DELTA_LOOKBACK_HOURS", "48"))
 FORESTIQ_METSAREGISTER_DELTA_OVERLAP_MINUTES = int(os.getenv("FORESTIQ_METSAREGISTER_DELTA_OVERLAP_MINUTES", "10"))
 FORESTIQ_MAP_NEW_SUBPART_HOURS = int(os.getenv("FORESTIQ_MAP_NEW_SUBPART_HOURS", "168"))
+FORESTIQ_DEFAULT_BASEMAP_TILE_URL = os.getenv(
+    "FORESTIQ_DEFAULT_BASEMAP_TILE_URL",
+    "https://tiles.openfreemap.org/styles/liberty/{z}/{x}/{y}.png",
+)
+FORESTIQ_MAP_BASEMAP_CACHE_SECONDS = int(os.getenv("FORESTIQ_MAP_BASEMAP_CACHE_SECONDS", "3600"))
+FORESTIQ_MAP_PROXY_TIMEOUT_SECONDS = float(os.getenv("FORESTIQ_MAP_PROXY_TIMEOUT_SECONDS", "6"))
+FORESTIQ_MAP_PROXY_RETRIES = int(os.getenv("FORESTIQ_MAP_PROXY_RETRIES", "2"))
+FORESTIQ_MAP_SEARCH_MAX_QUERY_LENGTH = int(os.getenv("FORESTIQ_MAP_SEARCH_MAX_QUERY_LENGTH", "120"))
+FORESTIQ_MAP_SEARCH_RESULT_LIMIT = int(os.getenv("FORESTIQ_MAP_SEARCH_RESULT_LIMIT", "20"))
+FORESTIQ_INAKS_SEARCH_URL = os.getenv("FORESTIQ_INAKS_SEARCH_URL", "https://aks.geoportaal.ee/inaks/inaadress/gazetteer").strip()
+FORESTIQ_INAKS_QUERY_PARAM = os.getenv("FORESTIQ_INAKS_QUERY_PARAM", "address").strip() or "address"
+FORESTIQ_INAKS_RATE_PER_MINUTE = int(os.getenv("FORESTIQ_INAKS_RATE_PER_MINUTE", "30"))
+FORESTIQ_INAKS_MAX_RESPONSE_BYTES = int(os.getenv("FORESTIQ_INAKS_MAX_RESPONSE_BYTES", "1048576"))
+FORESTIQ_INAKS_CACHE_SECONDS = int(os.getenv("FORESTIQ_INAKS_CACHE_SECONDS", "300"))
+
 FORESTIQ_MAP_CADASTRE_LIMIT = int(os.getenv("FORESTIQ_MAP_CADASTRE_LIMIT", "750"))
 FORESTIQ_MAP_FEATURE_LIMIT = int(os.getenv("FORESTIQ_MAP_FEATURE_LIMIT", "1500"))
 FORESTIQ_MAP_MAX_FEATURE_LIMIT = int(os.getenv("FORESTIQ_MAP_MAX_FEATURE_LIMIT", "3000"))

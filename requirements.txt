@@ -16,3 +16,7 @@ prometheus-client==0.26.0
 coverage==7.10.7
 weasyprint==70.0
 django-storages[s3]>=1.14,<1.15
+
+channels>=4.2,<5.0
+channels-redis>=4.2,<5.0
+daphne>=4.2,<5.0

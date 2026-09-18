@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from . import auth, contract_templates, health, p1, parity, portfolio, user_lifecycle, views
+from . import auth, contract_templates, health, p1, p3, parity, portfolio, user_lifecycle, views
 
 urlpatterns = [
     path("oidc/config", auth.oidc_configuration),
@@ -37,6 +37,23 @@ urlpatterns = [
     path("services/admin/data-quality/issues/<uuid:issue_id>", p1.data_quality_issue_detail),
     path("services/admin/data-quality/scan", p1.data_quality_scan),
     path("services/map/cadastres", views.cadastre_map_features),
+    path("services/map/config", p3.map_configuration),
+    path("services/map/search", p3.map_search),
+    path("services/map/basemaps/<str:key>/<int:z>/<int:x>/<int:y>", p3.basemap_tile),
+    path("services/map/external-layers/<str:key>/<int:z>/<int:x>/<int:y>", p3.external_layer_tile),
+    path("services/admin/map/basemaps", p3.admin_basemaps),
+    path("services/admin/map/basemaps/<str:key>", p3.admin_basemap_detail),
+    path("services/admin/map/external-layers", p3.admin_external_layers),
+    path("services/admin/map/external-layers/<str:key>", p3.admin_external_layer_detail),
+    path("services/admin/wfs/layers", p3.admin_wfs_layers),
+    path("services/admin/wfs/layers/refresh-all", p3.admin_wfs_refresh_all),
+    path("services/admin/wfs/layers/<uuid:manifest_id>", p3.admin_wfs_layer_detail),
+    path("services/admin/wfs/layers/<uuid:manifest_id>/refresh", p3.admin_wfs_layer_refresh),
+    path("services/admin/wfs/layers/<uuid:manifest_id>/verify", p3.admin_wfs_layer_verify),
+    path("services/admin/wfs/layers/<uuid:manifest_id>/cleanup", p3.admin_wfs_layer_cleanup),
+    path("services/admin/wfs/generations/<uuid:generation_id>/approve-schema-drift", p3.admin_wfs_generation_approve),
+    path("services/admin/wfs/generations/<uuid:generation_id>/publish", p3.admin_wfs_generation_publish),
+    path("services/admin/wfs/generations/<uuid:generation_id>/rollback", p3.admin_wfs_generation_rollback),
     path("services/map/workbaskets", p1.map_workbaskets),
     path("services/map/workbaskets/<uuid:basket_id>", p1.map_workbasket_detail),
     path("services/map/workbaskets/<uuid:basket_id>/transfer", p1.map_workbasket_transfer),
@@ -152,6 +169,8 @@ urlpatterns = [
     path("services/cadastres/<str:cadastre_id>/labels", views.cadastre_label),
     path("services/cadastres/<str:cadastre_id>/labels/<str:label>", views.cadastre_label),
     path("services/cadastres/<str:cadastre_id>/notifications", views.cadastre_notifications),
+    path("services/cadastres/<str:cadastre_id>/notifications/active", p3.cadastre_active_notifications),
+    path("services/cadastres/<str:cadastre_id>/notifications/archive", p3.cadastre_archived_notifications),
     path("services/cadastres/<str:cadastre_id>/mkdata", views.cadastre_mkdata),
     path("services/cadastres/<str:cadastre_id>/areas", views.cadastre_areas),
     path("services/cadastres/<str:cadastre_id>/registry-features", views.registry_features),
@@ -161,6 +180,7 @@ urlpatterns = [
     path("services/reminders", views.reminders),
     path("services/reminders/<int:reminder_id>", views.reminder_detail),
     path("services/reminders-dashboard", views.reminders_dashboard),
+    path("services/notification-preferences", p3.notification_preferences),
     path("services/persons-dump", views.persons_dump),
     path("services/persons-dump/<int:person_id>", views.persons_dump_detail),
     path("services/messages/received", views.received_messages),
@@ -172,4 +192,7 @@ urlpatterns = [
     path("services/messages/usernames", views.message_users),
     path("services/messages/new-count", views.new_messages_count),
     path("services/messages/new/count", views.new_messages_count),
+    path("services/application-messages", p3.application_messages),
+    path("services/application-messages/unread-count", p3.application_message_unread_count),
+    path("services/application-messages/<int:message_id>", p3.application_message_detail),
 ]

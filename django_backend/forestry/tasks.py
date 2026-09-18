@@ -14,6 +14,7 @@ from config.observability import current_correlation_id
 from accounts.models import Organization
 from accounts.organization_context import organization_scope
 from forestry.models import Cadastre, DataSyncRun
+from forestry.p3_models import WfsLayerManifest
 from forestry.services.external_sync import (
     sync_cadastre_wfs,
     sync_metsaregister_wfs,
@@ -21,6 +22,7 @@ from forestry.services.external_sync import (
     sync_parimus_inheritance,
 )
 from forestry.services.metsaregister_full_import import import_metsaregister_delta
+from forestry.services.wfs_generations import ensure_default_manifests, refresh_manifest
 from forestry.services.single_flight import SingleFlightLock
 from forestry.services.weasel_client import WeaselClientError
 from forestry.services.weasel_ownership_sync import import_weasel_ownership_deltas
@@ -431,3 +433,43 @@ def enqueue_all_organizations_weasel_ownership_delta() -> dict[str, int | str]:
         result = run_weasel_ownership_delta.delay(str(organization_id))
         queued += 1 if result else 0
     return {"organizations": queued, "status": "queued"}
+
+
+@shared_task(name="forestry.refresh_wfs_generation")
+def refresh_wfs_generation(organization_id: str, manifest_id: str, requested_by_id: str | None = None):
+    """Stage and publish one WFS layer without mutating the active projection until validation passes."""
+    from accounts.models import User
+
+    with organization_scope(organization_id):
+        manifest = WfsLayerManifest.objects.get(id=manifest_id, enabled=True)
+        actor = User.objects.filter(id=requested_by_id, is_active=True).first() if requested_by_id else None
+        generation = refresh_manifest(manifest, created_by=actor)
+        return {
+            "manifestId": str(manifest.id),
+            "generationId": str(generation.id),
+            "status": generation.status,
+            "featureCount": generation.feature_count,
+            "validation": generation.validation,
+        }
+
+
+@shared_task(name="forestry.refresh_all_wfs_generations")
+def refresh_all_wfs_generations(organization_id: str, requested_by_id: str | None = None):
+    """Refresh configured manifests sequentially so one bad layer cannot invalidate another layer."""
+    from accounts.models import User
+
+    result = []
+    with organization_scope(organization_id):
+        actor = User.objects.filter(id=requested_by_id, is_active=True).first() if requested_by_id else None
+        for manifest in ensure_default_manifests(organization_id=organization_id):
+            if not manifest.enabled:
+                continue
+            generation = refresh_manifest(manifest, created_by=actor)
+            result.append({
+                "manifestId": str(manifest.id),
+                "generationId": str(generation.id),
+                "status": generation.status,
+                "featureCount": generation.feature_count,
+                "validation": generation.validation,
+            })
+    return {"layers": result}

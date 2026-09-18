@@ -250,6 +250,90 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/admin/map/basemaps:
+    get:
+      operationId: services_admin_map_basemaps_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_admin_map_basemaps_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/map/basemaps/{key}:
+    patch:
+      operationId: services_admin_map_basemaps_partial_update
+      parameters:
+      - in: path
+        name: key
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_admin_map_basemaps_destroy
+      parameters:
+      - in: path
+        name: key
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/admin/map/external-layers:
+    get:
+      operationId: services_admin_map_external_layers_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_admin_map_external_layers_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/map/external-layers/{key}:
+    patch:
+      operationId: services_admin_map_external_layers_partial_update
+      parameters:
+      - in: path
+        name: key
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_admin_map_external_layers_destroy
+      parameters:
+      - in: path
+        name: key
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
   /api/v1/services/admin/sales-management-overview:
     get:
       operationId: services_admin_sales_management_overview_retrieve
@@ -398,6 +482,177 @@ paths:
   /api/v1/services/admin/userstatistics/prep-data:
     get:
       operationId: services_admin_userstatistics_prep_data_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/wfs/generations/{generation_id}/approve-schema-drift:
+    post:
+      operationId: services_admin_wfs_generations_approve_schema_drift_create
+      parameters:
+      - in: path
+        name: generation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/wfs/generations/{generation_id}/publish:
+    post:
+      operationId: services_admin_wfs_generations_publish_create
+      parameters:
+      - in: path
+        name: generation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/wfs/generations/{generation_id}/rollback:
+    post:
+      operationId: services_admin_wfs_generations_rollback_create
+      parameters:
+      - in: path
+        name: generation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/wfs/layers:
+    get:
+      operationId: services_admin_wfs_layers_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_admin_wfs_layers_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/wfs/layers/{manifest_id}:
+    patch:
+      operationId: services_admin_wfs_layers_partial_update
+      parameters:
+      - in: path
+        name: manifest_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/wfs/layers/{manifest_id}/cleanup:
+    post:
+      operationId: services_admin_wfs_layers_cleanup_create
+      parameters:
+      - in: path
+        name: manifest_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/wfs/layers/{manifest_id}/refresh:
+    post:
+      operationId: services_admin_wfs_layers_refresh_create
+      parameters:
+      - in: path
+        name: manifest_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/wfs/layers/{manifest_id}/verify:
+    post:
+      operationId: services_admin_wfs_layers_verify_create
+      parameters:
+      - in: path
+        name: manifest_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/wfs/layers/refresh-all:
+    post:
+      operationId: services_admin_wfs_layers_refresh_all_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/application-messages:
+    get:
+      operationId: services_application_messages_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/application-messages/{message_id}:
+    patch:
+      operationId: services_application_messages_partial_update
+      parameters:
+      - in: path
+        name: message_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: services_application_messages_destroy
+      parameters:
+      - in: path
+        name: message_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - services
+      responses:
+        '204':
+          description: No response body
+  /api/v1/services/application-messages/unread-count:
+    get:
+      operationId: services_application_messages_unread_count_retrieve
       tags:
       - services
       responses:
@@ -570,6 +825,36 @@ paths:
   /api/v1/services/cadastres/{cadastre_id}/notifications:
     get:
       operationId: services_cadastres_notifications_retrieve
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/notifications/active:
+    get:
+      operationId: services_cadastres_notifications_active_retrieve
+      description: Return current notices with a stable two-part keyset cursor.
+      parameters:
+      - in: path
+        name: cadastre_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/cadastres/{cadastre_id}/notifications/archive:
+    get:
+      operationId: services_cadastres_notifications_archive_retrieve
+      description: Return archive notices only inside an explicit bounded date range.
       parameters:
       - in: path
         name: cadastre_id
@@ -1495,10 +1780,76 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/map/basemaps/{key}/{z}/{x}/{y}:
+    get:
+      operationId: services_map_basemaps_retrieve
+      parameters:
+      - in: path
+        name: key
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: x
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: y
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: z
+        schema:
+          type: integer
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/map/cadastres:
     get:
       operationId: services_map_cadastres_retrieve
       description: Return validated cadastral geometries as WGS84 GeoJSON for MapLibre.
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/config:
+    get:
+      operationId: services_map_config_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/external-layers/{key}/{z}/{x}/{y}:
+    get:
+      operationId: services_map_external_layers_retrieve
+      parameters:
+      - in: path
+        name: key
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: x
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: y
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: z
+        schema:
+          type: integer
+        required: true
       tags:
       - services
       responses:
@@ -1515,6 +1866,14 @@ paths:
         schema:
           type: string
         required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/search:
+    get:
+      operationId: services_map_search_retrieve
       tags:
       - services
       responses:
@@ -1753,6 +2112,23 @@ paths:
           type: string
           format: uuid
         required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/notification-preferences:
+    get:
+      operationId: services_notification_preferences_retrieve
+      description: Read or replace only the authenticated user's delivery policy.
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    put:
+      operationId: services_notification_preferences_update
+      description: Read or replace only the authenticated user's delivery policy.
       tags:
       - services
       responses:
