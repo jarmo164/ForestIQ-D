@@ -187,3 +187,70 @@ class P3RealtimeIsolationTests(TestCase):
             await socket.disconnect()
 
         async_to_sync(scenario)()
+
+
+class P3ManagedMapTests(P3NotificationHistoryTests):
+    def test_map_catalog_and_local_first_search(self):
+        from forestry.p3_models import BasemapDefinition, ExternalMapLayer
+
+        BasemapDefinition.objects.create(
+            organization=self.organization,
+            key="ortho",
+            name="Orto",
+            tile_url_template="https://maps.example.com/{z}/{x}/{y}.png",
+            attribution="Example",
+        )
+        ExternalMapLayer.objects.create(
+            organization=self.organization,
+            key="forest-wms",
+            name="Forest WMS",
+            service_type="WMS",
+            url_template="https://maps.example.com/wms?bbox={bbox}",
+            visible=True,
+            usage_rights="Internal decision support",
+        )
+        catalog = self.client.get("/api/services/map/config")
+        self.assertEqual(catalog.status_code, 200, catalog.data)
+        self.assertEqual(catalog.data["basemaps"][0]["key"], "ortho")
+        self.assertEqual(catalog.data["externalLayers"][0]["usageRights"], "Internal decision support")
+
+        search = self.client.get("/api/services/map/search", {"q": "12345:001"})
+        self.assertEqual(search.status_code, 200, search.data)
+        self.assertEqual(search.data["source"], "LOCAL")
+        self.assertEqual(search.data["results"][0]["cadastreId"], self.cadastre.id)
+
+    def test_admin_map_registry_rejects_private_network_targets(self):
+        response = self.client.post(
+            "/api/services/admin/map/external-layers",
+            {
+                "key": "private",
+                "name": "Private",
+                "serviceType": "WMS",
+                "urlTemplate": "https://127.0.0.1/wms?bbox={bbox}",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_basemap_proxy_caches_success_and_handles_upstream_failure(self):
+        from unittest.mock import Mock, patch
+        from forestry.p3_models import BasemapDefinition
+
+        BasemapDefinition.objects.create(
+            organization=self.organization,
+            key="safe",
+            name="Safe",
+            tile_url_template="https://maps.example.com/{z}/{x}/{y}.png",
+            cache_seconds=60,
+        )
+        upstream = Mock()
+        upstream.content = b"png-bytes"
+        upstream.headers = {"Content-Type": "image/png"}
+        upstream.raise_for_status.return_value = None
+        with patch("api.p3.requests.get", return_value=upstream) as getter:
+            first = self.client.get("/api/services/map/basemaps/safe/1/0/0")
+            second = self.client.get("/api/services/map/basemaps/safe/1/0/0")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(getter.call_count, 1)
+        self.assertEqual(second["X-ForestIQ-Map-Cache"], "HIT")
