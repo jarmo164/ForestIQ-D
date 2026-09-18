@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import redis
 from django.conf import settings
@@ -98,7 +98,7 @@ def _integration_payload(records: list[dict]) -> dict:
         heartbeat = None
         if isinstance(heartbeat_raw, str):
             try:
-                heartbeat = timezone.datetime.fromisoformat(heartbeat_raw.replace("Z", "+00:00"))
+                heartbeat = datetime.fromisoformat(heartbeat_raw.replace("Z", "+00:00"))
                 if timezone.is_naive(heartbeat):
                     heartbeat = timezone.make_aware(heartbeat, timezone.get_current_timezone())
             except ValueError:
