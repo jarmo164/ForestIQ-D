@@ -714,25 +714,28 @@ export default function MapWorkspace() {
               <SlidersHorizontal className="h-4 w-4" /> Kaardifiltrid
             </div>
             <div className="mt-3 space-y-3 rounded-xl border border-[#e2eae0] bg-white p-3 text-sm">
-              <label className="flex cursor-pointer items-center justify-between gap-2">
+              <label htmlFor="map-filter-customer" className="flex cursor-pointer items-center justify-between gap-2">
                 <span>Klient või võidetud tehing</span>
                 <input
+                  id="map-filter-customer"
                   type="checkbox"
                   checked={filters.customer}
                   onChange={(event) => updateFilters({ customer: event.target.checked })}
                 />
               </label>
-              <label className="flex cursor-pointer items-center justify-between gap-2">
+              <label htmlFor="map-filter-active-deal" className="flex cursor-pointer items-center justify-between gap-2">
                 <span>Aktiivne tehing</span>
                 <input
+                  id="map-filter-active-deal"
                   type="checkbox"
                   checked={filters.activeDeal}
                   onChange={(event) => updateFilters({ activeDeal: event.target.checked })}
                 />
               </label>
-              <label className="block text-xs font-semibold text-[#587065]">
+              <label htmlFor="map-filter-deal-stage" className="block text-xs font-semibold text-[#587065]">
                 Tehinguetapp
                 <select
+                  id="map-filter-deal-stage"
                   value={filters.dealStage}
                   onChange={(event) => updateFilters({ dealStage: event.target.value })}
                   className="mt-1 w-full rounded-lg border border-[#dbe8d8] bg-white px-2 py-1.5 text-sm"
@@ -745,9 +748,10 @@ export default function MapWorkspace() {
                   <option value="LOST">Kaotatud</option>
                 </select>
               </label>
-              <label className="block text-xs font-semibold text-[#587065]">
+              <label htmlFor="map-filter-activity-days" className="block text-xs font-semibold text-[#587065]">
                 Tegevusajalugu
                 <select
+                  id="map-filter-activity-days"
                   value={filters.activityDays}
                   onChange={(event) => updateFilters({ activityDays: event.target.value })}
                   className="mt-1 w-full rounded-lg border border-[#dbe8d8] bg-white px-2 py-1.5 text-sm"
