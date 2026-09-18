@@ -233,6 +233,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "forestry.tasks.enqueue_all_organizations_weasel_ownership_delta",
         "schedule": float(os.getenv("FORESTIQ_WEASEL_DELTA_INTERVAL_SECONDS", "3600")),
     },
+    "forestiq-reminder-notifications": {
+        "task": "operations.dispatch_due_reminder_notifications",
+        "schedule": float(os.getenv("FORESTIQ_REMINDER_NOTIFICATION_INTERVAL_SECONDS", "300")),
+    },
 }
 FORESTIQ_TASKS_INLINE = env_bool("FORESTIQ_TASKS_INLINE", False)
 FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS = int(os.getenv("FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS", "30"))
