@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import redis
 from django.conf import settings
@@ -84,9 +84,31 @@ def _integration_payload(records: list[dict]) -> dict:
             break
         if record["status"] in {DataSyncRun.Status.FAILED, DataSyncRun.Status.PARTIAL}:
             failure_streak += 1
+    now = timezone.now()
     stale_after = timedelta(seconds=settings.FORESTIQ_INTEGRATION_STALE_AFTER_SECONDS)
-    stale = not latest_success or latest_success["finished_at"] < timezone.now() - stale_after
-    health = "OK" if not stale and failure_streak == 0 else "DEGRADED"
+    stale = not latest_success or latest_success["finished_at"] < now - stale_after
+    run_stale_after = timedelta(seconds=settings.FORESTIQ_SYNC_RUN_STALE_SECONDS)
+    stale_running = 0
+    last_heartbeat_at = None
+    for record in records:
+        if record["status"] != DataSyncRun.Status.RUNNING:
+            continue
+        cursor = record.get("cursor") or {}
+        heartbeat_raw = cursor.get("heartbeatAt") if isinstance(cursor, dict) else None
+        heartbeat = None
+        if isinstance(heartbeat_raw, str):
+            try:
+                heartbeat = datetime.fromisoformat(heartbeat_raw.replace("Z", "+00:00"))
+                if timezone.is_naive(heartbeat):
+                    heartbeat = timezone.make_aware(heartbeat, timezone.get_current_timezone())
+            except ValueError:
+                heartbeat = None
+        heartbeat = heartbeat or record.get("started_at")
+        if heartbeat and (last_heartbeat_at is None or heartbeat > last_heartbeat_at):
+            last_heartbeat_at = heartbeat
+        if heartbeat is None or heartbeat < now - run_stale_after:
+            stale_running += 1
+    health = "OK" if not stale and failure_streak == 0 and stale_running == 0 else "DEGRADED"
     return {
         "source": stable_source_name(latest["source"]),
         "health": health,
@@ -95,6 +117,8 @@ def _integration_payload(records: list[dict]) -> dict:
         "failureStreak": failure_streak,
         "backlogSize": sum(1 for record in records if record["status"] in {DataSyncRun.Status.QUEUED, DataSyncRun.Status.RUNNING}),
         "lagSeconds": next((record["lag_seconds"] for record in records if record["lag_seconds"] is not None), None),
+        "staleRunningCount": stale_running,
+        "lastHeartbeatAt": last_heartbeat_at.isoformat() if last_heartbeat_at else None,
     }
 
 
@@ -104,7 +128,7 @@ def integrations_health(_request):
     """Report data freshness and sync health from the audit trail, never by probing providers."""
 
     grouped: dict[str, list[dict]] = defaultdict(list)
-    for record in DataSyncRun.objects.order_by("source", "-id").values("source", "status", "finished_at", "lag_seconds").iterator():
+    for record in DataSyncRun.objects.order_by("source", "-id").values("source", "status", "started_at", "finished_at", "lag_seconds", "cursor").iterator():
         grouped[stable_source_name(record["source"])].append(record)
     integrations = [_integration_payload(records) for _, records in sorted(grouped.items())]
     degraded = [item["source"] for item in integrations if item["health"] != "OK"]
