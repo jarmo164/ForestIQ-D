@@ -27,7 +27,7 @@ def user_data(user: User | None) -> dict | None:
 
 def owner_summary(owner: Owner) -> dict:
     return {
-        "id": owner.id,
+        "id": owner.public_id,
         "name": owner.name,
         "version": owner.version,
         "status": owner.status or None,
@@ -54,7 +54,7 @@ def owner_data(owner: Owner) -> dict:
 
 def cadastre_summary(cadastre: Cadastre) -> dict:
     return {
-        "id": cadastre.id,
+        "id": cadastre.public_id,
         "name": cadastre.name or None,
         "type": cadastre.type or None,
         "marked": cadastre.marked,
@@ -106,7 +106,7 @@ def notification_data(notification: CadastreNotification) -> dict:
         "confirmationDate": json_value(notification.confirmation_date),
         "area": json_value(notification.area),
         "amountToBeCut": json_value(notification.amount_to_be_cut),
-        "cadastreNo": notification.cadastre_id,
+        "cadastreNo": notification.cadastre.public_id,
         "archived": notification.archived,
         "archiveDate": json_value(notification.archive_date),
     }
