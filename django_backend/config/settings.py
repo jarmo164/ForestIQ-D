@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
     "drf_spectacular",
+    "channels",
     "accounts",
     "forestry",
     "operations",
@@ -243,6 +244,17 @@ FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS = int(os.getenv("FORESTIQ_SYNC_HTTP_TIMEOUT_S
 FORESTIQ_SYNC_RUN_MAX_RETRIES = int(os.getenv("FORESTIQ_SYNC_RUN_MAX_RETRIES", "3"))
 # Contracts are archived first; physical deletion is permitted only after this retention period.
 FORESTIQ_CONTRACT_RETENTION_DAYS = int(os.getenv("FORESTIQ_CONTRACT_RETENTION_DAYS", "2555"))
+FORESTIQ_APPLICATION_MESSAGE_DELETE_AFTER_DAYS = int(os.getenv("FORESTIQ_APPLICATION_MESSAGE_DELETE_AFTER_DAYS", "30"))
+CHANNEL_REDIS_URL = os.getenv("CHANNEL_REDIS_URL", os.getenv("REDIS_URL", ""))
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {"hosts": [CHANNEL_REDIS_URL]},
+    }
+} if CHANNEL_REDIS_URL else {
+    "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
+}
+
 FORESTIQ_METRICS_BEARER_TOKEN = os.getenv("FORESTIQ_METRICS_BEARER_TOKEN", "")
 FORESTIQ_INTEGRATION_STALE_AFTER_SECONDS = int(os.getenv("FORESTIQ_INTEGRATION_STALE_AFTER_SECONDS", "28800"))
 FORESTIQ_SYNC_USER_AGENT = os.getenv("FORESTIQ_SYNC_USER_AGENT", "ForestIQ data synchronizer/1.0")
