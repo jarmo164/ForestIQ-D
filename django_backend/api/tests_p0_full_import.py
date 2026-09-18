@@ -48,6 +48,7 @@ class P0ResumableFullImportTests(TestCase):
         self.organization = Organization.objects.create(slug="p0-full-import", name="P0 full import")
 
     def test_full_import_confirms_one_chunk_and_resumes_from_checkpoint(self):
+        # The second call must request the next WFS page, not replay the finished chunk.
         seen_start_indexes: list[int] = []
 
         def fake_pages(*, layer, page_size, cql_filter=None, start_index=0):
