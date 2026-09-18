@@ -16,6 +16,7 @@ import {
   XCircle,
 } from "lucide-react";
 
+import { AppShell } from "@/components/AppShell";
 import { CadastreWorkspaceDialog, type CadastreWorkspace } from "@/components/CadastreWorkspaceDialog";
 import { api } from "@/lib/api";
 
@@ -644,6 +645,8 @@ export default function MapWorkspace() {
 
   const openSearchResult = (result: MapSearchResult) => {
     if (!result.cadastreId) return;
+    setSelected({ layer: "Otsingutulemus", properties: { id: result.id, cadastreId: result.cadastreId, address: result.address, source: result.source } });
+    setSelectedCadastreIds((current) => current.includes(result.cadastreId!) ? current : [...current, result.cadastreId!]);
     setWorkspaceId(result.cadastreId);
     setWorkspace(null);
     setWorkspaceError(null);
@@ -653,14 +656,14 @@ export default function MapWorkspace() {
   };
 
   return (
-    <main className="min-h-screen bg-[#f5f7f2] p-4 text-[#17342a] md:p-7">
-      <section className="mx-auto max-w-7xl overflow-hidden rounded-[2rem] border border-[#d7e1d5] bg-white shadow-[0_24px_80px_rgba(22,54,42,0.12)]">
+    <AppShell title="Metsa- ja katastrivaade" eyebrow="FORESTIQ / KAART">
+      <section className="overflow-hidden rounded-[2rem] border border-[#d7e1d5] bg-white shadow-[0_24px_80px_rgba(22,54,42,0.12)]">
         <header className="flex flex-col gap-4 border-b border-[#e7eee5] px-6 py-5 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[.18em] text-[#31705a]">
               <Trees className="h-4 w-4" /> Keskne ruumiandmete töölaud
             </div>
-            <h1 className="font-serif text-3xl font-semibold tracking-tight">Metsa- ja katastrivaade</h1>
+            <h2 className="font-serif text-3xl font-semibold tracking-tight">Kaardi töölaud</h2>
             <p className="mt-1 text-sm text-[#627469]">
               Suured katastri- ja registrikihid laetakse MVT-paanidena; klõpsa katastriüksusel tervikvaate avamiseks.
             </p>
@@ -672,8 +675,9 @@ export default function MapWorkspace() {
         <div className="grid min-h-[610px] lg:grid-cols-[1fr_330px]">
           <div
             ref={container}
+            tabIndex={0}
             className="min-h-[500px] lg:min-h-[610px]"
-            aria-label="Interaktiivne ForestIQ GeoDjango kaart"
+            aria-label="Interaktiivne ForestIQ GeoDjango kaart. Kasuta parempoolset otsingut, et klaviatuuriga katastriüksus valida."
           />
           <aside className="border-t border-[#e7eee5] bg-[#fbfdf9] p-6 lg:border-l lg:border-t-0">
             <div className="flex items-center gap-2 text-sm font-bold text-[#28624d]">
@@ -682,6 +686,7 @@ export default function MapWorkspace() {
             <div className="mt-3 rounded-xl border border-[#e2eae0] bg-white p-3">
               <div className="flex gap-2">
                 <input
+                  aria-label="Otsi katastritunnuse või aadressi järgi"
                   className="min-w-0 flex-1 rounded-lg border border-[#dbe8d8] px-2 py-1.5 text-sm"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
@@ -690,12 +695,13 @@ export default function MapWorkspace() {
                 />
                 <button className="secondary-action" onClick={() => void runMapSearch()}>Otsi</button>
               </div>
-              {searchStatus && <p className="mt-2 text-xs text-[#65756b]">{searchStatus}</p>}
-              <div className="mt-2 space-y-1">
+              {searchStatus && <p className="mt-2 text-xs text-[#65756b]" role="status">{searchStatus}</p>}
+              <div className="mt-2 space-y-1" role="listbox" aria-label="Kaardi otsingutulemused">
                 {searchResults.slice(0, 6).map((result) => (
-                  <button key={`${result.source}-${result.id}-${result.label}`} className="block w-full rounded-lg bg-[#f5f8f3] px-2 py-1.5 text-left text-xs" onClick={() => openSearchResult(result)}>
+                  <button key={`${result.source}-${result.id}-${result.label}`} role="option" aria-selected={workspaceId === result.cadastreId} className="block w-full rounded-lg bg-[#f5f8f3] px-2 py-1.5 text-left text-xs focus:outline focus:outline-2 focus:outline-[#28704f]" onClick={() => openSearchResult(result)}>
                     <strong>{result.label || result.cadastreId || result.id}</strong>
                     <span className="ml-2 text-[#718176]">{result.source}</span>
+                    {result.address && <span className="block text-[#65756b]">{result.address}</span>}
                   </button>
                 ))}
               </div>
@@ -912,6 +918,6 @@ export default function MapWorkspace() {
           setWorkspaceError(null);
         }}
       />
-    </main>
+    </AppShell>
   );
 }
