@@ -133,6 +133,7 @@ urlpatterns = [
     path("services/contracts/deals/<str:deal_id>/draft", parity.contract_deal_draft),
     path("services/contracts/<str:contract_id>/signing", p1.contract_signing),
     path("services/contracts/<str:contract_id>/signing/document", p1.contract_signature_upload),
+    path("services/contracts/<str:contract_id>/signing/verification", p1.contract_signature_verification),
     path("services/contracts/<str:contract_id>/versions", p1.contract_versions),
     path("services/contracts/<str:contract_id>", views.contract_detail),
     path("services/contracts/<str:contract_id>/pdf", views.contract_pdf),

@@ -132,3 +132,5 @@ envVarGroups:
         sync: false
       - key: PARIMUS_API_TOKEN
         sync: false
+      - key: CONTRACT_SIGNATURE_WEBHOOK_SECRET
+        sync: false

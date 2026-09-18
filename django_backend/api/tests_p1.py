@@ -1,11 +1,15 @@
 """Regression coverage for P1 issues #98-#105."""
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 from datetime import timedelta
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -161,6 +165,7 @@ class P1WorkflowApiTests(TestCase):
         self.assertEqual(DealLossOutcome.objects.get(deal=deal).reason.code, "PRICE")
         self.assertTrue(NextAction.objects.filter(deal=deal, status=NextAction.Status.OPEN).exists())
 
+    @override_settings(CONTRACT_SIGNATURE_WEBHOOK_SECRET="sandbox-signature-secret")
     def test_contract_creation_captures_immutable_version_and_signing_lifecycle(self):
         deal = self.create_deal(stage=DealStage.WON)
         offer = DealOffer.objects.create(
@@ -193,13 +198,70 @@ class P1WorkflowApiTests(TestCase):
             format="json",
         )
         self.assertEqual(sent.status_code, 200, sent.data)
-        signed = self.client.patch(
+        unverified = self.client.patch(
             f"/api/services/contracts/{contract.id}/signing",
             {"version": sent.data["version"], "state": "SIGNED", "signedUrl": "https://signing.example.test/final/P1-CONTRACT-1"},
             format="json",
         )
+        self.assertEqual(unverified.status_code, 409, unverified.data)
+        evidence = {
+            "documentSha256": hashlib.sha256(b"external signed document").hexdigest(),
+            "providerReference": "sandbox-verification-1",
+            "signedUrl": "https://signing.example.test/final/P1-CONTRACT-1",
+            "signer": {"identifier": self.owner.id, "name": self.owner.name},
+            "certificate": {"serialNumber": "SANDBOX-1", "trusted": True, "validAtSigning": True},
+            "signatureValid": True,
+            "timestampValid": True,
+        }
+        canonical = json.dumps(evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        evidence["providerSignature"] = hmac.new(b"sandbox-signature-secret", canonical, hashlib.sha256).hexdigest()
+        signed = self.client.post(f"/api/services/contracts/{contract.id}/signing/verification", evidence, format="json")
         self.assertEqual(signed.status_code, 200, signed.data)
         self.assertEqual(signed.data["state"], "SIGNED")
+        self.assertEqual(signed.data["verification"]["status"], "VERIFIED")
+        self.assertEqual(signed.data["verification"]["reference"], "sandbox-verification-1")
+
+    @override_settings(CONTRACT_SIGNATURE_WEBHOOK_SECRET="sandbox-signature-secret")
+    def test_signature_upload_waits_for_matching_valid_provider_evidence(self):
+        deal = self.create_deal(stage=DealStage.WON)
+        offer = DealOffer.objects.create(deal=deal, revision=1, kind=DealOffer.Kind.OFFER, status=DealOffer.Status.ACCEPTED, amount=Decimal("100.00"), terms="Terms", created_by=self.admin, organization=self.organization)
+        contract = Contract.objects.create(id="P1-SIGNATURE-CHECK", source_deal=deal, source_offer=offer, document=b"%PDF contract", organization=self.organization)
+        initial = self.client.get(f"/api/services/contracts/{contract.id}/signing")
+        sent = self.client.patch(f"/api/services/contracts/{contract.id}/signing", {"version": initial.data["version"], "state": "SENT_FOR_SIGNATURE"}, format="json")
+        content = b"%PDF-1.7 signed sandbox document"
+        uploaded = self.client.post(
+            f"/api/services/contracts/{contract.id}/signing/document",
+            {"file": SimpleUploadedFile("signed.pdf", content, content_type="application/pdf")},
+            format="multipart",
+        )
+        self.assertEqual(uploaded.status_code, 200, uploaded.data)
+        self.assertEqual(uploaded.data["state"], "SENT_FOR_SIGNATURE")
+        self.assertEqual(uploaded.data["verification"]["status"], "PENDING")
+
+        evidence = {
+            "documentSha256": hashlib.sha256(b"tampered").hexdigest(),
+            "providerReference": "sandbox-invalid",
+            "signer": {"identifier": self.owner.id},
+            "certificate": {"serialNumber": "SANDBOX-2", "trusted": True, "validAtSigning": True},
+            "signatureValid": True,
+            "timestampValid": True,
+        }
+        canonical = json.dumps(evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        evidence["providerSignature"] = hmac.new(b"sandbox-signature-secret", canonical, hashlib.sha256).hexdigest()
+        rejected = self.client.post(f"/api/services/contracts/{contract.id}/signing/verification", evidence, format="json")
+        self.assertEqual(rejected.status_code, 422, rejected.data)
+        self.assertEqual(rejected.data["verification"]["status"], "FAILED")
+        self.assertIn("hash", rejected.data["verification"]["failureReason"].lower())
+
+        evidence["documentSha256"] = hashlib.sha256(content).hexdigest()
+        evidence["providerReference"] = "sandbox-valid"
+        evidence.pop("providerSignature")
+        canonical = json.dumps(evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        evidence["providerSignature"] = hmac.new(b"sandbox-signature-secret", canonical, hashlib.sha256).hexdigest()
+        verified = self.client.post(f"/api/services/contracts/{contract.id}/signing/verification", evidence, format="json")
+        self.assertEqual(verified.status_code, 200, verified.data)
+        self.assertEqual(verified.data["state"], "SIGNED")
+        self.assertTrue(verified.data["verification"]["integrityValid"])
 
     def test_data_quality_scan_creates_assignable_manual_review_queue(self):
         deal = self.create_deal(stage=DealStage.EVALUATION)

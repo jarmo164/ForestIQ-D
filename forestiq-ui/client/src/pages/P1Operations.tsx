@@ -49,6 +49,16 @@ type Signing = {
   finalDocument: string | null;
   finalUrl: string | null;
   finalContentType: string | null;
+  verification: {
+    status: "NOT_SUBMITTED" | "PENDING" | "VERIFIED" | "FAILED";
+    documentSha256: string | null;
+    verifiedAt: number | null;
+    reference: string | null;
+    signer: { identifier?: string; name?: string } | null;
+    certificate: { serialNumber?: string } | null;
+    failureReason: string | null;
+    integrityValid: boolean | null;
+  };
   version: number;
   updatedAt: number;
   events: { fromState: string | null; toState: string; reason: string | null; createdAt: number }[];
@@ -213,22 +223,12 @@ export default function P1Operations() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Allkirjastamist ei saanud alustada."); }
   };
 
-  const signByUrl = async () => {
-    if (!selectedContract || !signing) return;
-    const signedUrl = window.prompt("Turvaline HTTPS viide allkirjastatud dokumendile")?.trim();
-    if (!signedUrl) return;
-    try {
-      const result = await api.patch<Signing>(`/services/contracts/${encodeURIComponent(selectedContract.id)}/signing`, { version: signing.version, state: "SIGNED", signedUrl });
-      setSigning(result); setNotice("Leping märgiti allkirjastatuks.");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Lepingut ei saanud allkirjastatuks märkida."); }
-  };
-
   const uploadSignature = async (file: File) => {
     if (!selectedContract) return;
     const form = new FormData(); form.append("file", file);
     try {
       const result = await api.upload<Signing>(`/services/contracts/${encodeURIComponent(selectedContract.id)}/signing/document`, form);
-      setSigning(result); setNotice("Allkirjastatud lõppdokument salvestati.");
+      setSigning(result); setNotice("Lõppdokument salvestati ja ootab kontrollitud allkirjatõendit.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Allkirjastatud dokumenti ei saanud salvestada."); }
   };
 
@@ -269,6 +269,6 @@ export default function P1Operations() {
 
     {tab === "losses" && <section className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">KAOTUSE PÕHJUSED</p><h3>Hallatav klassifikaator</h3></div><Settings2 size={19} /></div><div className="mb-5 grid gap-2 md:grid-cols-[220px_1fr_auto]"><input value={newReasonCode} onChange={(event) => setNewReasonCode(event.target.value)} placeholder="Kood, nt ACCESS" /><input value={newReasonLabel} onChange={(event) => setNewReasonLabel(event.target.value)} placeholder="Kasutajale nähtav põhjus" /><button className="secondary-action" onClick={() => void addLossReason()}>Lisa põhjus</button></div><div className="space-y-2">{lossReasons.map((reason) => <div className="flex items-center justify-between rounded-xl border border-border p-3" key={reason.id}><div><strong>{reason.code} · {reason.label}</strong><small className="block">{reason.description || "kirjeldus puudub"}</small></div><button className="secondary-action" onClick={() => void toggleLossReason(reason)}>{reason.active ? "Deaktiveeri" : "Aktiveeri"}</button></div>)}</div></section>}
 
-    {tab === "contracts" && <section className="grid gap-5 xl:grid-cols-[1fr_1.2fr]"><article className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">LEPINGUD</p><h3>Vali kontrollitav leping</h3></div><BadgeEuro size={19} /></div><div className="space-y-2">{contracts.map((contract) => <button className="flex w-full items-center justify-between rounded-xl border border-border p-3 text-left" key={contract.id} onClick={() => void openContract(contract)}><span><strong>{contract.contractNo || contract.id}</strong><small className="block">{contract.sellers || "müüja"} · {contract.status}</small></span><span>→</span></button>)}</div></article><article className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">ALLKIRJASTAMINE JA VERSIOONID</p><h3>{selectedContract?.contractNo || selectedContract?.id || "Vali leping"}</h3></div><FileSignature size={19} /></div>{signing ? <><div className="mb-4 rounded-xl bg-muted p-3"><strong>{signing.state.replaceAll("_", " ")}</strong><p className="text-sm">Vastutaja {signing.responsible?.name || "määramata"} · tähtaeg {dateTime(signing.dueAt)}</p>{signing.finalUrl && <p className="text-sm">{signing.finalUrl}</p>}</div><div className="flex flex-wrap gap-2">{signing.state === "PREPARING" && <button className="secondary-action" onClick={() => void sendForSignature()}>Saada allkirjastamisele</button>}{signing.state === "SENT_FOR_SIGNATURE" && <><button className="secondary-action" onClick={() => void signByUrl()}>Lisa HTTPS lõppviide</button><label className="secondary-action cursor-pointer">Lisa PDF/ASiC-E<input className="hidden" type="file" accept=".pdf,.asice" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadSignature(file); }} /></label></>}<button className="secondary-action" disabled={!selectedContract?.version || !versions.length} onClick={() => void createReplacementVersion()}>Loo kontrollitud asendusversioon</button></div><div className="mt-5 space-y-2">{versions.map((version) => <div className="rounded-lg border border-border p-2 text-sm" key={version.id}><strong>Versioon {version.version}</strong> · {version.replacement ? "asendus" : "algne"}<small className="block">SHA-256 {version.pdfSha256.slice(0, 16)}… · {dateTime(version.createdAt)}</small>{version.changeReason && <p>{version.changeReason}</p>}</div>)}{!versions.length && <div className="empty-state">Kontrollitud lepinguversioone ei ole.</div>}</div></> : <div className="empty-state">Vali vasakult leping.</div>}</article></section>}
+    {tab === "contracts" && <section className="grid gap-5 xl:grid-cols-[1fr_1.2fr]"><article className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">LEPINGUD</p><h3>Vali kontrollitav leping</h3></div><BadgeEuro size={19} /></div><div className="space-y-2">{contracts.map((contract) => <button className="flex w-full items-center justify-between rounded-xl border border-border p-3 text-left" key={contract.id} onClick={() => void openContract(contract)}><span><strong>{contract.contractNo || contract.id}</strong><small className="block">{contract.sellers || "müüja"} · {contract.status}</small></span><span>→</span></button>)}</div></article><article className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">ALLKIRJASTAMINE JA VERSIOONID</p><h3>{selectedContract?.contractNo || selectedContract?.id || "Vali leping"}</h3></div><FileSignature size={19} /></div>{signing ? <><div className="mb-4 rounded-xl bg-muted p-3"><strong>{signing.state.replaceAll("_", " ")}</strong><p className="text-sm">Vastutaja {signing.responsible?.name || "määramata"} · tähtaeg {dateTime(signing.dueAt)}</p><p className="text-sm">Allkirjakontroll: {signing.verification.status.replaceAll("_", " ")}{signing.verification.verifiedAt ? ` · ${dateTime(signing.verification.verifiedAt)}` : ""}</p>{signing.verification.signer?.name && <p className="text-sm">Allkirjastaja {signing.verification.signer.name}</p>}{signing.verification.documentSha256 && <small className="block">Dokumendi SHA-256 {signing.verification.documentSha256.slice(0, 16)}…{signing.verification.integrityValid === false ? " · FAILI SISU ON MUUTUNUD" : ""}</small>}{signing.verification.failureReason && <p className="text-sm text-destructive">{signing.verification.failureReason}</p>}{signing.finalUrl && <p className="text-sm">{signing.finalUrl}</p>}</div><div className="flex flex-wrap gap-2">{signing.state === "PREPARING" && <button className="secondary-action" onClick={() => void sendForSignature()}>Saada allkirjastamisele</button>}{signing.state === "SENT_FOR_SIGNATURE" && <label className="secondary-action cursor-pointer">Lisa PDF/ASiC-E<input className="hidden" type="file" accept=".pdf,.asice" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadSignature(file); }} /></label>}<button className="secondary-action" disabled={!selectedContract?.version || !versions.length} onClick={() => void createReplacementVersion()}>Loo kontrollitud asendusversioon</button></div><div className="mt-5 space-y-2">{versions.map((version) => <div className="rounded-lg border border-border p-2 text-sm" key={version.id}><strong>Versioon {version.version}</strong> · {version.replacement ? "asendus" : "algne"}<small className="block">SHA-256 {version.pdfSha256.slice(0, 16)}… · {dateTime(version.createdAt)}</small>{version.changeReason && <p>{version.changeReason}</p>}</div>)}{!versions.length && <div className="empty-state">Kontrollitud lepinguversioone ei ole.</div>}</div></> : <div className="empty-state">Vali vasakult leping.</div>}</article></section>}
   </AppShell>;
 }

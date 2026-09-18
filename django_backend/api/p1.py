@@ -10,6 +10,7 @@ import json
 import re
 from urllib.parse import urlparse
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, DecimalField, Max, Q, Sum, Value
 from django.db.models.functions import Coalesce
@@ -45,6 +46,7 @@ from operations.p1_models import (
     WorkflowAuditEvent,
 )
 from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
+from operations.services.signature_verification import SignatureVerificationError, file_sha256, stored_file_integrity, verify_provider_evidence
 from operations.realtime import publish_org_event
 
 from .concurrency import requested_version, version_conflict_response
@@ -1608,6 +1610,16 @@ def _signing_data(signing: ContractSigning):
         "finalDocument": signing.final_document.name if signing.final_document else None,
         "finalUrl": signing.final_url or None,
         "finalContentType": signing.final_content_type or None,
+        "verification": {
+            "status": signing.verification_status,
+            "documentSha256": signing.document_sha256 or None,
+            "verifiedAt": json_value(signing.verified_at),
+            "reference": signing.verification_reference or None,
+            "signer": signing.signer_metadata or None,
+            "certificate": signing.certificate_metadata or None,
+            "failureReason": signing.verification_failure_reason or None,
+            "integrityValid": stored_file_integrity(signing.final_document, signing.document_sha256),
+        },
         "version": signing.version,
         "updatedAt": json_value(signing.updated_at),
         "events": [
@@ -1647,13 +1659,8 @@ def contract_signing(request, contract_id: str):
             return _detail(str(exc))
     if "delayReason" in request.data:
         signing.delay_reason = str(request.data.get("delayReason", "")).strip()
-    signed_url = str(request.data.get("signedUrl", signing.final_url or "")).strip()
     if target == ContractSigning.State.SIGNED and target != previous:
-        parsed = urlparse(signed_url)
-        if not signing.final_document and (parsed.scheme != "https" or not parsed.netloc):
-            return _detail("SIGNED requires an uploaded PDF/ASiC-E file or a secure HTTPS signedUrl.")
-        signing.final_url = signed_url
-        signing.final_content_type = signing.final_content_type or "application/https-reference"
+        return _detail("SIGNED requires verified signature-provider evidence.", status.HTTP_409_CONFLICT)
     if signing.due_at and signing.due_at < timezone.now() and target not in (ContractSigning.State.SIGNED, ContractSigning.State.CANCELLED) and not signing.delay_reason:
         return _detail("delayReason is required when an active signing workflow is overdue.")
     signing.state = target
@@ -1680,14 +1687,68 @@ def contract_signature_upload(request, contract_id: str):
         return _detail("Only PDF or ASiC-E final documents are allowed.")
     if uploaded.size > 25 * 1024 * 1024:
         return _detail("Signature file exceeds the 25 MB limit.")
+    document_sha256 = file_sha256(uploaded)
     previous = signing.state
     signing.final_document = uploaded
     signing.final_url = ""
     signing.final_content_type = uploaded.content_type
+    signing.verification_status = ContractSigning.VerificationStatus.PENDING
+    signing.document_sha256 = document_sha256
+    signing.verified_at = None
+    signing.verification_reference = ""
+    signing.signer_metadata = {}
+    signing.certificate_metadata = {}
+    signing.verification_failure_reason = ""
+    signing.version += 1
+    signing.save()
+    ContractSigningEvent.objects.create(signing=signing, from_state=previous, to_state=signing.state, reason=str(request.data.get("reason", "")).strip(), actor=request.user, metadata={"fileName": uploaded.name, "contentType": uploaded.content_type, "size": uploaded.size, "documentSha256": document_sha256, "verificationStatus": signing.verification_status})
+    return Response(_signing_data(signing))
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def contract_signature_verification(request, contract_id: str):
+    contract = get_object_or_404(Contract.objects.select_related("source_deal__owner"), id=contract_id)
+    signing = _get_signing(contract)
+    if signing.state == ContractSigning.State.SIGNED and signing.verification_status == ContractSigning.VerificationStatus.VERIFIED:
+        return Response(_signing_data(signing))
+    if signing.state != ContractSigning.State.SENT_FOR_SIGNATURE:
+        return _detail("Signature evidence can only be accepted after SENT_FOR_SIGNATURE.", status.HTTP_409_CONFLICT)
+    payload = request.data if isinstance(request.data, dict) else {}
+    try:
+        evidence = verify_provider_evidence(
+            payload,
+            secret=settings.CONTRACT_SIGNATURE_WEBHOOK_SECRET,
+            expected_sha256=signing.document_sha256,
+            expected_signer_id=contract.source_deal.owner_id if contract.source_deal_id else "",
+        )
+        if not signing.final_document:
+            signed_url = str(payload.get("signedUrl") or "").strip()
+            parsed = urlparse(signed_url)
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise SignatureVerificationError("External signed documents require a secure HTTPS signedUrl.")
+            signing.final_url = signed_url
+            signing.final_content_type = "application/https-reference"
+    except SignatureVerificationError as exc:
+        signing.verification_status = ContractSigning.VerificationStatus.FAILED
+        signing.verification_failure_reason = str(exc)
+        signing.version += 1
+        signing.save(update_fields=("verification_status", "verification_failure_reason", "version", "updated_at"))
+        ContractSigningEvent.objects.create(signing=signing, from_state=signing.state, to_state=signing.state, reason=str(exc), actor=request.user, metadata={"eventType": "SIGNATURE_VERIFICATION_FAILED", "documentSha256": str(payload.get("documentSha256") or "")})
+        return Response(_signing_data(signing), status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    previous = signing.state
+    signing.document_sha256 = evidence["documentSha256"]
+    signing.verification_status = ContractSigning.VerificationStatus.VERIFIED
+    signing.verified_at = timezone.now()
+    signing.verification_reference = evidence["providerReference"]
+    signing.signer_metadata = evidence["signer"]
+    signing.certificate_metadata = evidence["certificate"]
+    signing.verification_failure_reason = ""
     signing.state = ContractSigning.State.SIGNED
     signing.version += 1
     signing.save()
-    ContractSigningEvent.objects.create(signing=signing, from_state=previous, to_state=signing.state, reason=str(request.data.get("reason", "")).strip(), actor=request.user, metadata={"fileName": uploaded.name, "contentType": uploaded.content_type, "size": uploaded.size})
+    ContractSigningEvent.objects.create(signing=signing, from_state=previous, to_state=signing.state, actor=request.user, metadata={"eventType": "SIGNATURE_VERIFIED", "documentSha256": signing.document_sha256, "providerReference": signing.verification_reference, "verifiedAt": json_value(signing.verified_at)})
     return Response(_signing_data(signing))
 
 
