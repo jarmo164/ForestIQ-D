@@ -28,6 +28,7 @@ from forestry.models import (
     OwnerCadastre,
 )
 from forestry.services.wfs_client import WfsClient, WfsClientError, wfs_client
+from forestry.services.authorized_api_client import AuthorizedApiClient
 
 
 class ExternalSourceError(RuntimeError):
@@ -330,27 +331,22 @@ def sync_forestek_owner_relations(cadastre_id: str, *, organization_id: str) -> 
     if not settings.FORESTEK_API_URL or not settings.FORESTEK_API_TOKEN:
         return 0
     cadastre = Cadastre.objects.get(id=cadastre_id)
-    response = requests.get(
-        f"{settings.FORESTEK_API_URL}/owners/{cadastre.id}",
-        headers=_headers(token=settings.FORESTEK_API_TOKEN),
-        timeout=settings.FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
-    payload = response.json()
     count = 0
-    for row in _walk_owner_rows(payload):
-        owner_id = str(row.get("nationalId") or row.get("personalCode") or row.get("ownerId") or "").strip()
-        if not owner_id:
-            continue
-        owner, _ = Owner.objects.update_or_create(
-            id=owner_id,
-            defaults={
-                "name": str(row.get("name") or owner_id),
-                "type": "PERSON" if owner_id.isdigit() and len(owner_id) == 11 else "COMPANY",
-            },
-        )
-        OwnerCadastre.objects.get_or_create(owner=owner, cadastre=cadastre)
-        count += 1
+    client = AuthorizedApiClient(base_url=settings.FORESTEK_API_URL, token=settings.FORESTEK_API_TOKEN, request_get=requests.get)
+    for payload in client.get_pages(f"/owners/{cadastre.id}"):
+        for row in _walk_owner_rows(payload):
+            owner_id = str(row.get("nationalId") or row.get("personalCode") or row.get("ownerId") or "").strip()
+            if not owner_id:
+                continue
+            owner, _ = Owner.objects.update_or_create(
+                id=owner_id,
+                defaults={
+                    "name": str(row.get("name") or owner_id),
+                    "type": "PERSON" if owner_id.isdigit() and len(owner_id) == 11 else "COMPANY",
+                },
+            )
+            OwnerCadastre.objects.get_or_create(owner=owner, cadastre=cadastre)
+            count += 1
     return count
 
 
@@ -362,28 +358,22 @@ def sync_parimus_inheritance(cadastre_id: str, *, organization_id: str) -> int:
     owners = Owner.objects.filter(cadastres=cadastre).filter(id__regex=r"^\d{11}$")
     saved = 0
     for owner in owners:
-        response = requests.get(
-            f"{settings.PARIMUS_API_URL}/api/v1/notices/",
-            params={"personal_code": owner.id},
-            headers=_headers(token=settings.PARIMUS_API_TOKEN),
-            timeout=settings.FORESTIQ_SYNC_HTTP_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        for notice in payload.get("results", []) if isinstance(payload, dict) else []:
-            if not isinstance(notice, dict) or not notice.get("notice_number"):
-                continue
-            InheritanceSignal.objects.update_or_create(
-                source_notice_number=str(notice["notice_number"]),
-                cadastre=cadastre,
-                defaults={
-                    "owner": owner,
-                    "announcement_date": _date(notice.get("announcement_date")),
-                    "certification_deadline": _date(notice.get("certification_deadline")),
-                    "deceased_name": str(notice.get("deceased_name") or ""),
-                    "source_url": str(notice.get("source_url") or ""),
-                    "payload": notice,
-                },
-            )
-            saved += 1
+        client = AuthorizedApiClient(base_url=settings.PARIMUS_API_URL, token=settings.PARIMUS_API_TOKEN, request_get=requests.get)
+        for payload in client.get_pages("/api/v1/notices/", params={"personal_code": owner.id}, records_key="results"):
+            for notice in payload["results"]:
+                if not notice.get("notice_number"):
+                    continue
+                InheritanceSignal.objects.update_or_create(
+                    source_notice_number=str(notice["notice_number"]),
+                    cadastre=cadastre,
+                    defaults={
+                        "owner": owner,
+                        "announcement_date": _date(notice.get("announcement_date")),
+                        "certification_deadline": _date(notice.get("certification_deadline")),
+                        "deceased_name": str(notice.get("deceased_name") or ""),
+                        "source_url": str(notice.get("source_url") or ""),
+                        "payload": notice,
+                    },
+                )
+                saved += 1
     return saved

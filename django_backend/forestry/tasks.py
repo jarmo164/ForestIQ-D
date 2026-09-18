@@ -341,6 +341,20 @@ def run_parimus_official_notice_import(self, organization_id: str) -> dict[str, 
     try:
         with organization_scope(organization_id):
             now = timezone.now()
+            if not settings.PARIMUS_API_URL or not settings.PARIMUS_API_TOKEN:
+                run = DataSyncRun.objects.create(
+                    source="celery:parimus-official-notices",
+                    status=DataSyncRun.Status.RUNNING,
+                    started_at=now,
+                    task_id=self.request.id or "",
+                    correlation_id=current_correlation_id(),
+                )
+                return _complete(
+                    run,
+                    {"status": "not_configured"},
+                    status=DataSyncRun.Status.SKIPPED,
+                    error_message="Pärimus adapter is not configured.",
+                )
             run = DataSyncRun.objects.create(
                 source="celery:parimus-official-notices",
                 status=DataSyncRun.Status.RUNNING,
@@ -371,24 +385,40 @@ def run_parimus_official_notice_import(self, organization_id: str) -> dict[str, 
 
 
 @shared_task
-def enqueue_all_organizations_parimus_official_notice_import() -> dict[str, int]:
+def enqueue_all_organizations_parimus_official_notice_import() -> dict[str, int | str]:
     """Beat entry point for auditable Pärimus official-notice refreshes."""
+    if not settings.PARIMUS_API_URL or not settings.PARIMUS_API_TOKEN:
+        return {"organizations": 0, "status": "not_configured"}
     queued = 0
     for organization_id in Organization.objects.filter(is_active=True).values_list("id", flat=True):
         result = run_parimus_official_notice_import.delay(str(organization_id))
         queued += 1 if result else 0
-    return {"organizations": queued}
+    return {"organizations": queued, "status": "queued"}
 
 
 @shared_task(bind=True, autoretry_for=(ConnectionError, WeaselClientError), retry_backoff=True, max_retries=settings.FORESTIQ_SYNC_RUN_MAX_RETRIES)
 def run_weasel_ownership_delta(self, organization_id: str, cursor: str | None = None) -> dict[str, object]:
-    """Import one bounded Weasel ownership-change page for one organization."""
+    """Drain a bounded Weasel backlog and persist only confirmed cursors."""
 
     lock = SingleFlightLock.for_sync("weasel-ownership-delta", organization_id)
     if not lock.acquire():
         return {"status": "already_running"}
     try:
         with organization_scope(organization_id):
+            if not settings.WEASEL_API_URL or not settings.WEASEL_API_TOKEN:
+                run = DataSyncRun.objects.create(
+                    source="weasel:ownership-delta",
+                    status=DataSyncRun.Status.RUNNING,
+                    started_at=timezone.now(),
+                    task_id=self.request.id or "",
+                    correlation_id=current_correlation_id(),
+                )
+                return _complete(
+                    run,
+                    {"status": "not_configured"},
+                    status=DataSyncRun.Status.SKIPPED,
+                    error_message="Weasel adapter is not configured.",
+                )
             previous = DataSyncRun.objects.filter(
                 source="weasel:ownership-delta",
                 status=DataSyncRun.Status.SUCCESS,
@@ -404,16 +434,29 @@ def run_weasel_ownership_delta(self, organization_id: str, cursor: str | None = 
                 cursor={"cursor": resume_cursor} if resume_cursor else {},
             )
             try:
-                report = import_weasel_ownership_deltas(organization_id=organization_id, cursor=resume_cursor)
+                aggregate: dict[str, object] = {"events": 0, "duplicates": 0, "ignored": 0, "nextCursor": resume_cursor}
+                max_pages = max(1, (settings.FORESTIQ_WEASEL_MAX_EVENTS + settings.FORESTIQ_WEASEL_PAGE_SIZE - 1) // settings.FORESTIQ_WEASEL_PAGE_SIZE)
+                pages = 0
+                current_cursor = resume_cursor
+                while pages < max_pages:
+                    page_report = import_weasel_ownership_deltas(organization_id=organization_id, cursor=current_cursor)
+                    pages += 1
+                    for key in ("events", "duplicates", "ignored"):
+                        aggregate[key] = int(aggregate[key]) + int(page_report[key])
+                    next_cursor = page_report.get("nextCursor")
+                    aggregate["nextCursor"] = next_cursor
+                    if not next_cursor or next_cursor == current_cursor:
+                        break
+                    current_cursor = str(next_cursor)
             except Exception as exc:
                 _fail(run, exc, retry_count=self.request.retries)
                 raise
-            next_cursor = report.get("nextCursor")
+            next_cursor = aggregate.get("nextCursor")
             return _succeed(
                 run,
-                report,
-                pages_processed=1,
-                rows_processed=int(report["events"]),
+                aggregate,
+                pages_processed=pages,
+                rows_processed=int(aggregate["events"]),
                 lag_seconds=0,
                 cursor={"cursor": next_cursor} if next_cursor else {},
                 retry_count=self.request.retries,
