@@ -22,11 +22,20 @@ type TokenPair = { actualToken: { token: string }; refreshToken: { token: string
 
 export class ApiError extends Error {
   status: number;
+  correlationId: string | null;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, correlationId: string | null = null) {
     super(message);
     this.status = status;
+    this.correlationId = correlationId;
   }
+}
+
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    return error.correlationId ? `${error.message} (viide ${error.correlationId})` : error.message;
+  }
+  return error instanceof Error ? error.message : fallback;
 }
 
 export function apiUrl(path: string): string {
@@ -108,7 +117,8 @@ async function parse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const data = await response.json().catch(() => null);
     if (response.status === 401) window.dispatchEvent(new Event("forestiq:unauthorized"));
-    throw new ApiError(data?.detail || `Päring ebaõnnestus (${response.status})`, response.status);
+    const correlationId = response.headers.get("X-Correlation-ID") || data?.correlationId || null;
+    throw new ApiError(data?.detail || `Päring ebaõnnestus (${response.status})`, response.status, correlationId);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -160,7 +170,7 @@ export const api = {
     const response = await fetch(`${BASE_URL}${path}`, { headers: headers() });
     if (!response.ok) {
       const data = await response.json().catch(() => null);
-      throw new ApiError(data?.detail || `Allalaadimine ebaõnnestus (${response.status})`, response.status);
+      throw new ApiError(data?.detail || `Allalaadimine ebaõnnestus (${response.status})`, response.status, response.headers.get("X-Correlation-ID"));
     }
     const url = URL.createObjectURL(await response.blob());
     const anchor = document.createElement("a");

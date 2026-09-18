@@ -3,17 +3,22 @@ import { Download, Eye, FilePlus2, FileStack, Plus, Search, Settings2 } from "lu
 import { Link, useLocation } from "wouter";
 
 import { AppShell } from "@/components/AppShell";
-import { api } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { api, apiErrorMessage } from "@/lib/api";
 import type { CompanyProfile, ContractDraft, ContractHistoryRecord, ContractTemplate } from "@/lib/types";
 
 type Tab = "history" | "create" | "settings";
 type TemplateForm = { templateKey: string; name: string; description: string; html: string; companyProfileId: string };
 type ProfileForm = { legalName: string; registryCode: string; address: string; email: string; phone: string; iban: string; signatoryName: string; website: string };
+type DestructiveAction =
+  | { kind: "archive-contract"; contract: ContractHistoryRecord }
+  | { kind: "delete-profile"; profile: CompanyProfile }
+  | null;
 
 const blankTemplate: TemplateForm = { templateKey: "", name: "", description: "", html: "<h1>Ostu-müügileping</h1>\n<p>{{company.legalName}}</p>\n<p>{{deal.sellerName}}</p>", companyProfileId: "" };
 const blankProfile: ProfileForm = { legalName: "", registryCode: "", address: "", email: "", phone: "", iban: "", signatoryName: "", website: "" };
 
-function apiError(error: unknown, fallback: string) { return error instanceof Error ? error.message : fallback; }
+function apiError(error: unknown, fallback: string) { return apiErrorMessage(error, fallback); }
 function formatDate(value?: number | string | null) { if (!value) return "—"; const date = new Date(typeof value === "number" && value < 1_000_000_000_000 ? value * 1000 : value); return Number.isNaN(date.valueOf()) ? "—" : new Intl.DateTimeFormat("et-EE", { dateStyle: "medium", timeStyle: "short" }).format(date); }
 function inputDate(value?: string | number | null) { if (!value) return ""; const date = new Date(typeof value === "number" && value < 1_000_000_000_000 ? value * 1000 : value); return Number.isNaN(date.valueOf()) ? "" : date.toISOString().slice(0, 10); }
 
@@ -42,6 +47,8 @@ export default function Contracts() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [destructiveAction, setDestructiveAction] = useState<DestructiveAction>(null);
+  const [destructiveBusy, setDestructiveBusy] = useState(false);
   const detailDialogRef = useRef<HTMLDialogElement>(null);
   const detailCloseRef = useRef<HTMLButtonElement>(null);
   const detailTitleId = useId();
@@ -127,10 +134,9 @@ export default function Contracts() {
     catch (reason) { setError(apiError(reason, "Lepingu detaili ei saanud laadida.")); }
   };
 
-  const archive = async (contract: ContractHistoryRecord) => {
+  const archive = (contract: ContractHistoryRecord) => {
     if (contract.version == null) { setError("Orvuks jäänud lepingut ei saa kasutajaliidesest arhiveerida."); return; }
-    try { await api.patch(`/services/contracts/${encodeURIComponent(contract.id)}`, { status: "ARCHIVED", version: contract.version }); setNotice(`Leping ${contract.contractNo} arhiveeriti.`); setSelected(null); await refresh(); }
-    catch (reason) { setError(apiError(reason, "Lepingut ei saanud arhiveerida.")); }
+    setDestructiveAction({ kind: "archive-contract", contract });
   };
 
   const createProfile = async (event: FormEvent) => {
@@ -164,14 +170,35 @@ export default function Contracts() {
     try { await api.delete<ContractTemplate>(`/services/contract-templates/${template.id}`, { version: template.version }); setNotice(`Mall ${template.name} arhiveeriti.`); await refresh(); }
     catch (reason) { setError(apiError(reason, "Lepingumalli ei saanud arhiveerida.")); }
   };
-  const deleteProfile = async (profile: CompanyProfile) => {
-    try { await api.delete(`/services/company-profiles/${profile.id}`); setNotice(`Ettevõtteprofiil ${profile.legalName} kustutati.`); await refresh(); }
-    catch (reason) { setError(apiError(reason, "Ettevõtteprofiili ei saanud kustutada.")); }
+  const deleteProfile = (profile: CompanyProfile) => {
+    setDestructiveAction({ kind: "delete-profile", profile });
+  };
+
+  const confirmDestructiveAction = async () => {
+    if (!destructiveAction || destructiveBusy) return;
+    setDestructiveBusy(true);
+    setError("");
+    try {
+      if (destructiveAction.kind === "archive-contract") {
+        const contract = destructiveAction.contract;
+        await api.patch(`/services/contracts/${encodeURIComponent(contract.id)}`, { status: "ARCHIVED", version: contract.version });
+        setNotice(`Leping ${contract.contractNo || contract.id} arhiveeriti. Kirje säilib lepingute ajaloos; taastamine toimub auditeeritud lepingu olekumuudatusena.`);
+        setSelected(null);
+      } else {
+        const profile = destructiveAction.profile;
+        await api.delete(`/services/company-profiles/${profile.id}`);
+        setNotice(`Ettevõtteprofiil ${profile.legalName} kustutati. Vajadusel tuleb profiil taastada uue kirjena.`);
+      }
+      setDestructiveAction(null);
+      await refresh();
+    } catch (reason) {
+      setError(apiError(reason, destructiveAction.kind === "archive-contract" ? "Lepingut ei saanud arhiveerida." : "Ettevõtteprofiili ei saanud kustutada."));
+    } finally { setDestructiveBusy(false); }
   };
 
   return <AppShell title="Lepingute tööala" eyebrow="KOMMERTS / LEPINGUD">
     <section className="workspace-intro contracts-intro"><FileStack size={24} /><div><h2>Lepingud, eelvaated ja mallid ühel tööpinnal</h2><p>Otsi ning laadi alla lepinguid, koosta võidetud tehingust mallipõhine PDF ja halda ettevõtteprofiile.</p></div><div className="workspace-count">{contracts.length}<small>lepingut</small></div></section>
-    {notice && <div className="success-notice">{notice}</div>}{error && <div className="connection-warning">{error}</div>}
+    {notice && <div className="success-notice" role="status" aria-live="polite">{notice}</div>}{error && <div className="connection-warning" role="alert" aria-live="assertive">{error}</div>}
     <div className="contracts-tabs" role="tablist" aria-label="Lepingute tööala vaated">
       <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")} role="tab" aria-selected={tab === "history"}>Lepingute register</button>
       <button className={tab === "create" ? "active" : ""} onClick={() => setTab("create")} role="tab" aria-selected={tab === "create"}>Koosta leping</button>
@@ -187,10 +214,25 @@ export default function Contracts() {
       {previewHtml && <article className="panel p-5 contracts-preview"><p className="eyebrow">MALLI EELVAADE</p><iframe title="Lepingumalli eelvaade" sandbox="" srcDoc={previewHtml} /></article>}
     </section>}
 
-    {tab === "settings" && <section className="contracts-grid"><article className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">ETTEVÕTTEPROFIILID</p><h3>{editingProfile ? "Muuda ettevõtet" : "Lisa ettevõte"}</h3></div><Plus size={19} /></div><form className="contract-form" onSubmit={createProfile}><input required value={profileForm.legalName} onChange={(event) => setProfileForm({ ...profileForm, legalName: event.target.value })} placeholder="Juriidiline nimi" /><input value={profileForm.registryCode} onChange={(event) => setProfileForm({ ...profileForm, registryCode: event.target.value })} placeholder="Registrikood" /><input value={profileForm.address} onChange={(event) => setProfileForm({ ...profileForm, address: event.target.value })} placeholder="Aadress" /><input type="email" value={profileForm.email} onChange={(event) => setProfileForm({ ...profileForm, email: event.target.value })} placeholder="E-post" /><input value={profileForm.phone} onChange={(event) => setProfileForm({ ...profileForm, phone: event.target.value })} placeholder="Telefon" /><input value={profileForm.iban} onChange={(event) => setProfileForm({ ...profileForm, iban: event.target.value })} placeholder="IBAN" /><input value={profileForm.signatoryName} onChange={(event) => setProfileForm({ ...profileForm, signatoryName: event.target.value })} placeholder="Allkirjastaja nimi" /><input value={profileForm.website} onChange={(event) => setProfileForm({ ...profileForm, website: event.target.value })} placeholder="Veebileht" /><div className="contract-form-actions"><button className="primary-action" type="submit">{editingProfile ? "Uuenda ettevõte" : "Salvesta ettevõte"}</button>{editingProfile && <button className="secondary-action" type="button" onClick={() => { setEditingProfile(null); setProfileForm(blankProfile); }}>Tühista</button>}</div></form><div className="contract-list">{profiles.map((profile) => <div key={profile.id}><div><strong>{profile.legalName}</strong><span>{profile.registryCode || "Registrikood puudub"}</span></div><div className="contract-list-actions"><button type="button" onClick={() => beginProfileEdit(profile)}>Muuda</button><button type="button" onClick={() => void deleteProfile(profile)}>Kustuta</button></div></div>)}{!profiles.length && <p>Ettevõtteprofiile pole veel lisatud.</p>}</div></article>
+    {tab === "settings" && <section className="contracts-grid"><article className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">ETTEVÕTTEPROFIILID</p><h3>{editingProfile ? "Muuda ettevõtet" : "Lisa ettevõte"}</h3></div><Plus size={19} /></div><form className="contract-form" onSubmit={createProfile}><input required value={profileForm.legalName} onChange={(event) => setProfileForm({ ...profileForm, legalName: event.target.value })} placeholder="Juriidiline nimi" /><input value={profileForm.registryCode} onChange={(event) => setProfileForm({ ...profileForm, registryCode: event.target.value })} placeholder="Registrikood" /><input value={profileForm.address} onChange={(event) => setProfileForm({ ...profileForm, address: event.target.value })} placeholder="Aadress" /><input type="email" value={profileForm.email} onChange={(event) => setProfileForm({ ...profileForm, email: event.target.value })} placeholder="E-post" /><input value={profileForm.phone} onChange={(event) => setProfileForm({ ...profileForm, phone: event.target.value })} placeholder="Telefon" /><input value={profileForm.iban} onChange={(event) => setProfileForm({ ...profileForm, iban: event.target.value })} placeholder="IBAN" /><input value={profileForm.signatoryName} onChange={(event) => setProfileForm({ ...profileForm, signatoryName: event.target.value })} placeholder="Allkirjastaja nimi" /><input value={profileForm.website} onChange={(event) => setProfileForm({ ...profileForm, website: event.target.value })} placeholder="Veebileht" /><div className="contract-form-actions"><button className="primary-action" type="submit">{editingProfile ? "Uuenda ettevõte" : "Salvesta ettevõte"}</button>{editingProfile && <button className="secondary-action" type="button" onClick={() => { setEditingProfile(null); setProfileForm(blankProfile); }}>Tühista</button>}</div></form><div className="contract-list">{profiles.map((profile) => <div key={profile.id}><div><strong>{profile.legalName}</strong><span>{profile.registryCode || "Registrikood puudub"}</span></div><div className="contract-list-actions"><button type="button" onClick={() => beginProfileEdit(profile)}>Muuda</button><button type="button" onClick={() => deleteProfile(profile)}>Kustuta</button></div></div>)}{!profiles.length && <p>Ettevõtteprofiile pole veel lisatud.</p>}</div></article>
       <article className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">LEPINGUMALLID</p><h3>{editingTemplate ? "Reviseeri malli" : "Lisa aktiivne mall"}</h3></div><Plus size={19} /></div><form className="contract-form" onSubmit={createTemplate}><input required value={templateForm.templateKey} onChange={(event) => setTemplateForm({ ...templateForm, templateKey: event.target.value })} placeholder="Malli võti, nt ostu-muuk" /><input required value={templateForm.name} onChange={(event) => setTemplateForm({ ...templateForm, name: event.target.value })} placeholder="Malli nimi" /><select value={templateForm.companyProfileId} onChange={(event) => setTemplateForm({ ...templateForm, companyProfileId: event.target.value })}><option value="">Ettevõtteprofiil puudub</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.legalName}</option>)}</select><textarea required value={templateForm.description} onChange={(event) => setTemplateForm({ ...templateForm, description: event.target.value })} placeholder="Kirjeldus" /><textarea required value={templateForm.html} onChange={(event) => setTemplateForm({ ...templateForm, html: event.target.value })} placeholder="Malli HTML" rows={9} /><div className="contract-form-actions"><button className="primary-action" type="submit">{editingTemplate ? "Loo uus malliversioon" : "Salvesta mall"}</button>{editingTemplate && <button className="secondary-action" type="button" onClick={() => { setEditingTemplate(null); setTemplateForm(blankTemplate); }}>Tühista</button>}</div></form><div className="contract-list">{templates.map((template) => <div key={template.id}><div><strong>{template.name}</strong><span>{template.templateKey} · v{template.version} · {template.isActive ? "aktiivne" : "arhiveeritud"}</span></div>{template.isActive && <div className="contract-list-actions"><button type="button" onClick={() => beginTemplateEdit(template)}>Muuda</button><button type="button" onClick={() => void archiveTemplate(template)}>Arhiveeri</button></div>}</div>)}{!templates.length && <p>Aktiivseid malle pole veel lisatud.</p>}</div></article>
     </section>}
 
-    {selected && <dialog ref={detailDialogRef} className="contract-modal-backdrop bg-transparent" aria-labelledby={detailTitleId} onCancel={(event) => { event.preventDefault(); setSelected(null); }} onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><article className="panel contract-modal" onMouseDown={(event) => event.stopPropagation()}><div className="panel-heading"><div><p className="eyebrow">LEPINGU DETAIL</p><h3 id={detailTitleId}>{selected.contractNo || selected.id}</h3></div><button ref={detailCloseRef} className="secondary-action" onClick={() => setSelected(null)}>Sulge</button></div><dl><dt>Müüja</dt><dd>{selected.sellers || "—"}</dd><dt>Ostja</dt><dd>{selected.buyer || "—"}</dd><dt>Koostatud</dt><dd>{formatDate(selected.created)}</dd><dt>Säilitustähtaeg</dt><dd>{formatDate(selected.retentionUntil)}</dd><dt>Mall</dt><dd>{selected.templateVersion?.name || "Ajalooline mall puudub"}</dd></dl>{detail && <details><summary>Tehnilised lepinguandmed</summary><pre>{JSON.stringify(detail, null, 2)}</pre></details>}<div className="mt-5 flex flex-wrap gap-2"><button className="secondary-action" onClick={() => void api.download(`/services/contracts/${encodeURIComponent(selected.id)}/pdf`, `${selected.contractNo || selected.id}.pdf`).catch((reason) => setError(apiError(reason, "PDF-i ei saanud alla laadida.")))}><Download size={16} /> Laadi PDF</button>{selected.status === "ACTIVE" && <button className="secondary-action" onClick={() => void archive(selected)}>Arhiveeri</button>}{selected.ownerId && <Link className="secondary-action" href={`/owners/${selected.ownerId}`}>Ava omanik</Link>}</div></article></dialog>}
+    {selected && <dialog ref={detailDialogRef} className="contract-modal-backdrop bg-transparent" aria-labelledby={detailTitleId} onCancel={(event) => { event.preventDefault(); setSelected(null); }} onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><article className="panel contract-modal" onMouseDown={(event) => event.stopPropagation()}><div className="panel-heading"><div><p className="eyebrow">LEPINGU DETAIL</p><h3 id={detailTitleId}>{selected.contractNo || selected.id}</h3></div><button ref={detailCloseRef} className="secondary-action" onClick={() => setSelected(null)}>Sulge</button></div><dl><dt>Müüja</dt><dd>{selected.sellers || "—"}</dd><dt>Ostja</dt><dd>{selected.buyer || "—"}</dd><dt>Koostatud</dt><dd>{formatDate(selected.created)}</dd><dt>Säilitustähtaeg</dt><dd>{formatDate(selected.retentionUntil)}</dd><dt>Mall</dt><dd>{selected.templateVersion?.name || "Ajalooline mall puudub"}</dd></dl>{detail && <details><summary>Tehnilised lepinguandmed</summary><pre>{JSON.stringify(detail, null, 2)}</pre></details>}<div className="mt-5 flex flex-wrap gap-2"><button className="secondary-action" onClick={() => void api.download(`/services/contracts/${encodeURIComponent(selected.id)}/pdf`, `${selected.contractNo || selected.id}.pdf`).catch((reason) => setError(apiError(reason, "PDF-i ei saanud alla laadida.")))}><Download size={16} /> Laadi PDF</button>{selected.status === "ACTIVE" && <button className="secondary-action" onClick={() => archive(selected)}>Arhiveeri</button>}{selected.ownerId && <Link className="secondary-action" href={`/owners/${selected.ownerId}`}>Ava omanik</Link>}</div></article></dialog>}
+
+    <ConfirmDialog
+      open={Boolean(destructiveAction)}
+      title={destructiveAction?.kind === "archive-contract" ? "Arhiveeri leping?" : "Kustuta ettevõtteprofiil?"}
+      description={destructiveAction?.kind === "archive-contract"
+        ? `Leping ${destructiveAction.contract.contractNo || destructiveAction.contract.id} eemaldub aktiivsest tööst, kuid säilib auditeeritavas ajaloos. Taastamine nõuab auditeeritud olekumuudatust.`
+        : destructiveAction?.kind === "delete-profile"
+          ? `Ettevõtteprofiil ${destructiveAction.profile.legalName} kustutatakse. Kui seda on hiljem vaja, tuleb profiil uuesti luua.`
+          : ""}
+      confirmLabel={destructiveAction?.kind === "archive-contract" ? "Arhiveeri" : "Kustuta"}
+      destructive
+      busy={destructiveBusy}
+      onCancel={() => { if (!destructiveBusy) setDestructiveAction(null); }}
+      onConfirm={() => void confirmDestructiveAction()}
+    />
   </AppShell>;
 }
