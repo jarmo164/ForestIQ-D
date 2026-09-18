@@ -34,6 +34,24 @@ class ExternalSourceError(RuntimeError):
     """A source returned an invalid or unavailable response."""
 
 
+def _assert_safe_replacement(*, source: str, previous_count: int, observed_count: int) -> None:
+    """Fail closed when a provider response would unexpectedly erase known data.
+
+    A syntactically valid WFS response is not necessarily a valid snapshot.  In
+    particular, a bad layer name or provider-side filter can return HTTP 200
+    with no features.  Destructive retained-ID cleanup is therefore allowed
+    only after a non-empty replacement was observed when local data exists.
+    """
+
+    minimum_ratio = max(0.0, min(float(settings.FORESTIQ_WFS_MIN_RETAINED_RATIO), 1.0))
+    observed_ratio = observed_count / previous_count if previous_count else 1.0
+    if previous_count and (observed_count == 0 or observed_ratio < minimum_ratio):
+        raise ExternalSourceError(
+            f"{source} returned {observed_count} replacements for {previous_count} existing features "
+            f"(ratio {observed_ratio:.3f}, minimum {minimum_ratio:.3f}); retained data was preserved"
+        )
+
+
 def _require_organization_context(organization_id: str) -> UUID:
     """Refuse direct background writes that are not bound to their supplied tenant."""
 
@@ -203,6 +221,8 @@ def sync_metsaregister_wfs(cadastre_id: str, *, organization_id: str) -> int:
     source_layers = list(settings.FORESTIQ_METSAREGISTER_WFS_LAYERS)
     client = wfs_client()
     for layer in source_layers:
+        existing = ForestRegistryFeature.objects.filter(cadastre=cadastre, source_layer=layer)
+        previous_count = existing.count()
         features = wfs_features(
             settings.FORESTIQ_METSAREGISTER_WFS_URL,
             layer,
@@ -245,7 +265,12 @@ def sync_metsaregister_wfs(cadastre_id: str, *, organization_id: str) -> int:
                     },
                 )
             saved += 1
-        ForestRegistryFeature.objects.filter(cadastre=cadastre, source_layer=layer).exclude(source_id__in=retained_ids).delete()
+        _assert_safe_replacement(
+            source=f"Metsaregister layer {layer}",
+            previous_count=previous_count,
+            observed_count=len(retained_ids),
+        )
+        existing.exclude(source_id__in=retained_ids).delete()
     return saved
 
 
@@ -262,6 +287,8 @@ def sync_optional_soos_wfs(cadastre_id: str, *, organization_id: str) -> int:
         value=cadastre.id,
     )
     source_layer = f"soos:{layer}"
+    existing = ForestRegistryFeature.objects.filter(cadastre=cadastre, source_layer=source_layer)
+    previous_count = existing.count()
     retained_ids: list[str] = []
     for feature in features:
         properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
@@ -278,7 +305,12 @@ def sync_optional_soos_wfs(cadastre_id: str, *, organization_id: str) -> int:
                 "spatial_geometry": geometry_from_geojson(feature.get("geometry"), polygon_only=False),
             },
         )
-    ForestRegistryFeature.objects.filter(cadastre=cadastre, source_layer=source_layer).exclude(source_id__in=retained_ids).delete()
+    _assert_safe_replacement(
+        source=f"SOOS layer {layer}",
+        previous_count=previous_count,
+        observed_count=len(retained_ids),
+    )
+    existing.exclude(source_id__in=retained_ids).delete()
     return len(features)
 
 
