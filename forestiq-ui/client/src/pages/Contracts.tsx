@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Download, Eye, FilePlus2, FileStack, Plus, Search, Settings2 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
@@ -49,6 +49,9 @@ export default function Contracts() {
   const [loading, setLoading] = useState(true);
   const [destructiveAction, setDestructiveAction] = useState<DestructiveAction>(null);
   const [destructiveBusy, setDestructiveBusy] = useState(false);
+  const detailDialogRef = useRef<HTMLDialogElement>(null);
+  const detailCloseRef = useRef<HTMLButtonElement>(null);
+  const detailTitleId = useId();
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
@@ -71,6 +74,18 @@ export default function Contracts() {
   }, [fromDate, status, templateId, toDate]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    const dialog = detailDialogRef.current;
+    if (!dialog || !selected) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog.showModal();
+    requestAnimationFrame(() => detailCloseRef.current?.focus());
+    return () => {
+      if (dialog.open) dialog.close();
+      previous?.focus();
+    };
+  }, [selected]);
 
   const filteredContracts = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("et-EE");
@@ -203,7 +218,7 @@ export default function Contracts() {
       <article className="panel p-5"><div className="panel-heading"><div><p className="eyebrow">LEPINGUMALLID</p><h3>{editingTemplate ? "Reviseeri malli" : "Lisa aktiivne mall"}</h3></div><Plus size={19} /></div><form className="contract-form" onSubmit={createTemplate}><input required value={templateForm.templateKey} onChange={(event) => setTemplateForm({ ...templateForm, templateKey: event.target.value })} placeholder="Malli võti, nt ostu-muuk" /><input required value={templateForm.name} onChange={(event) => setTemplateForm({ ...templateForm, name: event.target.value })} placeholder="Malli nimi" /><select value={templateForm.companyProfileId} onChange={(event) => setTemplateForm({ ...templateForm, companyProfileId: event.target.value })}><option value="">Ettevõtteprofiil puudub</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.legalName}</option>)}</select><textarea required value={templateForm.description} onChange={(event) => setTemplateForm({ ...templateForm, description: event.target.value })} placeholder="Kirjeldus" /><textarea required value={templateForm.html} onChange={(event) => setTemplateForm({ ...templateForm, html: event.target.value })} placeholder="Malli HTML" rows={9} /><div className="contract-form-actions"><button className="primary-action" type="submit">{editingTemplate ? "Loo uus malliversioon" : "Salvesta mall"}</button>{editingTemplate && <button className="secondary-action" type="button" onClick={() => { setEditingTemplate(null); setTemplateForm(blankTemplate); }}>Tühista</button>}</div></form><div className="contract-list">{templates.map((template) => <div key={template.id}><div><strong>{template.name}</strong><span>{template.templateKey} · v{template.version} · {template.isActive ? "aktiivne" : "arhiveeritud"}</span></div>{template.isActive && <div className="contract-list-actions"><button type="button" onClick={() => beginTemplateEdit(template)}>Muuda</button><button type="button" onClick={() => void archiveTemplate(template)}>Arhiveeri</button></div>}</div>)}{!templates.length && <p>Aktiivseid malle pole veel lisatud.</p>}</div></article>
     </section>}
 
-    {selected && <div className="contract-modal-backdrop" role="presentation" onMouseDown={() => setSelected(null)}><article className="panel contract-modal" role="dialog" aria-modal="true" aria-labelledby="contract-detail-title" onMouseDown={(event) => event.stopPropagation()}><div className="panel-heading"><div><p className="eyebrow">LEPINGU DETAIL</p><h3 id="contract-detail-title">{selected.contractNo || selected.id}</h3></div><button className="secondary-action" onClick={() => setSelected(null)}>Sulge</button></div><dl><dt>Müüja</dt><dd>{selected.sellers || "—"}</dd><dt>Ostja</dt><dd>{selected.buyer || "—"}</dd><dt>Koostatud</dt><dd>{formatDate(selected.created)}</dd><dt>Säilitustähtaeg</dt><dd>{formatDate(selected.retentionUntil)}</dd><dt>Mall</dt><dd>{selected.templateVersion?.name || "Ajalooline mall puudub"}</dd></dl>{detail && <details><summary>Tehnilised lepinguandmed</summary><pre>{JSON.stringify(detail, null, 2)}</pre></details>}<div className="mt-5 flex flex-wrap gap-2"><button className="secondary-action" onClick={() => void api.download(`/services/contracts/${encodeURIComponent(selected.id)}/pdf`, `${selected.contractNo || selected.id}.pdf`).catch((reason) => setError(apiError(reason, "PDF-i ei saanud alla laadida.")))}><Download size={16} /> Laadi PDF</button>{selected.status === "ACTIVE" && <button className="secondary-action" onClick={() => archive(selected)}>Arhiveeri</button>}{selected.ownerId && <Link className="secondary-action" href={`/owners/${selected.ownerId}`}>Ava omanik</Link>}</div></article></div>}
+    {selected && <dialog ref={detailDialogRef} className="contract-modal-backdrop bg-transparent" aria-labelledby={detailTitleId} onCancel={(event) => { event.preventDefault(); setSelected(null); }} onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><article className="panel contract-modal" onMouseDown={(event) => event.stopPropagation()}><div className="panel-heading"><div><p className="eyebrow">LEPINGU DETAIL</p><h3 id={detailTitleId}>{selected.contractNo || selected.id}</h3></div><button ref={detailCloseRef} className="secondary-action" onClick={() => setSelected(null)}>Sulge</button></div><dl><dt>Müüja</dt><dd>{selected.sellers || "—"}</dd><dt>Ostja</dt><dd>{selected.buyer || "—"}</dd><dt>Koostatud</dt><dd>{formatDate(selected.created)}</dd><dt>Säilitustähtaeg</dt><dd>{formatDate(selected.retentionUntil)}</dd><dt>Mall</dt><dd>{selected.templateVersion?.name || "Ajalooline mall puudub"}</dd></dl>{detail && <details><summary>Tehnilised lepinguandmed</summary><pre>{JSON.stringify(detail, null, 2)}</pre></details>}<div className="mt-5 flex flex-wrap gap-2"><button className="secondary-action" onClick={() => void api.download(`/services/contracts/${encodeURIComponent(selected.id)}/pdf`, `${selected.contractNo || selected.id}.pdf`).catch((reason) => setError(apiError(reason, "PDF-i ei saanud alla laadida.")))}><Download size={16} /> Laadi PDF</button>{selected.status === "ACTIVE" && <button className="secondary-action" onClick={() => archive(selected)}>Arhiveeri</button>}{selected.ownerId && <Link className="secondary-action" href={`/owners/${selected.ownerId}`}>Ava omanik</Link>}</div></article></dialog>}
 
     <ConfirmDialog
       open={Boolean(destructiveAction)}
