@@ -109,3 +109,81 @@ class P3NotificationPreferenceTests(P3NotificationHistoryTests):
         self.assertEqual(outcome["sent"], 0)
         self.assertTrue(Reminder.objects.filter(pk=reminder.pk).exists())
         self.assertFalse(ApplicationMessage.objects.filter(recipient=self.admin, event_key__startswith="reminder:").exists())
+
+
+class P3ApplicationMessageTests(P3NotificationHistoryTests):
+    def test_application_message_read_archive_and_retention_guard(self):
+        from operations.models import ApplicationMessage
+
+        message = ApplicationMessage.objects.create(
+            recipient=self.admin,
+            text="Workflow changed",
+            category="WORKFLOW",
+            organization=self.organization,
+        )
+        listing = self.client.get("/api/services/application-messages")
+        self.assertEqual(listing.status_code, 200, listing.data)
+        self.assertEqual(listing.data["unreadCount"], 1)
+
+        read = self.client.patch(
+            f"/api/services/application-messages/{message.pk}",
+            {"operation": "READ"},
+            format="json",
+        )
+        self.assertEqual(read.status_code, 200, read.data)
+        self.assertIsNotNone(read.data["readAt"])
+
+        archived = self.client.patch(
+            f"/api/services/application-messages/{message.pk}",
+            {"operation": "ARCHIVE"},
+            format="json",
+        )
+        self.assertEqual(archived.status_code, 200, archived.data)
+        hidden = self.client.get("/api/services/application-messages")
+        self.assertFalse(any(item["id"] == message.pk for item in hidden.data["items"]))
+
+        retained = self.client.delete(f"/api/services/application-messages/{message.pk}")
+        self.assertEqual(retained.status_code, 409)
+
+
+class P3RealtimeIsolationTests(TestCase):
+    def test_websocket_rejects_unauthenticated_and_does_not_cross_organizations(self):
+        from asgiref.sync import async_to_sync
+        from channels.testing import WebsocketCommunicator
+        from accounts.models import Organization, OrganizationRole, Privilege, PrivilegeCode, User
+        from api.auth import token_pair
+        from config.asgi import application
+        from operations.realtime import publish_org_event
+        from accounts.organization_context import organization_scope
+
+        org_a = Organization.objects.create(slug="p3-ws-a", name="P3 WS A")
+        org_b = Organization.objects.create(slug="p3-ws-b", name="P3 WS B")
+        user_a = User.objects.create_user("p3-ws-a", "WS A", "password", default_organization=org_a)
+        user_b = User.objects.create_user("p3-ws-b", "WS B", "password", default_organization=org_b)
+        Privilege.objects.create(user=user_a, code=PrivilegeCode.ADMIN)
+        Privilege.objects.create(user=user_b, code=PrivilegeCode.ADMIN)
+        user_a.organization_memberships.filter(organization=org_a).update(roles=[OrganizationRole.ADMIN])
+        user_b.organization_memberships.filter(organization=org_b).update(roles=[OrganizationRole.ADMIN])
+        token_a = token_pair(user_a)["actualToken"]["token"]
+
+        async def scenario():
+            denied = WebsocketCommunicator(application, "/ws/events/")
+            connected, _ = await denied.connect()
+            self.assertFalse(connected)
+
+            socket = WebsocketCommunicator(application, f"/ws/events/?token={token_a}")
+            connected, _ = await socket.connect()
+            self.assertTrue(connected)
+
+            with organization_scope(org_b.id):
+                publish_org_event("OWNER_STATUS_CHANGED", {"ownerId": "other"}, actor=user_b)
+            self.assertTrue(await socket.receive_nothing(timeout=0.15))
+
+            with organization_scope(org_a.id):
+                publish_org_event("OWNER_STATUS_CHANGED", {"ownerId": "mine"}, actor=user_a)
+            payload = await socket.receive_json_from(timeout=1)
+            self.assertEqual(payload["eventType"], "OWNER_STATUS_CHANGED")
+            self.assertEqual(payload["payload"]["ownerId"], "mine")
+            await socket.disconnect()
+
+        async_to_sync(scenario)()
