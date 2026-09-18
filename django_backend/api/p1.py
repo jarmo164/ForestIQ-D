@@ -23,7 +23,7 @@ from rest_framework.response import Response
 from accounts.models import PrivilegeCode
 from accounts.models import User
 from forestry.models import Cadastre, CadastreNotification, ForestRegistryFeature, Owner, OwnerCadastre, OwnerLog
-from operations.models import Contract, ContractHistory, Deal, DealOffer, DealStage
+from operations.models import Contract, ContractHistory, Deal, DealOffer, DealStage, OwnershipTransitionEvent
 from operations.p1_models import (
     ContactActivity,
     ContractSigning,
@@ -203,6 +203,52 @@ def _event_data(event: WorkflowAuditEvent):
         "actor": user_data(event.actor),
         "payload": event.payload,
         "createdAt": json_value(event.created_at),
+    }
+
+
+def _owner_relation_counts(owner: Owner) -> dict:
+    _project_legacy_relations(owner)
+    counts = OwnershipRelation.objects.filter(owner=owner).aggregate(
+        active=Count("id", filter=Q(is_active=True)),
+        historical=Count("id", filter=Q(is_active=False)),
+    )
+    return {"active": counts["active"] or 0, "historical": counts["historical"] or 0}
+
+
+def _owner_map_feature(relation: OwnershipRelation) -> dict:
+    cadastre = relation.cadastre
+    geometry = None
+    if cadastre.boundary:
+        boundary = cadastre.boundary.clone()
+        boundary.transform(4326)
+        geometry = json.loads(boundary.geojson)
+    properties = {
+        "cadastreId": cadastre.id,
+        "name": cadastre.name or None,
+        "area": json_value(cadastre.area),
+        "forestArea": json_value(cadastre.forest_area),
+        "county": cadastre.county or None,
+        "municipality": cadastre.municipality or None,
+        "active": relation.is_active,
+        "relationId": str(relation.id),
+        "source": relation.source,
+        "validFrom": json_value(relation.valid_from),
+        "validTo": json_value(relation.valid_to),
+    }
+    return {"type": "Feature", "id": str(relation.id), "geometry": geometry, "properties": properties}
+
+
+def _owner_360_timeline_item(kind: str, source: str, record_id: str, occurred_at, title: str, description: str = "", target: dict | None = None, actor=None, payload: dict | None = None) -> dict:
+    return {
+        "id": f"{source}:{record_id}",
+        "type": kind,
+        "source": source,
+        "occurredAt": json_value(occurred_at),
+        "title": title,
+        "description": description or "",
+        "target": target or {},
+        "actor": user_data(actor),
+        "payload": payload or {},
     }
 
 
@@ -938,6 +984,210 @@ def owner_timeline(request, owner_id: str):
         return denied
     events = WorkflowAuditEvent.objects.filter(owner=owner).select_related("actor")[:300]
     return Response([_event_data(event) for event in events])
+
+
+@api_view(["GET"])
+@permission_classes([CanManageOwners])
+def owner_360_summary(request, owner_id: str):
+    owner, denied = _owner_or_403(request, owner_id)
+    if denied:
+        return denied
+    relation_counts = _owner_relation_counts(owner)
+    cadastre_count = OwnershipRelation.objects.filter(owner=owner, is_active=True).values("cadastre_id").distinct().count()
+    if cadastre_count == 0:
+        cadastre_count = OwnerCadastre.objects.filter(owner=owner).count()
+    action_count = NextAction.objects.filter(owner=owner, status__in=(NextAction.Status.OPEN, NextAction.Status.POSTPONED)).count()
+    active_deal_count = Deal.objects.filter(owner=owner).exclude(stage__in=CLOSED_DEAL_STAGES).count()
+    contact_fields = [owner.phone, owner.email, owner.address]
+    contact_completeness = round(100 * sum(1 for item in contact_fields if item) / len(contact_fields))
+    signals = []
+    if contact_completeness < 67:
+        signals.append({"code": "CONTACT_INCOMPLETE", "severity": "MEDIUM", "message": "Owner contact data is incomplete."})
+    if action_count:
+        signals.append({"code": "OPEN_NEXT_ACTIONS", "severity": "LOW", "message": "Open owner workflow actions need follow-up."})
+    if active_deal_count:
+        signals.append({"code": "ACTIVE_DEALS", "severity": "LOW", "message": "Owner has active commercial work."})
+    return Response(
+        {
+            "owner": owner_summary(owner),
+            "contactCompleteness": contact_completeness,
+            "cadastreCount": cadastre_count,
+            "relations": relation_counts,
+            "openNextActionCount": action_count,
+            "activeDealCount": active_deal_count,
+            "signalCount": len(signals),
+            "signals": signals,
+            "panels": {
+                "relations": f"/api/services/owners/{owner.id}/ownership-relations",
+                "map": f"/api/services/owners/{owner.id}/360/map",
+                "timeline": f"/api/services/owners/{owner.id}/360/timeline",
+                "workflow": f"/api/services/owners/{owner.id}/360/workflow",
+            },
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([CanManageOwners])
+def owner_360_map(request, owner_id: str):
+    owner, denied = _owner_or_403(request, owner_id)
+    if denied:
+        return denied
+    _project_legacy_relations(owner)
+    relations = (
+        OwnershipRelation.objects.filter(owner=owner, is_active=True)
+        .select_related("cadastre")
+        .order_by("cadastre_id")[:500]
+    )
+    return Response({"type": "FeatureCollection", "features": [_owner_map_feature(relation) for relation in relations]})
+
+
+@api_view(["GET"])
+@permission_classes([CanManageOwners])
+def owner_360_workflow(request, owner_id: str):
+    owner, denied = _owner_or_403(request, owner_id)
+    if denied:
+        return denied
+    actions = NextAction.objects.filter(owner=owner, status__in=(NextAction.Status.OPEN, NextAction.Status.POSTPONED)).select_related("assignee").order_by("due_at", "id")[:8]
+    deals = Deal.objects.filter(owner=owner).exclude(stage__in=CLOSED_DEAL_STAGES).select_related("created_by", "evaluator").prefetch_related("next_actions__assignee").order_by("-updated_at")[:8]
+    transitions = OwnershipTransitionEvent.objects.filter(owner=owner).order_by("-occurred_at", "-recorded_at")[:5]
+    signals = []
+    now = timezone.now()
+    for action in actions:
+        if action.due_at < now:
+            signals.append({"code": "NEXT_ACTION_OVERDUE", "severity": "HIGH", "message": action.text, "target": {"nextActionId": str(action.id)}})
+    for deal in deals:
+        reasons, _, _ = _deal_health(deal)
+        signals.extend({**reason, "target": {"dealId": str(deal.id)}} for reason in reasons[:2])
+    return Response(
+        {
+            "nextActions": [_action_data(action) for action in actions],
+            "activeDeals": [_deal_work_item(deal) for deal in deals],
+            "recentOwnershipChanges": [
+                {
+                    "id": str(item.id),
+                    "cadastreId": item.cadastre_id,
+                    "type": item.event_type,
+                    "occurredAt": json_value(item.occurred_at),
+                    "sourceReference": item.source_reference or None,
+                    "recordedAt": json_value(item.recorded_at),
+                }
+                for item in transitions
+            ],
+            "signals": signals[:12],
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([CanManageOwners])
+def owner_360_timeline(request, owner_id: str):
+    owner, denied = _owner_or_403(request, owner_id)
+    if denied:
+        return denied
+    try:
+        limit = _limit(request, default=50, maximum=100)
+    except ValueError as exc:
+        return _detail(str(exc))
+    items = []
+    for activity in ContactActivity.objects.filter(owner=owner).select_related("created_by").order_by("-created_at")[:100]:
+        items.append(
+            _owner_360_timeline_item(
+                "CONTACT",
+                "contact_activity",
+                str(activity.id),
+                activity.created_at,
+                f"{activity.channel} · {activity.outcome_code}",
+                activity.outcome_reason or activity.note,
+                {"activityId": str(activity.id)},
+                activity.created_by,
+            )
+        )
+    for action in NextAction.objects.filter(owner=owner).select_related("assignee", "created_by").order_by("-created_at")[:100]:
+        items.append(
+            _owner_360_timeline_item(
+                "NEXT_ACTION",
+                "next_action",
+                str(action.id),
+                action.completed_at or action.due_at,
+                action.text,
+                action.status,
+                {"nextActionId": str(action.id), "dealId": str(action.deal_id) if action.deal_id else None},
+                action.assignee,
+                {"status": action.status},
+            )
+        )
+    for deal in Deal.objects.filter(owner=owner).select_related("created_by").order_by("-updated_at")[:100]:
+        items.append(
+            _owner_360_timeline_item(
+                "DEAL",
+                "deal",
+                str(deal.id),
+                deal.closed_at or deal.updated_at,
+                f"Deal {deal.stage.replace('_', ' ').title()}",
+                deal.sale_subject,
+                {"dealId": str(deal.id)},
+                deal.created_by,
+                {"stage": deal.stage, "saleSubject": deal.sale_subject},
+            )
+        )
+    for contract in Contract.objects.filter(source_deal__owner=owner).select_related("source_deal").order_by("-created_at")[:100]:
+        items.append(
+            _owner_360_timeline_item(
+                "CONTRACT",
+                "contract",
+                contract.id,
+                contract.created_at,
+                f"Contract {contract.status.lower()}",
+                contract.base_id or contract.id,
+                {"contractId": contract.id, "dealId": str(contract.source_deal_id) if contract.source_deal_id else None},
+            )
+        )
+    for relation in OwnershipRelation.objects.filter(owner=owner).select_related("cadastre").order_by("-valid_from")[:100]:
+        occurred_at = relation.valid_to or relation.valid_from
+        title = "Ownership relation active" if relation.is_active else "Ownership relation ended"
+        items.append(
+            _owner_360_timeline_item(
+                "OWNERSHIP_RELATION",
+                "ownership_relation",
+                str(relation.id),
+                occurred_at,
+                title,
+                relation.cadastre.name or relation.cadastre_id,
+                {"relationId": str(relation.id), "cadastreId": relation.cadastre_id},
+                relation.updated_by or relation.created_by,
+                {"active": relation.is_active, "source": relation.source},
+            )
+        )
+    for transition in OwnershipTransitionEvent.objects.filter(owner=owner).order_by("-occurred_at", "-recorded_at")[:100]:
+        items.append(
+            _owner_360_timeline_item(
+                "OWNERSHIP_CHANGE",
+                "ownership_transition",
+                str(transition.id),
+                transition.occurred_at or transition.recorded_at,
+                transition.event_type.replace("_", " ").title(),
+                transition.source_reference,
+                {"transitionId": str(transition.id), "cadastreId": transition.cadastre_id},
+                payload=transition.payload,
+            )
+        )
+    for event in WorkflowAuditEvent.objects.filter(owner=owner).select_related("actor").order_by("-created_at")[:100]:
+        items.append(
+            _owner_360_timeline_item(
+                "WORKFLOW_AUDIT",
+                "workflow_audit",
+                str(event.id),
+                event.created_at,
+                event.event_type.replace("_", " ").title(),
+                "",
+                {"eventId": str(event.id), "dealId": str(event.deal_id) if event.deal_id else None},
+                event.actor,
+                event.payload,
+            )
+        )
+    items.sort(key=lambda item: item["occurredAt"] or 0, reverse=True)
+    return Response(items[:limit])
 
 
 @api_view(["GET"])

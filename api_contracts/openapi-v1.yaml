@@ -1924,6 +1924,62 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/owners/{owner_id}/360/map:
+    get:
+      operationId: services_owners_360_map_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/{owner_id}/360/summary:
+    get:
+      operationId: services_owners_360_summary_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/{owner_id}/360/timeline:
+    get:
+      operationId: services_owners_360_timeline_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/owners/{owner_id}/360/workflow:
+    get:
+      operationId: services_owners_360_workflow_retrieve
+      parameters:
+      - in: path
+        name: owner_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/owners/{owner_id}/activities:
     get:
       operationId: services_owners_activities_retrieve

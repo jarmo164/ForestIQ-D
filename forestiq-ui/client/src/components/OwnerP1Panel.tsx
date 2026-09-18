@@ -44,8 +44,10 @@ const formatDateTime = (value?: number | null) => value ? new Intl.DateTimeForma
 export function OwnerP1Panel({ ownerId }: { ownerId: string }) {
   const { user } = useAuth();
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [relations, setRelations] = useState<Relation[]>([]);
-  const [relationCursor, setRelationCursor] = useState<string | null>(null);
+  const [activeRelations, setActiveRelations] = useState<Relation[]>([]);
+  const [historicalRelations, setHistoricalRelations] = useState<Relation[]>([]);
+  const [activeRelationCursor, setActiveRelationCursor] = useState<string | null>(null);
+  const [historicalRelationCursor, setHistoricalRelationCursor] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [channel, setChannel] = useState("PHONE");
   const [outcome, setOutcome] = useState("CALLBACK");
@@ -62,12 +64,17 @@ export function OwnerP1Panel({ ownerId }: { ownerId: string }) {
       setError("");
       const [activityData, relationData, timelineData] = await Promise.all([
         api.get<Activity[]>(`/services/owners/${ownerId}/activities`),
-        api.get<RelationPage>(`/services/owners/${ownerId}/ownership-relations?limit=20`),
+        Promise.all([
+          api.get<RelationPage>(`/services/owners/${ownerId}/ownership-relations?active=true&limit=20`),
+          api.get<RelationPage>(`/services/owners/${ownerId}/ownership-relations?active=false&limit=20`),
+        ]),
         api.get<TimelineEvent[]>(`/services/owners/${ownerId}/timeline`),
       ]);
       setActivities(activityData);
-      setRelations(relationData.items);
-      setRelationCursor(relationData.nextCursor);
+      setActiveRelations(relationData[0].items);
+      setActiveRelationCursor(relationData[0].nextCursor);
+      setHistoricalRelations(relationData[1].items);
+      setHistoricalRelationCursor(relationData[1].nextCursor);
       setTimeline(timelineData);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "P1 töövoo andmeid ei saanud laadida.");
@@ -152,12 +159,18 @@ export function OwnerP1Panel({ ownerId }: { ownerId: string }) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Seost ei saanud taasaktiveerida."); }
   };
 
-  const loadMoreRelations = async () => {
-    if (!relationCursor) return;
+  const loadMoreRelations = async (active: boolean) => {
+    const cursor = active ? activeRelationCursor : historicalRelationCursor;
+    if (!cursor) return;
     try {
-      const page = await api.get<RelationPage>(`/services/owners/${ownerId}/ownership-relations?limit=20&cursor=${encodeURIComponent(relationCursor)}`);
-      setRelations((current) => [...current, ...page.items]);
-      setRelationCursor(page.nextCursor);
+      const page = await api.get<RelationPage>(`/services/owners/${ownerId}/ownership-relations?active=${active ? "true" : "false"}&limit=20&cursor=${encodeURIComponent(cursor)}`);
+      if (active) {
+        setActiveRelations((current) => [...current, ...page.items]);
+        setActiveRelationCursor(page.nextCursor);
+      } else {
+        setHistoricalRelations((current) => [...current, ...page.items]);
+        setHistoricalRelationCursor(page.nextCursor);
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Järgmist seoste lehte ei saanud laadida."); }
   };
 
@@ -184,8 +197,7 @@ export function OwnerP1Panel({ ownerId }: { ownerId: string }) {
     <section className="panel p-5">
       <div className="panel-heading"><div><p className="eyebrow">OMANDISUHTE ELUTSÜKKEL</p><h3>Aktiivsed ja ajaloolised seosed</h3></div><GitBranch size={19} /></div>
       <div className="mb-4 flex gap-2"><input className="flex-1" value={cadastreId} onChange={(event) => setCadastreId(event.target.value)} placeholder="Katastritunnus uue käsitsi kinnitatud seose jaoks" /><button className="secondary-action" onClick={() => void addRelation()}><Link2 size={15} /> Lisa seos</button></div>
-      <div className="space-y-2">{relations.map((relation) => <article className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3" key={relation.id}><div><div className="flex items-center gap-2"><strong>{relation.cadastre.name || relation.cadastre.id}</strong><span className={`status-pill ${relation.active ? "" : "warning"}`}>{relation.active ? "AKTIIVNE" : "AJALOOLINE"}</span>{relation.protected && <span title="Käsitsi kaitstud"><ShieldCheck size={15} /></span>}</div><small>{relation.cadastre.id} · {relation.source} · alates {formatDateTime(relation.validFrom)}</small>{relation.endedReason && <p className="mt-1 text-sm text-muted-foreground">{relation.endedReason}</p>}</div>{relation.active ? <button className="secondary-action" onClick={() => void endRelation(relation)}>Lõpeta seos</button> : <button className="secondary-action" onClick={() => void reactivateRelation(relation)}>Taasaktiveeri</button>}</article>)}{!relations.length && <div className="empty-state">Omandisuhteid ei ole.</div>}</div>
-      {relationCursor && <button className="secondary-action mt-3" onClick={() => void loadMoreRelations()}>Laadi järgmised seosed</button>}
+      <div className="grid gap-4 lg:grid-cols-2"><div><h4 className="mb-2 text-sm">Aktiivsed seosed</h4><div className="space-y-2">{activeRelations.map((relation) => <article className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3" key={relation.id}><div><div className="flex items-center gap-2"><strong>{relation.cadastre.name || relation.cadastre.id}</strong><span className="status-pill">AKTIIVNE</span>{relation.protected && <span title="Käsitsi kaitstud"><ShieldCheck size={15} /></span>}</div><small>{relation.cadastre.id} · {relation.source} · alates {formatDateTime(relation.validFrom)}</small></div><button className="secondary-action" onClick={() => void endRelation(relation)}>Lõpeta seos</button></article>)}{!activeRelations.length && <div className="empty-state">Aktiivseid seoseid ei ole.</div>}</div>{activeRelationCursor && <button className="secondary-action mt-3" onClick={() => void loadMoreRelations(true)}>Laadi aktiivseid juurde</button>}</div><div><h4 className="mb-2 text-sm">Ajaloolised seosed</h4><div className="space-y-2">{historicalRelations.map((relation) => <article className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3" key={relation.id}><div><div className="flex items-center gap-2"><strong>{relation.cadastre.name || relation.cadastre.id}</strong><span className="status-pill warning">AJALOOLINE</span>{relation.protected && <span title="Käsitsi kaitstud"><ShieldCheck size={15} /></span>}</div><small>{relation.cadastre.id} · {relation.source} · alates {formatDateTime(relation.validFrom)}</small>{relation.endedReason && <p className="mt-1 text-sm text-muted-foreground">{relation.endedReason}</p>}</div><button className="secondary-action" onClick={() => void reactivateRelation(relation)}>Taasaktiveeri</button></article>)}{!historicalRelations.length && <div className="empty-state">Ajaloolisi seoseid ei ole.</div>}</div>{historicalRelationCursor && <button className="secondary-action mt-3" onClick={() => void loadMoreRelations(false)}>Laadi ajalugu juurde</button>}</div></div>
     </section>
 
     <section className="panel p-5">
