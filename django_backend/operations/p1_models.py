@@ -151,6 +151,43 @@ class DecisionEvidenceSnapshot(OrganizationScopedModel):
         return super().save(*args, **kwargs)
 
 
+class SalesStageProbability(OrganizationScopedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    stage = models.CharField(max_length=20)
+    probability = models.DecimalField(max_digits=5, decimal_places=4)
+    valid_from = models.DateField()
+    valid_to = models.DateField(null=True, blank=True)
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_sales_stage_probabilities")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "p2_sales_stage_probabilities"
+        ordering = ("stage", "-valid_from", "-created_at")
+        constraints = [models.UniqueConstraint(fields=("organization", "stage", "valid_from"), name="p2_uq_sales_probability_stage_from")]
+        indexes = [models.Index(fields=("organization", "stage", "valid_from"), name="p2_sales_probability_idx")]
+
+
+class SalesSegment(OrganizationScopedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=160)
+    filters = models.JSONField(default=dict)
+    is_shared = models.BooleanField(default=False)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_sales_segments")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "p2_sales_segments"
+        ordering = ("name", "id")
+        constraints = [models.UniqueConstraint(fields=("organization", "created_by", "name"), name="p2_uq_sales_segment_owner_name")]
+        indexes = [
+            models.Index(fields=("organization", "created_by"), name="p2_sales_segment_creator_idx"),
+            models.Index(fields=("organization", "is_shared"), name="p2_sales_segment_shared_idx"),
+        ]
+
+
 class MapWorkbasket(OrganizationScopedModel):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"

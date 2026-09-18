@@ -260,6 +260,36 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/admin/sales/stage-probabilities:
+    get:
+      operationId: services_admin_sales_stage_probabilities_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_admin_sales_stage_probabilities_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/admin/sales/stage-probabilities/{probability_id}:
+    patch:
+      operationId: services_admin_sales_stage_probabilities_partial_update
+      parameters:
+      - in: path
+        name: probability_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/admin/sync-runs:
     get:
       operationId: services_admin_sync_runs_retrieve
@@ -2312,6 +2342,59 @@ paths:
   /api/v1/services/sales-workspace/queue:
     get:
       operationId: services_sales_workspace_queue_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/sales/funnel:
+    get:
+      operationId: services_sales_funnel_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/sales/segments:
+    get:
+      operationId: services_sales_segments_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_sales_segments_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/sales/segments/{segment_id}/assignment-apply:
+    post:
+      operationId: services_sales_segments_assignment_apply_create
+      parameters:
+      - in: path
+        name: segment_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/sales/segments/{segment_id}/assignment-preview:
+    post:
+      operationId: services_sales_segments_assignment_preview_create
+      parameters:
+      - in: path
+        name: segment_id
+        schema:
+          type: string
+          format: uuid
+        required: true
       tags:
       - services
       responses:

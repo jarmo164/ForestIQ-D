@@ -40,6 +40,8 @@ from operations.p1_models import (
     NextAction,
     OwnershipRelation,
     OwnershipRelationEvent,
+    SalesSegment,
+    SalesStageProbability,
     WorkflowAuditEvent,
 )
 from operations.services.contract_pdf import ContractPdfRenderError, render_contract_pdf
@@ -48,7 +50,7 @@ from .concurrency import requested_version, version_conflict_response
 from .contract_templates import render_template_preview_html
 from .organization import organization_user_or_404, request_organization_id
 from .parity import _commercial, _get_deal, _update_deal_or_conflict
-from .permissions import CanManageOwners, IsAdmin, can_access_deal, can_access_owner, current_membership, has_membership_privilege
+from .permissions import CanManageOwners, CanManageSales, IsAdmin, can_access_deal, can_access_owner, current_membership, has_membership_privilege
 from .serializers import json_value, owner_summary, user_data
 
 
@@ -68,6 +70,15 @@ SIGNING_TRANSITIONS = {
 }
 CONTRACT_CHECKLIST = ("priceMatched", "termsMatched", "sellerMatched", "parcelsMatched")
 DECISION_EVIDENCE_SCHEMA_VERSION = 1
+SALES_STAGE_ORDER = (DealStage.QUALIFICATION, DealStage.EVALUATION, DealStage.NEGOTIATION, DealStage.WON, DealStage.LOST, DealStage.CANCELLED)
+SALES_DEFAULT_PROBABILITIES = {
+    DealStage.QUALIFICATION: Decimal("0.1500"),
+    DealStage.EVALUATION: Decimal("0.3500"),
+    DealStage.NEGOTIATION: Decimal("0.6500"),
+    DealStage.WON: Decimal("1.0000"),
+    DealStage.LOST: Decimal("0.0000"),
+    DealStage.CANCELLED: Decimal("0.0000"),
+}
 
 
 def _detail(message: str, http_status: int = status.HTTP_400_BAD_REQUEST) -> Response:
@@ -86,6 +97,15 @@ def _parse_datetime(value, field: str = "datetime"):
     if parsed is None:
         raise ValueError(f"{field} must be an ISO datetime or epoch milliseconds.")
     return timezone.make_aware(parsed, timezone.get_current_timezone()) if timezone.is_naive(parsed) else parsed
+
+
+def _parse_date(value, field: str) -> date | None:
+    if value in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError as exc:
+        raise ValueError(f"{field} must use YYYY-MM-DD.") from exc
 
 
 def _encode_cursor(value: str) -> str:
@@ -447,6 +467,339 @@ def map_workbasket_cancel(request, basket_id: str):
     basket.save(update_fields=("status", "cancelled_at", "updated_at"))
     _audit(actor=request.user, event_type="MAP_WORKBASKET_CANCELLED", payload={"workbasketId": str(basket.id)})
     return Response(_workbasket_payload(request, basket))
+
+
+def _sales_probability_data(item: SalesStageProbability):
+    return {
+        "id": str(item.id),
+        "stage": item.stage,
+        "probability": json_value(item.probability),
+        "validFrom": item.valid_from.isoformat(),
+        "validTo": item.valid_to.isoformat() if item.valid_to else None,
+        "note": item.note or None,
+        "createdBy": user_data(item.created_by),
+        "createdAt": json_value(item.created_at),
+        "updatedAt": json_value(item.updated_at),
+    }
+
+
+def _segment_data(item: SalesSegment):
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "filters": item.filters,
+        "shared": item.is_shared,
+        "createdBy": user_data(item.created_by),
+        "createdAt": json_value(item.created_at),
+        "updatedAt": json_value(item.updated_at),
+    }
+
+
+def _sales_base_queryset(request):
+    queryset = Deal.objects.select_related("owner", "owner__assignee", "evaluator", "created_by").prefetch_related("offers")
+    if not has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+        queryset = queryset.filter(Q(owner__assignee=request.user) | Q(evaluator=request.user) | Q(created_by=request.user)).distinct()
+    return queryset
+
+
+def _deal_value_basis(deal: Deal) -> tuple[Decimal, str]:
+    accepted = next((offer for offer in deal.offers.all() if offer.status == DealOffer.Status.ACCEPTED), None)
+    if accepted:
+        return accepted.amount, "acceptedOffer"
+    for value, source in (
+        (deal.proposed_offer_price, "proposedOfferPrice"),
+        (deal.recommended_purchase_price, "recommendedPurchasePrice"),
+        (deal.price_expectation, "priceExpectation"),
+    ):
+        if value is not None:
+            return value, source
+    return Decimal("0.00"), "missing"
+
+
+def _active_probability_lookup(as_of: date) -> dict[str, tuple[Decimal, SalesStageProbability | None]]:
+    probabilities: dict[str, tuple[Decimal, SalesStageProbability | None]] = {stage: (value, None) for stage, value in SALES_DEFAULT_PROBABILITIES.items()}
+    configured = SalesStageProbability.objects.filter(valid_from__lte=as_of).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=as_of)).order_by("stage", "-valid_from", "-created_at")
+    seen = set()
+    for item in configured:
+        if item.stage in seen:
+            continue
+        seen.add(item.stage)
+        probabilities[item.stage] = (item.probability, item)
+    return probabilities
+
+
+def _median_decimal(values: list[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / Decimal("2")
+
+
+def _segment_queryset(request, filters: dict):
+    queryset = _sales_base_queryset(request)
+    stages = filters.get("stages") if isinstance(filters.get("stages"), list) else []
+    valid_stages = [str(stage).upper() for stage in stages if str(stage).upper() in DealStage.values]
+    if valid_stages:
+        queryset = queryset.filter(stage__in=valid_stages)
+    sale_subject = str(filters.get("saleSubject", "")).upper()
+    if sale_subject in {"FOREST", "LAND", "BOTH"}:
+        queryset = queryset.filter(sale_subject=sale_subject)
+    owner_status = str(filters.get("ownerStatus", "")).strip()
+    if owner_status:
+        queryset = queryset.filter(owner__status=owner_status)
+    assignee_id = str(filters.get("assigneeId", "")).strip()
+    if assignee_id:
+        queryset = queryset.filter(owner__assignee_id=assignee_id)
+    evaluator_id = str(filters.get("evaluatorId", "")).strip()
+    if evaluator_id:
+        queryset = queryset.filter(evaluator_id=evaluator_id)
+    if filters.get("activeOnly", True):
+        queryset = queryset.exclude(stage__in=CLOSED_DEAL_STAGES)
+    stale_days = filters.get("staleDays")
+    if stale_days not in (None, ""):
+        try:
+            days = max(1, min(int(stale_days), 730))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("filters.staleDays must be an integer.") from exc
+        queryset = queryset.filter(updated_at__lt=timezone.now() - timedelta(days=days))
+    value_field = DecimalField(max_digits=16, decimal_places=2)
+    queryset = queryset.annotate(segment_value=Coalesce("proposed_offer_price", "recommended_purchase_price", "price_expectation", Value(Decimal("0")), output_field=value_field))
+    for key, lookup in (("minValue", "segment_value__gte"), ("maxValue", "segment_value__lte")):
+        raw = filters.get(key)
+        if raw not in (None, ""):
+            try:
+                queryset = queryset.filter(**{lookup: Decimal(str(raw))})
+            except (InvalidOperation, ValueError) as exc:
+                raise ValueError(f"filters.{key} must be a decimal.") from exc
+    return queryset.distinct()
+
+
+def _segment_or_403(request, segment_id: str):
+    segment = get_object_or_404(SalesSegment, id=segment_id)
+    if segment.created_by_id != request.user.id and not segment.is_shared and not has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+        return None, _detail("You do not have access to this sales segment.", status.HTTP_403_FORBIDDEN)
+    return segment, None
+
+
+def _assignment_preview_payload(request, segment: SalesSegment, target_user: User):
+    deals = list(_segment_queryset(request, segment.filters).order_by("id")[:500])
+    owner_ids = sorted({deal.owner_id for deal in deals})
+    breakdown: dict[str, int] = {}
+    for deal in deals:
+        key = deal.owner.assignee_id or "UNASSIGNED"
+        breakdown[key] = breakdown.get(key, 0) + 1
+    token_source = json.dumps(
+        {"segmentId": str(segment.id), "segmentUpdatedAt": json_value(segment.updated_at), "targetAssigneeId": target_user.id, "dealIds": sorted(str(deal.id) for deal in deals)},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return {
+        "segment": _segment_data(segment),
+        "targetAssignee": user_data(target_user),
+        "dealCount": len(deals),
+        "ownerCount": len(owner_ids),
+        "dealIds": [str(deal.id) for deal in deals],
+        "ownerIds": owner_ids,
+        "currentAssigneeBreakdown": breakdown,
+        "previewToken": hashlib.sha256(token_source.encode("utf-8")).hexdigest(),
+    }
+
+
+@api_view(["GET"])
+@permission_classes([CanManageSales])
+def sales_funnel(request):
+    try:
+        from_date = _parse_date(request.query_params.get("from"), "from")
+        to_date = _parse_date(request.query_params.get("to"), "to")
+    except ValueError as exc:
+        return _detail(str(exc))
+    if from_date and to_date and from_date > to_date:
+        return _detail("from must be before or equal to to.")
+    queryset = _sales_base_queryset(request)
+    if from_date:
+        queryset = queryset.filter(created_at__date__gte=from_date)
+    if to_date:
+        queryset = queryset.filter(created_at__date__lte=to_date)
+    segment_id = str(request.query_params.get("segmentId", "")).strip()
+    segment_payload = None
+    if segment_id:
+        segment, denied = _segment_or_403(request, segment_id)
+        if denied:
+            return denied
+        try:
+            queryset = _segment_queryset(request, segment.filters).filter(id__in=queryset.values("id"))
+        except ValueError as exc:
+            return _detail(str(exc))
+        segment_payload = _segment_data(segment)
+    as_of = to_date or timezone.localdate()
+    probability_lookup = _active_probability_lookup(as_of)
+    deals = list(queryset.order_by("created_at", "id"))
+    stage_index = {stage: index for index, stage in enumerate(SALES_STAGE_ORDER)}
+    rows = []
+    for stage in SALES_STAGE_ORDER:
+        stage_deals = [deal for deal in deals if deal.stage == stage]
+        entered_or_beyond = [deal for deal in deals if stage_index.get(deal.stage, 999) >= stage_index[stage]]
+        beyond = [deal for deal in deals if stage_index.get(deal.stage, 999) > stage_index[stage]]
+        probability, configured = probability_lookup[stage]
+        values = []
+        durations = []
+        weighted = Decimal("0.00")
+        for deal in stage_deals:
+            value, source = _deal_value_basis(deal)
+            values.append({"dealId": str(deal.id), "source": source, "value": value})
+            end_at = deal.closed_at or deal.updated_at
+            durations.append(Decimal(str(max((end_at - deal.created_at).total_seconds() / 86400, 0))))
+            weighted += value * probability
+        rows.append(
+            {
+                "stage": stage,
+                "volume": len(stage_deals),
+                "enteredOrBeyond": len(entered_or_beyond),
+                "conversionToNext": json_value((Decimal(len(beyond)) / Decimal(len(entered_or_beyond))).quantize(Decimal("0.0001")) if entered_or_beyond else Decimal("0")),
+                "medianDurationDays": json_value(_median_decimal(durations).quantize(Decimal("0.01")) if durations else Decimal("0.00")),
+                "probability": json_value(probability),
+                "probabilitySource": "configured" if configured else "default",
+                "weightedValue": json_value(weighted.quantize(Decimal("0.01"))),
+                "valueSourceBreakdown": {source: sum(1 for item in values if item["source"] == source) for source in sorted({item["source"] for item in values})},
+            }
+        )
+    return Response(
+        {
+            "period": {"from": from_date.isoformat() if from_date else None, "to": to_date.isoformat() if to_date else None, "asOf": as_of.isoformat(), "generatedAt": json_value(timezone.now())},
+            "segment": segment_payload,
+            "formula": "weightedValue = deterministic deal value (accepted offer, proposed offer, recommended price, then price expectation) multiplied by the active stage probability as of period.to/today; WON uses 1.0 and LOST/CANCELLED use 0.0 unless configured otherwise.",
+            "stages": rows,
+        }
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdmin])
+def sales_stage_probabilities(request):
+    if request.method == "GET":
+        stage = str(request.query_params.get("stage", "")).upper()
+        records = SalesStageProbability.objects.select_related("created_by")
+        if stage:
+            records = records.filter(stage=stage)
+        return Response([_sales_probability_data(item) for item in records[:200]])
+    stage = str(request.data.get("stage", "")).upper()
+    if stage not in DealStage.values:
+        return _detail(f"stage must be one of: {', '.join(DealStage.values)}.")
+    try:
+        probability = Decimal(str(request.data.get("probability")))
+        valid_from = _parse_date(request.data.get("validFrom"), "validFrom")
+        valid_to = _parse_date(request.data.get("validTo"), "validTo")
+    except (InvalidOperation, ValueError) as exc:
+        return _detail(str(exc))
+    if valid_from is None:
+        return _detail("validFrom is required.")
+    if probability < 0 or probability > 1:
+        return _detail("probability must be between 0 and 1.")
+    if valid_to and valid_to < valid_from:
+        return _detail("validTo must be on or after validFrom.")
+    item = SalesStageProbability.objects.create(stage=stage, probability=probability, valid_from=valid_from, valid_to=valid_to, note=str(request.data.get("note", "")).strip(), created_by=request.user)
+    return Response(_sales_probability_data(item), status=status.HTTP_201_CREATED)
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAdmin])
+def sales_stage_probability_detail(request, probability_id):
+    item = get_object_or_404(SalesStageProbability.objects.select_related("created_by"), id=probability_id)
+    if "probability" in request.data:
+        try:
+            probability = Decimal(str(request.data["probability"]))
+        except (InvalidOperation, ValueError) as exc:
+            return _detail(str(exc))
+        if probability < 0 or probability > 1:
+            return _detail("probability must be between 0 and 1.")
+        item.probability = probability
+    if "validTo" in request.data:
+        try:
+            item.valid_to = _parse_date(request.data.get("validTo"), "validTo")
+        except ValueError as exc:
+            return _detail(str(exc))
+    if "note" in request.data:
+        item.note = str(request.data.get("note", "")).strip()
+    if item.valid_to and item.valid_to < item.valid_from:
+        return _detail("validTo must be on or after validFrom.")
+    item.save()
+    return Response(_sales_probability_data(item))
+
+
+@api_view(["GET", "POST"])
+@permission_classes([CanManageSales])
+def sales_segments(request):
+    if request.method == "GET":
+        records = SalesSegment.objects.select_related("created_by").filter(Q(created_by=request.user) | Q(is_shared=True))
+        if has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+            records = SalesSegment.objects.select_related("created_by")
+        return Response([_segment_data(item) for item in records[:200]])
+    name = str(request.data.get("name", "")).strip()
+    filters = request.data.get("filters") if isinstance(request.data.get("filters"), dict) else None
+    if not name:
+        return _detail("name is required.")
+    if filters is None:
+        return _detail("filters must be an object.")
+    try:
+        _segment_queryset(request, filters)[:1]
+    except ValueError as exc:
+        return _detail(str(exc))
+    shared = bool(request.data.get("shared", False)) and has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE)
+    segment = SalesSegment.objects.create(name=name[:160], filters=filters, is_shared=shared, created_by=request.user)
+    return Response(_segment_data(segment), status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([CanManageSales])
+def sales_segment_assignment_preview(request, segment_id):
+    segment, denied = _segment_or_403(request, str(segment_id))
+    if denied:
+        return denied
+    target_id = str(request.data.get("targetAssigneeId", "")).strip()
+    if not target_id:
+        return _detail("targetAssigneeId is required.")
+    target = organization_user_or_404(request, target_id, active_only=True)
+    try:
+        return Response(_assignment_preview_payload(request, segment, target))
+    except ValueError as exc:
+        return _detail(str(exc))
+
+
+@api_view(["POST"])
+@permission_classes([CanManageSales])
+def sales_segment_assignment_apply(request, segment_id):
+    segment, denied = _segment_or_403(request, str(segment_id))
+    if denied:
+        return denied
+    target_id = str(request.data.get("targetAssigneeId", "")).strip()
+    token = str(request.data.get("previewToken", "")).strip()
+    if not target_id or not token:
+        return _detail("targetAssigneeId and previewToken are required.")
+    target = organization_user_or_404(request, target_id, active_only=True)
+    try:
+        preview = _assignment_preview_payload(request, segment, target)
+    except ValueError as exc:
+        return _detail(str(exc))
+    if token != preview["previewToken"]:
+        return _detail("Preview token is stale; refresh the assignment preview before applying.", status.HTTP_409_CONFLICT)
+    owners = Owner.objects.filter(id__in=preview["ownerIds"])
+    if not has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+        owners = owners.filter(assignee=request.user)
+    changed = 0
+    with transaction.atomic():
+        for owner in owners.select_for_update():
+            if owner.assignee_id == target.id:
+                continue
+            owner.assignee = target
+            owner.version += 1
+            owner.save(update_fields=("assignee", "version"))
+            OwnerLog.objects.create(owner=owner, creator=request.user, message=f"Sales segment assignment applied from segment {segment.name} to {target.full_name}.")
+            changed += 1
+    preview["changedOwnerCount"] = changed
+    return Response(preview)
 
 
 @api_view(["GET"])

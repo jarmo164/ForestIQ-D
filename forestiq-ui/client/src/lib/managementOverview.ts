@@ -49,6 +49,47 @@ export type SalesManagementOverview = {
   interventions: SalesIntervention[];
 };
 
+export type SalesFunnelStage = {
+  stage: string;
+  volume: number;
+  enteredOrBeyond: number;
+  conversionToNext: number;
+  medianDurationDays: number;
+  probability: number;
+  probabilitySource: "configured" | "default";
+  weightedValue: number;
+  valueSourceBreakdown: Record<string, number>;
+};
+
+export type SalesFunnel = {
+  period: { from: string | null; to: string | null; asOf: string; generatedAt: number };
+  segment: SalesSegment | null;
+  formula: string;
+  stages: SalesFunnelStage[];
+};
+
+export type SalesSegment = {
+  id: string;
+  name: string;
+  filters: Record<string, unknown>;
+  shared: boolean;
+  createdBy: ManagementUser;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SalesAssignmentPreview = {
+  segment: SalesSegment;
+  targetAssignee: ManagementUser;
+  dealCount: number;
+  ownerCount: number;
+  dealIds: string[];
+  ownerIds: string[];
+  currentAssigneeBreakdown: Record<string, number>;
+  previewToken: string;
+  changedOwnerCount?: number;
+};
+
 export function filterSalesTeam(
   team: SalesTeamMember[],
   memberId: string,
