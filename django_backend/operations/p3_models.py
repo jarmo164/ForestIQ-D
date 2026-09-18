@@ -68,3 +68,36 @@ class ReminderNotificationDelivery(OrganizationScopedModel):
                 name="p3_reminder_delivery_user_idx",
             )
         ]
+
+
+class RealtimeEvent(OrganizationScopedModel):
+    """Durable event envelope used for websocket deduplication and audit."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event_type = models.CharField(max_length=100)
+    topic = models.CharField(max_length=100, default="organization")
+    payload = models.JSONField(default=dict, blank=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="emitted_realtime_events",
+    )
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="realtime_events",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    organization_parent_fields = ("actor", "recipient")
+
+    class Meta:
+        db_table = "p3_realtime_events"
+        ordering = ("-created_at", "-id")
+        indexes = [
+            models.Index(fields=("organization", "created_at"), name="p3_realtime_org_time_idx"),
+            models.Index(fields=("organization", "recipient", "created_at"), name="p3_realtime_user_time_idx"),
+        ]
