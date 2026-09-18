@@ -7,7 +7,8 @@ from django.test import TestCase
 
 from accounts.models import Organization
 from accounts.organization_context import organization_scope
-from forestry.models import Cadastre, ForestRegistryFeature
+from forestry.models import Cadastre, ForestRegistryFeature, Owner
+from api.serializers import cadastre_summary, owner_summary
 from forestry.p3_models import WfsGenerationFeature, WfsLayerManifest
 from forestry.services.wfs_generations import deep_verify, publish_generation, rollback_generation, stage_generation
 
@@ -66,3 +67,76 @@ class P0WfsGenerationOrganizationStampingTests(TestCase):
         with organization_scope(self.other_organization.id):
             self.assertFalse(WfsGenerationFeature.objects.filter(id=staged_feature.id).exists())
             self.assertFalse(ForestRegistryFeature.objects.filter(source_layer=self.manifest.source_layer).exists())
+
+
+
+class P0TenantExternalIdentityTests(TestCase):
+    """The same registry identity may exist independently in multiple organizations."""
+
+    def setUp(self):
+        self.first = Organization.objects.create(slug="identity-a", name="Identity tenant A")
+        self.second = Organization.objects.create(slug="identity-b", name="Identity tenant B")
+
+    def test_same_public_owner_and_cadastre_ids_are_isolated_per_tenant(self):
+        cadastre_external_id = "79501:001:9999"
+        owner_external_id = "38101019999"
+
+        with organization_scope(self.first.id):
+            cadastre_a = Cadastre.objects.create(id=cadastre_external_id, name="Tenant A parcel")
+            owner_a = Owner.objects.create(id=owner_external_id, name="Tenant A owner")
+            cadastre_a.owners.add(owner_a)
+            ForestRegistryFeature.objects.create(
+                cadastre=cadastre_a,
+                source_layer="identity:test",
+                source_id="same-source",
+                title="A",
+            )
+
+        with organization_scope(self.second.id):
+            cadastre_b = Cadastre.objects.create(id=cadastre_external_id, name="Tenant B parcel")
+            owner_b = Owner.objects.create(id=owner_external_id, name="Tenant B owner")
+            cadastre_b.owners.add(owner_b)
+            ForestRegistryFeature.objects.create(
+                cadastre=cadastre_b,
+                source_layer="identity:test",
+                source_id="same-source",
+                title="B",
+            )
+
+        self.assertEqual(cadastre_a.public_id, cadastre_external_id)
+        self.assertEqual(cadastre_b.public_id, cadastre_external_id)
+        self.assertNotEqual(cadastre_a.pk, cadastre_b.pk)
+        self.assertEqual(owner_a.public_id, owner_external_id)
+        self.assertEqual(owner_b.public_id, owner_external_id)
+        self.assertNotEqual(owner_a.pk, owner_b.pk)
+        self.assertEqual(Cadastre.all_objects.filter(external_id=cadastre_external_id).count(), 2)
+        self.assertEqual(Owner.all_objects.filter(external_id=owner_external_id).count(), 2)
+
+        with organization_scope(self.first.id):
+            self.assertEqual(Cadastre.objects.get(id=cadastre_external_id).pk, cadastre_a.pk)
+            self.assertEqual(Owner.objects.get(id=owner_external_id).pk, owner_a.pk)
+            self.assertEqual(ForestRegistryFeature.objects.get(source_id="same-source").title, "A")
+            self.assertEqual(cadastre_summary(cadastre_a)["id"], cadastre_external_id)
+            self.assertEqual(owner_summary(owner_a)["id"], owner_external_id)
+
+        with organization_scope(self.second.id):
+            self.assertEqual(Cadastre.objects.get(id=cadastre_external_id).pk, cadastre_b.pk)
+            self.assertEqual(Owner.objects.get(id=owner_external_id).pk, owner_b.pk)
+            self.assertEqual(ForestRegistryFeature.objects.get(source_id="same-source").title, "B")
+            self.assertEqual(cadastre_summary(cadastre_b)["id"], cadastre_external_id)
+            self.assertEqual(owner_summary(owner_b)["id"], owner_external_id)
+
+    def test_explicit_external_id_lookup_does_not_cross_organization_boundary(self):
+        external_id = "79501:001:9998"
+        with organization_scope(self.first.id):
+            first = Cadastre.objects.create(id=external_id, name="First")
+        with organization_scope(self.second.id):
+            second = Cadastre.objects.create(id=external_id, name="Second")
+
+        with organization_scope(self.first.id):
+            self.assertEqual(Cadastre.objects.get(external_id=external_id).pk, first.pk)
+            self.assertFalse(Cadastre.objects.filter(pk=second.pk).exists())
+
+        with organization_scope(self.second.id):
+            self.assertEqual(Cadastre.objects.get(external_id=external_id).pk, second.pk)
+            self.assertFalse(Cadastre.objects.filter(pk=first.pk).exists())
