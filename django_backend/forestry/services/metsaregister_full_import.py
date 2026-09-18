@@ -216,7 +216,7 @@ def _refresh_notifications_for_subpart(*, cadastre: Cadastre, subpart_code: int)
     layer = settings.FORESTIQ_METSAREGISTER_NOTIFICATION_WFS_LAYER
     if not layer:
         return 0
-    cql = _cql_equals({settings.FORESTIQ_METSAREGISTER_NOTIFICATION_CADASTRE_FIELD: cadastre.id, settings.FORESTIQ_METSAREGISTER_NOTIFICATION_SUBPART_FIELD: subpart_code})
+    cql = _cql_equals({settings.FORESTIQ_METSAREGISTER_NOTIFICATION_CADASTRE_FIELD: cadastre.public_id, settings.FORESTIQ_METSAREGISTER_NOTIFICATION_SUBPART_FIELD: subpart_code})
     return sum(
         _upsert_notification(cadastre=cadastre, subpart_code=subpart_code, feature=feature)
         for page in _pages(
@@ -238,7 +238,7 @@ def _store_allocation(*, report: FullImportReport, layer: str, feature: dict[str
         report.skipped_features += 1
         return
     with transaction.atomic():
-        cadastre, created_cadastre = Cadastre.objects.get_or_create(id=cadastre_id)
+        cadastre, created_cadastre = Cadastre.objects.get_or_create(external_id=cadastre_id, defaults={"id": cadastre_id})
         report.cadastres += int(created_cadastre)
         was_new = not CadastreSubPart.objects.filter(cadastre=cadastre, sub_part_code=subpart_code).exists()
         CadastreSubPart.objects.update_or_create(cadastre=cadastre, sub_part_code=subpart_code, defaults={"tree_type_code": str(properties.get("peapuuliik_kood") or ""), "area": _number(properties.get("pindala")), "polygon": geometry.get("coordinates", []), "boundary": geometry_from_geojson(geometry, polygon_only=True)})
