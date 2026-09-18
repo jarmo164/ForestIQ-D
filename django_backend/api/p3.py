@@ -5,7 +5,6 @@ import base64
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 import json
 import ipaddress
-import math
 import time
 from urllib.parse import urlparse
 
@@ -606,18 +605,25 @@ def map_search(request):
             if len(response.content) > settings.FORESTIQ_INAKS_MAX_RESPONSE_BYTES:
                 return _detail("Address-search response exceeded the size policy.", status.HTTP_502_BAD_GATEWAY)
             payload = response.json()
-            raw = payload.get("features", payload.get("results", [])) if isinstance(payload, dict) else []
+            raw = (
+                payload.get("addresses")
+                or payload.get("features")
+                or payload.get("results")
+                or []
+            ) if isinstance(payload, dict) else []
             results = []
             for item in raw[: settings.FORESTIQ_MAP_SEARCH_RESULT_LIMIT]:
                 if not isinstance(item, dict):
                     continue
                 properties = item.get("properties") if isinstance(item.get("properties"), dict) else item
                 geometry = item.get("geometry") if isinstance(item.get("geometry"), dict) else None
+                is_cadastre = str(properties.get("liikVal") or "").upper() == "KATASTRIYKSUS"
+                cadastral_id = properties.get("katastritunnus") or (properties.get("tunnus") if is_cadastre else None)
                 results.append({
-                    "id": str(properties.get("id") or properties.get("tunnus") or properties.get("ads_oid") or ""),
-                    "label": str(properties.get("label") or properties.get("name") or properties.get("tais_aadress") or properties.get("aadress") or ""),
-                    "cadastreId": properties.get("tunnus") or properties.get("katastritunnus"),
-                    "address": properties.get("tais_aadress") or properties.get("aadress"),
+                    "id": str(properties.get("adr_id") or properties.get("ads_oid") or properties.get("id") or properties.get("tunnus") or ""),
+                    "label": str(properties.get("taisaadress") or properties.get("pikkaadress") or properties.get("aadresstekst") or properties.get("label") or properties.get("name") or ""),
+                    "cadastreId": cadastral_id,
+                    "address": properties.get("taisaadress") or properties.get("pikkaadress") or properties.get("aadresstekst"),
                     "geometry": geometry,
                     "source": "IN_AKS",
                 })
