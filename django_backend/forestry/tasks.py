@@ -174,12 +174,12 @@ def run_cadastre_sync(
                     run,
                     {"skipped": "No eligible failed source parts were supplied."},
                     status=DataSyncRun.Status.SKIPPED,
-                    cursor={"cadastreId": run.cadastre_id},
+                    cursor={"cadastreId": run.cadastre.public_id},
                     retry_count=self.request.retries,
                 )
             for source, importer in selected_importers:
                 try:
-                    result[source] = importer(run.cadastre_id, organization_id=organization_id)
+                    result[source] = importer(run.cadastre.public_id, organization_id=organization_id)
                 except Exception as exc:  # Keep successful source parts auditable and retryable.
                     errors[source] = str(exc)[:4000]
             if errors:
