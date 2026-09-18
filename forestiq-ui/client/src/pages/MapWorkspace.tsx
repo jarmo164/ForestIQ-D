@@ -1,15 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import type { Map as MapLibreMap, MapLayerMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
+  CheckCircle2,
   Eye,
   EyeOff,
   Layers3,
   MapPinned,
   RefreshCw,
+  Save,
+  Send,
   SlidersHorizontal,
   Trees,
+  XCircle,
 } from "lucide-react";
 
 import { CadastreWorkspaceDialog, type CadastreWorkspace } from "@/components/CadastreWorkspaceDialog";
@@ -35,6 +39,19 @@ type MapFilters = {
   activeDeal: boolean;
   activityDays: string;
   dealStage: string;
+};
+type MapWorkbasket = {
+  id: string;
+  name: string;
+  purpose?: string | null;
+  dueAt?: string | null;
+  permission: "VIEW" | "EDIT";
+  status: "DRAFT" | "PENDING" | "ACCEPTED" | "CANCELLED";
+  cadastreCount: number;
+  editable?: boolean | null;
+  assignedToUser?: { id: string; name: string } | null;
+  assignedToRole?: string | null;
+  items?: { cadastre: { id: string; name?: string | null } }[] | null;
 };
 
 const ESTONIA_BOUNDS: [number, number, number, number] = [21.7, 57.5, 28.3, 59.9];
@@ -210,6 +227,26 @@ export default function MapWorkspace() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<CadastreWorkspace | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [selectedCadastreIds, setSelectedCadastreIds] = useState<string[]>([]);
+  const [basketName, setBasketName] = useState("");
+  const [basketPurpose, setBasketPurpose] = useState("");
+  const [transferToUser, setTransferToUser] = useState("");
+  const [workbaskets, setWorkbaskets] = useState<MapWorkbasket[]>([]);
+  const [activeBasket, setActiveBasket] = useState<MapWorkbasket | null>(null);
+  const [basketStatus, setBasketStatus] = useState<string | null>(null);
+
+  const loadWorkbaskets = useCallback(async () => {
+    try {
+      const records = await api.get<unknown>("/services/map/workbaskets");
+      setWorkbaskets(Array.isArray(records) ? records as MapWorkbasket[] : []);
+    } catch (error) {
+      setBasketStatus(error instanceof Error ? error.message : "Töökorve ei saanud laadida.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadWorkbaskets();
+  }, [loadWorkbaskets]);
 
   useEffect(() => {
     if (!container.current || map.current) return;
@@ -375,6 +412,7 @@ export default function MapWorkspace() {
           if (layer.key === "cadastres") {
             const id = String(properties.id || properties.cadastreId || "");
             if (!id) return;
+            setSelectedCadastreIds((current) => (current.includes(id) ? current : [...current, id]));
             setWorkspaceId(id);
             setWorkspace(null);
             setWorkspaceError(null);
@@ -409,6 +447,84 @@ export default function MapWorkspace() {
       map.current = null;
     };
   }, []);
+
+  const openBasket = async (basketId: string) => {
+    try {
+      const basket = await api.get<MapWorkbasket>(`/services/map/workbaskets/${encodeURIComponent(basketId)}`);
+      setActiveBasket(basket);
+      setSelectedCadastreIds((basket.items ?? []).map((item) => item.cadastre.id));
+      setBasketName(basket.name);
+      setBasketPurpose(basket.purpose ?? "");
+      setBasketStatus(`${basket.name} avatud.`);
+    } catch (error) {
+      setBasketStatus(error instanceof Error ? error.message : "Töökorvi avamine ebaõnnestus.");
+    }
+  };
+
+  const saveBasket = async () => {
+    if (!selectedCadastreIds.length) {
+      setBasketStatus("Vali vähemalt üks katastriüksus.");
+      return;
+    }
+    try {
+      const payload = { name: basketName || "Kaarditöökorv", purpose: basketPurpose, cadastreIds: selectedCadastreIds };
+      const basket = activeBasket?.editable
+        ? await api.patch<MapWorkbasket>(`/services/map/workbaskets/${encodeURIComponent(activeBasket.id)}`, payload)
+        : await api.post<MapWorkbasket>("/services/map/workbaskets", payload);
+      setActiveBasket(basket);
+      setBasketName(basket.name);
+      setBasketPurpose(basket.purpose ?? "");
+      setBasketStatus(`${basket.name} salvestatud.`);
+      await loadWorkbaskets();
+    } catch (error) {
+      setBasketStatus(error instanceof Error ? error.message : "Töökorvi salvestamine ebaõnnestus.");
+    }
+  };
+
+  const transferBasket = async () => {
+    if (!activeBasket) {
+      setBasketStatus("Salvesta või ava töökorv enne üleandmist.");
+      return;
+    }
+    if (!transferToUser.trim()) {
+      setBasketStatus("Sisesta kasutaja ID üleandmiseks.");
+      return;
+    }
+    try {
+      const basket = await api.post<MapWorkbasket>(`/services/map/workbaskets/${encodeURIComponent(activeBasket.id)}/transfer`, {
+        assignedToUserId: transferToUser.trim(),
+        permission: "EDIT",
+        purpose: basketPurpose,
+      });
+      setActiveBasket(basket);
+      setBasketStatus(`${basket.name} üle antud.`);
+      await loadWorkbaskets();
+    } catch (error) {
+      setBasketStatus(error instanceof Error ? error.message : "Töökorvi üleandmine ebaõnnestus.");
+    }
+  };
+
+  const acceptBasket = async (basketId: string) => {
+    try {
+      const basket = await api.post<MapWorkbasket>(`/services/map/workbaskets/${encodeURIComponent(basketId)}/accept`, {});
+      setActiveBasket(basket);
+      setBasketStatus(`${basket.name} vastu võetud.`);
+      await loadWorkbaskets();
+    } catch (error) {
+      setBasketStatus(error instanceof Error ? error.message : "Töökorvi vastuvõtmine ebaõnnestus.");
+    }
+  };
+
+  const cancelBasket = async (basketId: string) => {
+    try {
+      const basket = await api.post<MapWorkbasket>(`/services/map/workbaskets/${encodeURIComponent(basketId)}/cancel`, {});
+      setActiveBasket(basket);
+      setBasketStatus(`${basket.name} tühistatud.`);
+      await loadWorkbaskets();
+    } catch (error) {
+      setBasketStatus(error instanceof Error ? error.message : "Töökorvi tühistamine ebaõnnestus.");
+    }
+  };
 
   const toggle = (key: LayerKey) => {
     const next = !visibleRef.current[key];
@@ -561,6 +677,84 @@ export default function MapWorkspace() {
                   Suumige sisse ning klõpsake katastriüksusel, et avada selle terviklik detailaken.
                 </p>
               )}
+            </div>
+            <div className="mt-7 border-t border-[#e3ebe1] pt-5">
+              <div className="flex items-center gap-2 text-sm font-bold text-[#28624d]">
+                <Save className="h-4 w-4" /> Kaarditöökorv
+              </div>
+              <div className="mt-3 rounded-xl border border-[#e2eae0] bg-white p-3 text-sm">
+                <label className="block text-xs font-semibold text-[#587065]">
+                  Nimi
+                  <input
+                    value={basketName}
+                    onChange={(event) => setBasketName(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[#dbe8d8] bg-white px-2 py-1.5 text-sm"
+                    placeholder="Nt Hindamise välitöö"
+                  />
+                </label>
+                <label className="mt-3 block text-xs font-semibold text-[#587065]">
+                  Eesmärk
+                  <textarea
+                    value={basketPurpose}
+                    onChange={(event) => setBasketPurpose(event.target.value)}
+                    className="mt-1 min-h-16 w-full rounded-lg border border-[#dbe8d8] bg-white px-2 py-1.5 text-sm"
+                    placeholder="Milleks see valik üle antakse?"
+                  />
+                </label>
+                <div className="mt-3 space-y-2">
+                  {selectedCadastreIds.length ? selectedCadastreIds.map((id) => (
+                    <div key={id} className="flex items-center justify-between gap-2 rounded-lg bg-[#edf5ed] px-2 py-1.5 font-mono text-xs text-[#1f5d47]">
+                      <span>{id}</span>
+                      <button type="button" onClick={() => setSelectedCadastreIds((current) => current.filter((item) => item !== id))} aria-label={`Eemalda ${id}`}>
+                        <XCircle className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )) : <p className="text-xs leading-5 text-[#65756b]">Klõpsa kaardil katastriüksuseid, et need töökorvi lisada.</p>}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void saveBasket()} className="inline-flex items-center gap-1 rounded-lg bg-[#28704f] px-3 py-2 text-xs font-bold text-white">
+                    <Save className="h-4 w-4" /> Salvesta
+                  </button>
+                  <button type="button" onClick={() => { setActiveBasket(null); setBasketName(""); setBasketPurpose(""); setSelectedCadastreIds([]); }} className="rounded-lg border border-[#dbe8d8] px-3 py-2 text-xs font-bold text-[#28624d]">
+                    Uus
+                  </button>
+                </div>
+                <div className="mt-4 border-t border-[#e7eee5] pt-3">
+                  <label className="block text-xs font-semibold text-[#587065]">
+                    Üle kasutajale
+                    <input
+                      value={transferToUser}
+                      onChange={(event) => setTransferToUser(event.target.value)}
+                      className="mt-1 w-full rounded-lg border border-[#dbe8d8] bg-white px-2 py-1.5 text-sm"
+                      placeholder="kasutaja ID"
+                    />
+                  </label>
+                  <button type="button" onClick={() => void transferBasket()} className="mt-2 inline-flex items-center gap-1 rounded-lg border border-[#9bc3a9] px-3 py-2 text-xs font-bold text-[#28624d]">
+                    <Send className="h-4 w-4" /> Anna EDIT õigusega üle
+                  </button>
+                </div>
+                {basketStatus && <p className="mt-3 text-xs text-[#65756b]">{basketStatus}</p>}
+              </div>
+              <div className="mt-3 space-y-2">
+                {workbaskets.slice(0, 6).map((basket) => (
+                  <article key={basket.id} className="rounded-xl border border-[#e2eae0] bg-white p-3 text-sm">
+                    <button type="button" onClick={() => void openBasket(basket.id)} className="w-full text-left">
+                      <strong>{basket.name}</strong>
+                      <span className="mt-1 block text-xs text-[#65756b]">{basket.status} · {basket.permission} · {basket.cadastreCount} üksust</span>
+                    </button>
+                    {basket.status === "PENDING" && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button type="button" onClick={() => void acceptBasket(basket.id)} className="inline-flex items-center gap-1 rounded-lg bg-[#edf5ed] px-2 py-1 text-xs font-bold text-[#28704f]">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Võta vastu
+                        </button>
+                        <button type="button" onClick={() => void cancelBasket(basket.id)} className="inline-flex items-center gap-1 rounded-lg bg-[#fff4f1] px-2 py-1 text-xs font-bold text-[#9c3b2c]">
+                          <XCircle className="h-3.5 w-3.5" /> Tühista
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
             </div>
           </aside>
         </div>

@@ -9,7 +9,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from accounts.models import Organization, Privilege, PrivilegeCode, User
+from accounts.models import Organization, OrganizationRole, Privilege, PrivilegeCode, User
 from api.auth import token_pair
 from forestry.models import Cadastre, CadastreLabel, CadastreNotification, Owner, OwnerCadastre
 from operations.models import Contract, Deal, DealOffer, DealStage
@@ -19,8 +19,10 @@ from operations.p1_models import (
     DataQualityIssue,
     DecisionEvidenceSnapshot,
     DealLossOutcome,
+    MapWorkbasket,
     NextAction,
     OwnershipRelation,
+    WorkflowAuditEvent,
 )
 
 
@@ -320,3 +322,105 @@ class P1WorkflowApiTests(TestCase):
         immutable.snapshot = {"changed": True}
         with self.assertRaises(ValidationError):
             immutable.save()
+
+    def test_map_workbasket_transfer_permissions_and_audit(self):
+        second = Cadastre.objects.create(id="12345:001:0002", name="Second parcel", organization=self.organization)
+        recipient = User.objects.create_user(
+            "map-recipient",
+            "Map Recipient",
+            "very-secure-password",
+            default_organization=self.organization,
+        )
+        recipient.organization_memberships.filter(organization=self.organization).update(roles=[OrganizationRole.CRM_MANAGER])
+        recipient_client = APIClient()
+        recipient_client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_pair(recipient)['actualToken']['token']}")
+
+        created = self.client.post(
+            "/api/services/map/workbaskets",
+            {"name": "Handover basket", "description": "Field review", "cadastreIds": [self.cadastre.id, second.id]},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        basket_id = created.data["id"]
+        self.assertEqual(created.data["cadastreCount"], 2)
+        self.assertEqual(MapWorkbasket.objects.get(id=basket_id).items.count(), 2)
+
+        transferred = self.client.post(
+            f"/api/services/map/workbaskets/{basket_id}/transfer",
+            {
+                "assignedToUserId": recipient.id,
+                "permission": "VIEW",
+                "purpose": "Check access before offer",
+                "dueAt": (timezone.now() + timedelta(days=2)).isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(transferred.status_code, 200, transferred.data)
+        self.assertEqual(transferred.data["status"], "PENDING")
+        self.assertEqual(transferred.data["assignedToUser"]["id"], recipient.id)
+
+        view_only_update = recipient_client.patch(
+            f"/api/services/map/workbaskets/{basket_id}",
+            {"cadastreIds": [self.cadastre.id]},
+            format="json",
+        )
+        self.assertEqual(view_only_update.status_code, 403, view_only_update.data)
+
+        accepted = recipient_client.post(f"/api/services/map/workbaskets/{basket_id}/accept", {}, format="json")
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertEqual(accepted.data["status"], "ACCEPTED")
+        self.assertEqual(accepted.data["acceptedBy"]["id"], recipient.id)
+
+        cancel_accepted = self.client.post(f"/api/services/map/workbaskets/{basket_id}/cancel", {}, format="json")
+        self.assertEqual(cancel_accepted.status_code, 409, cancel_accepted.data)
+        self.assertTrue(WorkflowAuditEvent.objects.filter(event_type="MAP_WORKBASKET_ACCEPTED", payload__workbasketId=basket_id).exists())
+
+        editable = self.client.post(
+            "/api/services/map/workbaskets",
+            {"name": "Editable basket", "cadastreIds": [self.cadastre.id]},
+            format="json",
+        )
+        self.assertEqual(editable.status_code, 201, editable.data)
+        edit_id = editable.data["id"]
+        edit_transfer = self.client.post(
+            f"/api/services/map/workbaskets/{edit_id}/transfer",
+            {"assignedToUserId": recipient.id, "permission": "EDIT", "purpose": "Add missing units"},
+            format="json",
+        )
+        self.assertEqual(edit_transfer.status_code, 200, edit_transfer.data)
+        edit_update = recipient_client.patch(
+            f"/api/services/map/workbaskets/{edit_id}",
+            {"cadastreIds": [self.cadastre.id, second.id]},
+            format="json",
+        )
+        self.assertEqual(edit_update.status_code, 200, edit_update.data)
+        self.assertEqual(edit_update.data["cadastreCount"], 2)
+
+        cancelled = self.client.post(f"/api/services/map/workbaskets/{edit_id}/cancel", {}, format="json")
+        self.assertEqual(cancelled.status_code, 200, cancelled.data)
+        self.assertEqual(cancelled.data["status"], "CANCELLED")
+
+    def test_map_workbasket_blocks_cross_organization_targets(self):
+        other_org = Organization.objects.create(slug="other-map-org", name="Other map org")
+        other_user = User.objects.create_user("other-map-user", "Other User", "very-secure-password", default_organization=other_org)
+        other_cadastre = Cadastre.objects.create(id="99999:001:0001", name="Other org parcel", organization=other_org)
+
+        inaccessible_cadastre = self.client.post(
+            "/api/services/map/workbaskets",
+            {"name": "Bad basket", "cadastreIds": [other_cadastre.id]},
+            format="json",
+        )
+        self.assertEqual(inaccessible_cadastre.status_code, 400, inaccessible_cadastre.data)
+
+        created = self.client.post(
+            "/api/services/map/workbaskets",
+            {"name": "Org safe basket", "cadastreIds": [self.cadastre.id]},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        cross_user = self.client.post(
+            f"/api/services/map/workbaskets/{created.data['id']}/transfer",
+            {"assignedToUserId": other_user.id, "permission": "VIEW"},
+            format="json",
+        )
+        self.assertEqual(cross_user.status_code, 403, cross_user.data)

@@ -21,6 +21,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from accounts.models import PrivilegeCode
+from accounts.models import User
 from forestry.models import Cadastre, CadastreNotification, ForestRegistryFeature, Owner, OwnerCadastre, OwnerLog
 from operations.models import Contract, ContractHistory, Deal, DealOffer, DealStage
 from operations.p1_models import (
@@ -34,6 +35,8 @@ from operations.p1_models import (
     DealLossOutcome,
     DealWorkState,
     LossReasonCode,
+    MapWorkbasket,
+    MapWorkbasketItem,
     NextAction,
     OwnershipRelation,
     OwnershipRelationEvent,
@@ -45,7 +48,7 @@ from .concurrency import requested_version, version_conflict_response
 from .contract_templates import render_template_preview_html
 from .organization import organization_user_or_404, request_organization_id
 from .parity import _commercial, _get_deal, _update_deal_or_conflict
-from .permissions import CanManageOwners, IsAdmin, can_access_deal, can_access_owner, has_membership_privilege
+from .permissions import CanManageOwners, IsAdmin, can_access_deal, can_access_owner, current_membership, has_membership_privilege
 from .serializers import json_value, owner_summary, user_data
 
 
@@ -181,6 +184,269 @@ def _event_data(event: WorkflowAuditEvent):
         "payload": event.payload,
         "createdAt": json_value(event.created_at),
     }
+
+
+def _request_role_codes(request) -> set[str]:
+    membership = current_membership(request)
+    return set(getattr(membership, "role_codes", []) or [])
+
+
+def _workbasket_access_q(request):
+    role_codes = _request_role_codes(request)
+    query = Q(created_by=request.user) | Q(assigned_to_user=request.user)
+    if role_codes:
+        query |= Q(assigned_to_role__in=role_codes)
+    return query
+
+
+def _can_view_workbasket(request, basket: MapWorkbasket) -> bool:
+    return bool(
+        has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE)
+        or basket.created_by_id == request.user.id
+        or basket.assigned_to_user_id == request.user.id
+        or (basket.assigned_to_role and basket.assigned_to_role in _request_role_codes(request))
+    )
+
+
+def _can_edit_workbasket(request, basket: MapWorkbasket) -> bool:
+    if basket.status == MapWorkbasket.Status.CANCELLED:
+        return False
+    if basket.created_by_id == request.user.id:
+        return True
+    if basket.permission != MapWorkbasket.Permission.EDIT:
+        return False
+    return bool(
+        basket.assigned_to_user_id == request.user.id
+        or (basket.assigned_to_role and basket.assigned_to_role in _request_role_codes(request))
+    )
+
+
+def _workbasket_or_403(request, basket_id: str):
+    basket = get_object_or_404(
+        MapWorkbasket.objects.select_related("created_by", "assigned_to_user", "accepted_by").prefetch_related("items__cadastre", "items__added_by"),
+        id=basket_id,
+    )
+    if not _can_view_workbasket(request, basket):
+        return None, _detail("You do not have access to this map workbasket.", status.HTTP_403_FORBIDDEN)
+    return basket, None
+
+
+def _cadastre_item_data(item: MapWorkbasketItem):
+    cadastre = item.cadastre
+    return {
+        "id": str(item.id),
+        "cadastre": {
+            "id": cadastre.id,
+            "name": cadastre.name or None,
+            "county": cadastre.county or None,
+            "municipality": cadastre.municipality or None,
+            "address": cadastre.address or None,
+            "area": json_value(cadastre.area),
+            "forestArea": json_value(cadastre.forest_area),
+            "mkDate": json_value(cadastre.mk_date),
+        },
+        "addedBy": user_data(item.added_by),
+        "addedAt": json_value(item.added_at),
+        "sortOrder": item.sort_order,
+    }
+
+
+def _workbasket_payload(request, basket: MapWorkbasket, *, include_items: bool = True):
+    items = list(basket.items.select_related("cadastre", "added_by").all()) if include_items else []
+    return {
+        "id": str(basket.id),
+        "name": basket.name,
+        "description": basket.description or None,
+        "purpose": basket.purpose or None,
+        "dueAt": json_value(basket.due_at),
+        "permission": basket.permission,
+        "status": basket.status,
+        "createdBy": user_data(basket.created_by),
+        "assignedToUser": user_data(basket.assigned_to_user),
+        "assignedToRole": basket.assigned_to_role or None,
+        "acceptedBy": user_data(basket.accepted_by),
+        "acceptedAt": json_value(basket.accepted_at),
+        "cancelledAt": json_value(basket.cancelled_at),
+        "createdAt": json_value(basket.created_at),
+        "updatedAt": json_value(basket.updated_at),
+        "cadastreCount": len(items) if include_items else basket.items.count(),
+        "editable": _can_edit_workbasket(request, basket),
+        "items": [_cadastre_item_data(item) for item in items] if include_items else None,
+    }
+
+
+def _replace_workbasket_items(basket: MapWorkbasket, cadastre_ids: list[str], actor) -> None:
+    if len(cadastre_ids) > 250:
+        raise ValueError("cadastreIds may contain at most 250 entries.")
+    ordered_ids = []
+    seen = set()
+    for cadastre_id in cadastre_ids:
+        value = str(cadastre_id).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered_ids.append(value)
+    cadastres = {item.id: item for item in Cadastre.objects.filter(id__in=ordered_ids)}
+    missing = [item for item in ordered_ids if item not in cadastres]
+    if missing:
+        raise ValueError(f"Cadastre is not accessible: {missing[0]}.")
+    MapWorkbasketItem.objects.filter(basket=basket).delete()
+    for index, cadastre_id in enumerate(ordered_ids):
+        MapWorkbasketItem.objects.create(basket=basket, cadastre=cadastres[cadastre_id], added_by=actor, sort_order=index)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([CanManageOwners])
+def map_workbaskets(request):
+    if request.method == "GET":
+        queryset = MapWorkbasket.objects.filter(_workbasket_access_q(request)).select_related("created_by", "assigned_to_user", "accepted_by").prefetch_related("items")
+        status_filter = str(request.query_params.get("status", "")).strip().upper()
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        return Response([_workbasket_payload(request, basket, include_items=False) for basket in queryset[:200]])
+
+    name = str(request.data.get("name", "")).strip()
+    if not name:
+        return _detail("name is required.")
+    cadastre_ids = request.data.get("cadastreIds") or []
+    if not isinstance(cadastre_ids, list) or not cadastre_ids:
+        return _detail("cadastreIds must be a non-empty list.")
+    try:
+        due_at = _parse_datetime(request.data.get("dueAt"), "dueAt")
+        with transaction.atomic():
+            basket = MapWorkbasket.objects.create(
+                name=name[:160],
+                description=str(request.data.get("description", "")).strip(),
+                purpose=str(request.data.get("purpose", "")).strip(),
+                due_at=due_at,
+                created_by=request.user,
+            )
+            _replace_workbasket_items(basket, cadastre_ids, request.user)
+            _audit(actor=request.user, event_type="MAP_WORKBASKET_CREATED", payload={"workbasketId": str(basket.id), "cadastreIds": cadastre_ids})
+    except ValueError as exc:
+        return _detail(str(exc))
+    return Response(_workbasket_payload(request, basket), status=status.HTTP_201_CREATED)
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([CanManageOwners])
+def map_workbasket_detail(request, basket_id: str):
+    basket, denied = _workbasket_or_403(request, basket_id)
+    if denied:
+        return denied
+    if request.method == "GET":
+        return Response(_workbasket_payload(request, basket))
+    if not _can_edit_workbasket(request, basket):
+        return _detail("This map workbasket is view-only for you.", status.HTTP_403_FORBIDDEN)
+    try:
+        with transaction.atomic():
+            changed_fields = []
+            if "name" in request.data:
+                name = str(request.data.get("name", "")).strip()
+                if not name:
+                    return _detail("name cannot be blank.")
+                basket.name = name[:160]
+                changed_fields.append("name")
+            if "description" in request.data:
+                basket.description = str(request.data.get("description", "")).strip()
+                changed_fields.append("description")
+            if "purpose" in request.data:
+                basket.purpose = str(request.data.get("purpose", "")).strip()
+                changed_fields.append("purpose")
+            if "cadastreIds" in request.data:
+                cadastre_ids = request.data.get("cadastreIds")
+                if not isinstance(cadastre_ids, list):
+                    return _detail("cadastreIds must be a list.")
+                _replace_workbasket_items(basket, cadastre_ids, request.user)
+                changed_fields.append("cadastreIds")
+            if changed_fields:
+                basket.save(update_fields=("name", "description", "purpose", "updated_at"))
+                _audit(actor=request.user, event_type="MAP_WORKBASKET_UPDATED", payload={"workbasketId": str(basket.id), "fields": changed_fields})
+    except ValueError as exc:
+        return _detail(str(exc))
+    basket.refresh_from_db()
+    return Response(_workbasket_payload(request, basket))
+
+
+@api_view(["POST"])
+@permission_classes([CanManageOwners])
+def map_workbasket_transfer(request, basket_id: str):
+    basket, denied = _workbasket_or_403(request, basket_id)
+    if denied:
+        return denied
+    if basket.created_by_id != request.user.id and not has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+        return _detail("Only the creator or manager can transfer this map workbasket.", status.HTTP_403_FORBIDDEN)
+    if basket.status == MapWorkbasket.Status.ACCEPTED:
+        return _detail("Accepted map workbaskets cannot be transferred again.", status.HTTP_409_CONFLICT)
+    permission = str(request.data.get("permission", MapWorkbasket.Permission.VIEW)).upper()
+    if permission not in MapWorkbasket.Permission.values:
+        return _detail("permission must be VIEW or EDIT.")
+    assigned_user = None
+    assigned_user_id = str(request.data.get("assignedToUserId") or "").strip()
+    assigned_role = str(request.data.get("assignedToRole") or "").strip().upper()
+    if bool(assigned_user_id) == bool(assigned_role):
+        return _detail("Provide exactly one of assignedToUserId or assignedToRole.")
+    if assigned_user_id:
+        assigned_user = get_object_or_404(User, id=assigned_user_id)
+        if not assigned_user.organizations.filter(id=request_organization_id(request)).exists():
+            return _detail("Cannot transfer a map workbasket across organizations.", status.HTTP_403_FORBIDDEN)
+    try:
+        due_at = _parse_datetime(request.data.get("dueAt"), "dueAt")
+    except ValueError as exc:
+        return _detail(str(exc))
+    basket.assigned_to_user = assigned_user
+    basket.assigned_to_role = assigned_role
+    basket.permission = permission
+    basket.purpose = str(request.data.get("purpose", "")).strip()
+    basket.due_at = due_at
+    basket.status = MapWorkbasket.Status.PENDING
+    basket.accepted_by = None
+    basket.accepted_at = None
+    basket.cancelled_at = None
+    basket.save(update_fields=("assigned_to_user", "assigned_to_role", "permission", "purpose", "due_at", "status", "accepted_by", "accepted_at", "cancelled_at", "updated_at"))
+    _audit(
+        actor=request.user,
+        event_type="MAP_WORKBASKET_TRANSFERRED",
+        payload={"workbasketId": str(basket.id), "assignedToUserId": assigned_user_id or None, "assignedToRole": assigned_role or None, "permission": permission},
+    )
+    return Response(_workbasket_payload(request, basket))
+
+
+@api_view(["POST"])
+@permission_classes([CanManageOwners])
+def map_workbasket_accept(request, basket_id: str):
+    basket, denied = _workbasket_or_403(request, basket_id)
+    if denied:
+        return denied
+    if basket.status != MapWorkbasket.Status.PENDING:
+        return _detail("Only pending map workbaskets can be accepted.", status.HTTP_409_CONFLICT)
+    if basket.created_by_id == request.user.id and not (basket.assigned_to_user_id == request.user.id or basket.assigned_to_role in _request_role_codes(request)):
+        return _detail("The creator cannot accept an unassigned transfer.", status.HTTP_403_FORBIDDEN)
+    if not (basket.assigned_to_user_id == request.user.id or basket.assigned_to_role in _request_role_codes(request)):
+        return _detail("Only the assigned recipient can accept this map workbasket.", status.HTTP_403_FORBIDDEN)
+    basket.status = MapWorkbasket.Status.ACCEPTED
+    basket.accepted_by = request.user
+    basket.accepted_at = timezone.now()
+    basket.save(update_fields=("status", "accepted_by", "accepted_at", "updated_at"))
+    _audit(actor=request.user, event_type="MAP_WORKBASKET_ACCEPTED", payload={"workbasketId": str(basket.id)})
+    return Response(_workbasket_payload(request, basket))
+
+
+@api_view(["POST"])
+@permission_classes([CanManageOwners])
+def map_workbasket_cancel(request, basket_id: str):
+    basket, denied = _workbasket_or_403(request, basket_id)
+    if denied:
+        return denied
+    if basket.created_by_id != request.user.id and not has_membership_privilege(request, PrivilegeCode.ADMIN, PrivilegeCode.OWNER_PROFILE):
+        return _detail("Only the creator or manager can cancel this map workbasket transfer.", status.HTTP_403_FORBIDDEN)
+    if basket.status != MapWorkbasket.Status.PENDING:
+        return _detail("Only pending map workbasket transfers can be cancelled.", status.HTTP_409_CONFLICT)
+    basket.status = MapWorkbasket.Status.CANCELLED
+    basket.cancelled_at = timezone.now()
+    basket.save(update_fields=("status", "cancelled_at", "updated_at"))
+    _audit(actor=request.user, event_type="MAP_WORKBASKET_CANCELLED", payload={"workbasketId": str(basket.id)})
+    return Response(_workbasket_payload(request, basket))
 
 
 @api_view(["GET"])

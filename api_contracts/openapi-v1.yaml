@@ -1520,6 +1520,95 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/services/map/workbaskets:
+    get:
+      operationId: services_map_workbaskets_retrieve
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: services_map_workbaskets_create
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/workbaskets/{basket_id}:
+    get:
+      operationId: services_map_workbaskets_retrieve_2
+      parameters:
+      - in: path
+        name: basket_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: services_map_workbaskets_partial_update
+      parameters:
+      - in: path
+        name: basket_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/workbaskets/{basket_id}/accept:
+    post:
+      operationId: services_map_workbaskets_accept_create
+      parameters:
+      - in: path
+        name: basket_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/workbaskets/{basket_id}/cancel:
+    post:
+      operationId: services_map_workbaskets_cancel_create
+      parameters:
+      - in: path
+        name: basket_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
+  /api/v1/services/map/workbaskets/{basket_id}/transfer:
+    post:
+      operationId: services_map_workbaskets_transfer_create
+      parameters:
+      - in: path
+        name: basket_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - services
+      responses:
+        '200':
+          description: No response body
   /api/v1/services/messages/new-count:
     get:
       operationId: services_messages_new_count_retrieve
