@@ -163,6 +163,7 @@ urlpatterns = [
     path("services/reminders", views.reminders),
     path("services/reminders/<int:reminder_id>", views.reminder_detail),
     path("services/reminders-dashboard", views.reminders_dashboard),
+    path("services/notification-preferences", p3.notification_preferences),
     path("services/persons-dump", views.persons_dump),
     path("services/persons-dump/<int:person_id>", views.persons_dump_detail),
     path("services/messages/received", views.received_messages),
