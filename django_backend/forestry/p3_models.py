@@ -54,3 +54,105 @@ class ExternalMapLayer(OrganizationScopedModel):
         constraints = [
             models.UniqueConstraint(fields=("organization", "key"), name="p3_uq_external_layer_key"),
         ]
+
+
+class WfsLayerManifest(OrganizationScopedModel):
+    """Tenant-scoped policy for one Metsaregister WFS source layer."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    key = models.SlugField(max_length=100)
+    source_layer = models.CharField(max_length=200)
+    cadastre_field = models.CharField(max_length=100, default="katastri_nr")
+    enabled = models.BooleanField(default=True)
+    allow_schema_drift = models.BooleanField(default=False)
+    expected_schema_hash = models.CharField(max_length=64, blank=True)
+    expected_schema_fields = models.JSONField(default=dict, blank=True)
+    retention_generations = models.PositiveSmallIntegerField(default=2)
+    last_verified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "p3_wfs_layer_manifests"
+        ordering = ("key",)
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "key"), name="p3_uq_wfs_manifest_key"),
+            models.UniqueConstraint(fields=("organization", "source_layer"), name="p3_uq_wfs_manifest_layer"),
+        ]
+
+
+class WfsGeneration(OrganizationScopedModel):
+    class Status(models.TextChoices):
+        STAGING = "STAGING", "Staging"
+        READY = "READY", "Ready"
+        ACTIVE = "ACTIVE", "Active"
+        RETIRED = "RETIRED", "Retired"
+        FAILED = "FAILED", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    manifest = models.ForeignKey(WfsLayerManifest, on_delete=models.CASCADE, related_name="generations")
+    sequence = models.PositiveIntegerField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.STAGING)
+    feature_count = models.PositiveBigIntegerField(default=0)
+    cadastre_count = models.PositiveIntegerField(default=0)
+    schema_hash = models.CharField(max_length=64, blank=True)
+    schema_fields = models.JSONField(default=dict, blank=True)
+    validation = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_wfs_generations",
+    )
+    schema_drift_approved_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_wfs_schema_drifts",
+    )
+    schema_drift_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    observed_at = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    retired_at = models.DateTimeField(null=True, blank=True)
+    organization_parent_fields = ("manifest",)
+
+    class Meta:
+        db_table = "p3_wfs_generations"
+        ordering = ("manifest_id", "-sequence")
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "manifest", "sequence"), name="p3_uq_wfs_generation_sequence"),
+        ]
+        indexes = [
+            models.Index(fields=("organization", "manifest", "status"), name="p3_wfs_generation_status_idx"),
+        ]
+
+
+class WfsGenerationFeature(OrganizationScopedModel):
+    """Immutable raw feature captured inside a staging generation."""
+
+    id = models.BigAutoField(primary_key=True)
+    generation = models.ForeignKey(WfsGeneration, on_delete=models.CASCADE, related_name="features")
+    source_id = models.CharField(max_length=255)
+    cadastre_id = models.CharField(max_length=50)
+    properties = models.JSONField(default=dict)
+    geometry = models.JSONField(default=dict)
+    organization_parent_fields = ("generation",)
+
+    class Meta:
+        db_table = "p3_wfs_generation_features"
+        ordering = ("generation_id", "cadastre_id", "source_id")
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "generation", "source_id"), name="p3_uq_wfs_generation_source"),
+        ]
+        indexes = [
+            models.Index(fields=("organization", "generation", "cadastre_id"), name="p3_wfs_feature_cadastre_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            from django.core.exceptions import ValidationError
+            raise ValidationError("WFS generation features are immutable.")
+        return super().save(*args, **kwargs)
