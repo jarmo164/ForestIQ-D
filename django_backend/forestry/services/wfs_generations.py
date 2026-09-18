@@ -108,6 +108,7 @@ def stage_generation(manifest: WfsLayerManifest, *, created_by=None) -> WfsGener
                 _schema_fields_add(schema, properties)
                 staged.append(
                     WfsGenerationFeature(
+                        organization_id=manifest.organization_id,
                         generation=generation,
                         cadastre_id=cadastre_id,
                         source_id=_feature_source_id(feature),
@@ -210,13 +211,31 @@ def _projection_row(manifest: WfsLayerManifest, feature: WfsGenerationFeature, c
     )
 
 
+def _generation_feature_queryset(generation: WfsGeneration):
+    return WfsGenerationFeature.all_objects.filter(generation=generation).order_by("id")
+
+
+def _assert_generation_feature_integrity(generation: WfsGeneration):
+    feature_qs = _generation_feature_queryset(generation)
+    staged_count = feature_qs.count()
+    if staged_count != generation.feature_count:
+        raise ValueError("Staging feature count no longer matches the validated generation.")
+    mismatched_ids = list(
+        feature_qs.exclude(organization_id=generation.organization_id).values_list("id", flat=True)[:5]
+    )
+    if mismatched_ids:
+        raise ValueError(
+            "WFS generation contains staged features from another organization: "
+            + ", ".join(str(item) for item in mismatched_ids)
+        )
+    return feature_qs
+
+
 def _activate_projection(generation: WfsGeneration) -> WfsGeneration:
     manifest = generation.manifest
     now = timezone.now()
     cadastres = {item.id: item for item in Cadastre.objects.all()}
-    feature_qs = generation.features.order_by("id")
-    if feature_qs.count() != generation.feature_count:
-        raise ValueError("Staging feature count no longer matches the validated generation.")
+    feature_qs = _assert_generation_feature_integrity(generation)
 
     with transaction.atomic():
         manifest = WfsLayerManifest.objects.select_for_update().get(pk=manifest.pk)
