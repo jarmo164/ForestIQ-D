@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from . import auth, contract_templates, health, p1, parity, portfolio, user_lifecycle, views
+from . import auth, contract_templates, health, p1, p3, parity, portfolio, user_lifecycle, views
 
 urlpatterns = [
     path("oidc/config", auth.oidc_configuration),
@@ -152,6 +152,8 @@ urlpatterns = [
     path("services/cadastres/<str:cadastre_id>/labels", views.cadastre_label),
     path("services/cadastres/<str:cadastre_id>/labels/<str:label>", views.cadastre_label),
     path("services/cadastres/<str:cadastre_id>/notifications", views.cadastre_notifications),
+    path("services/cadastres/<str:cadastre_id>/notifications/active", p3.cadastre_active_notifications),
+    path("services/cadastres/<str:cadastre_id>/notifications/archive", p3.cadastre_archived_notifications),
     path("services/cadastres/<str:cadastre_id>/mkdata", views.cadastre_mkdata),
     path("services/cadastres/<str:cadastre_id>/areas", views.cadastre_areas),
     path("services/cadastres/<str:cadastre_id>/registry-features", views.registry_features),
