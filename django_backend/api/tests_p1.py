@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from unittest.mock import MagicMock, patch
 from datetime import timedelta
 from decimal import Decimal
 
@@ -14,9 +15,11 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Organization, OrganizationRole, Privilege, PrivilegeCode, User
+from accounts.organization_context import organization_scope
 from api.auth import token_pair
 from forestry.models import Cadastre, CadastreLabel, CadastreNotification, Owner, OwnerCadastre
 from operations.models import Contract, Deal, DealOffer, DealStage, OwnershipTransitionEvent
+from operations.data_quality import run_data_quality_scan
 from operations.p1_models import (
     ContactActivity,
     ContractVersion,
@@ -274,7 +277,7 @@ class P1WorkflowApiTests(TestCase):
             email="same@example.test",
             organization=self.organization,
         )
-        self.owner.phone = "+372 555 1234"
+        self.owner.phone = "+372 (555) 12.34"
         self.owner.email = "same@example.test"
         self.owner.save(update_fields=("phone", "email"))
 
@@ -321,6 +324,60 @@ class P1WorkflowApiTests(TestCase):
         self.assertEqual(status_response.status_code, 200, status_response.data)
         self.assertEqual(status_response.data["lastRun"]["id"], second.data["id"])
         self.assertIn("queueSize", status_response.data)
+
+    def test_data_quality_scan_uses_configured_chunk_size_without_materializing_owner_queryset(self):
+        owner_queryset = MagicMock()
+        owner_queryset.order_by.return_value = owner_queryset
+        owner_queryset.iterator.return_value = iter([self.owner])
+        deal_queryset = MagicMock()
+        deal_queryset.exclude.return_value = deal_queryset
+        deal_queryset.order_by.return_value = deal_queryset
+        deal_queryset.iterator.return_value = iter([])
+
+        with organization_scope(str(self.organization.id)):
+            with (
+                patch("operations.data_quality.Owner.objects.select_related", return_value=owner_queryset),
+                patch("operations.data_quality.Deal.objects.select_related", return_value=deal_queryset),
+                patch("operations.data_quality._duplicate_groups", return_value=[]),
+            ):
+                run = run_data_quality_scan(trigger="TEST", batch_size=7)
+
+        self.assertEqual(run.status, DataQualityScanRun.Status.SUCCESS)
+        owner_queryset.iterator.assert_called_once_with(chunk_size=7)
+        deal_queryset.iterator.assert_called_once_with(chunk_size=7)
+
+    def test_data_quality_scan_interruption_is_persisted_as_failed_audit_run(self):
+        owner_queryset = MagicMock()
+        owner_queryset.order_by.return_value = owner_queryset
+        owner_queryset.iterator.side_effect = RuntimeError("forced scanner interruption")
+
+        with self.assertRaisesRegex(RuntimeError, "forced scanner interruption"):
+            with organization_scope(str(self.organization.id)):
+                with patch("operations.data_quality.Owner.objects.select_related", return_value=owner_queryset):
+                    run_data_quality_scan(trigger="TEST", batch_size=5)
+
+        run = DataQualityScanRun.all_objects.filter(organization=self.organization).latest("started_at")
+        self.assertEqual(run.status, DataQualityScanRun.Status.FAILED)
+        self.assertIn("forced scanner interruption", run.error_message)
+        self.assertIsNotNone(run.finished_at)
+
+    @override_settings(FORESTIQ_DATA_QUALITY_STALE_AFTER_SECONDS=3600)
+    def test_data_quality_scan_status_marks_old_run_stale(self):
+        old = timezone.now() - timedelta(hours=2)
+        run = DataQualityScanRun.all_objects.create(
+            organization=self.organization,
+            status=DataQualityScanRun.Status.SUCCESS,
+            trigger="SCHEDULED",
+            finished_at=old,
+        )
+        DataQualityScanRun.all_objects.filter(pk=run.pk).update(started_at=old, finished_at=old)
+
+        response = self.client.get("/api/services/admin/data-quality/scan")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["lastRun"]["id"], str(run.id))
+        self.assertTrue(response.data["lastRun"]["stale"])
+        self.assertEqual(response.data["lastRun"]["trigger"], "SCHEDULED")
 
     def test_loss_analysis_filters_by_period_seller_and_previous_stage(self):
         reason = LossReasonCode.objects.create(code="PRICE_TEST", label="Price test", sort_order=10, organization=self.organization)
