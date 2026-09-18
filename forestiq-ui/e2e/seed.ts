@@ -202,6 +202,49 @@ export async function installSeededApi(page: Page) {
           },
         ],
       });
+    if (pathname === `/api/services/owners/${owner.id}/360/summary` && method === "GET")
+      return json(route, {
+        owner,
+        contactCompleteness: 100,
+        cadastreCount: 1,
+        relations: { active: 1, historical: 0 },
+        openNextActionCount: 0,
+        activeDealCount: deals.length,
+        signalCount: 0,
+        signals: [],
+        panels: {},
+      });
+    if (pathname === `/api/services/owners/${owner.id}/360/workflow` && method === "GET")
+      return json(route, {
+        nextActions: [],
+        activeDeals: deals.map((deal) => ({
+          id: deal.id,
+          stage: deal.stage,
+          value: 125000,
+          healthy: true,
+          health: [],
+        })),
+        recentOwnershipChanges: [],
+        signals: [],
+      });
+    if (pathname === `/api/services/owners/${owner.id}/360/timeline` && method === "GET")
+      return json(route, []);
+    if (pathname === `/api/services/owners/${owner.id}/360/map` && method === "GET")
+      return json(route, {
+        type: "FeatureCollection",
+        features: [
+          {
+            id: "relation-0001",
+            properties: {
+              cadastreId: owner.cadastres[0].id,
+              name: owner.cadastres[0].name,
+              area: owner.cadastres[0].area,
+              active: true,
+              source: "LEGACY",
+            },
+          },
+        ],
+      });
     if (pathname === `/api/services/owners/${owner.id}/activities` && method === "GET")
       return json(route, []);
     if (pathname === `/api/services/owners/${owner.id}/ownership-relations` && method === "GET")

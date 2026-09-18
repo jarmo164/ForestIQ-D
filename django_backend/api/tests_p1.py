@@ -12,7 +12,7 @@ from rest_framework.test import APIClient
 from accounts.models import Organization, OrganizationRole, Privilege, PrivilegeCode, User
 from api.auth import token_pair
 from forestry.models import Cadastre, CadastreLabel, CadastreNotification, Owner, OwnerCadastre
-from operations.models import Contract, Deal, DealOffer, DealStage
+from operations.models import Contract, Deal, DealOffer, DealStage, OwnershipTransitionEvent
 from operations.p1_models import (
     ContactActivity,
     ContractVersion,
@@ -257,6 +257,98 @@ class P1WorkflowApiTests(TestCase):
         self.assertFalse(relation.is_active)
         self.assertTrue(relation.manual_protected)
         self.assertTrue(relation.events.filter(event_type="EXTERNAL_RESTORE_BLOCKED").exists())
+
+    def test_owner_360_loads_summary_relations_map_workflow_and_normalized_timeline(self):
+        OwnerCadastre.objects.create(owner=self.owner, cadastre=self.cadastre, organization=self.organization)
+        active = self.client.get(f"/api/services/owners/{self.owner.id}/ownership-relations", {"active": "true", "limit": 1})
+        self.assertEqual(active.status_code, 200, active.data)
+        relation = OwnershipRelation.objects.get(id=active.data["items"][0]["id"])
+        ended = self.client.patch(
+            f"/api/services/ownership-relations/{relation.id}",
+            {"operation": "END", "reason": "Sold parcel", "protected": False},
+            format="json",
+        )
+        self.assertEqual(ended.status_code, 200, ended.data)
+        second = Cadastre.objects.create(id="12345:001:0002", name="Current parcel", area=Decimal("7.50"), organization=self.organization)
+        recreated = self.client.post(
+            f"/api/services/owners/{self.owner.id}/ownership-relations",
+            {"cadastreId": second.id, "reason": "Current ownership", "protected": True},
+            format="json",
+        )
+        self.assertEqual(recreated.status_code, 201, recreated.data)
+        deal = self.create_deal(stage=DealStage.EVALUATION)
+        action = NextAction.objects.create(
+            owner=self.owner,
+            deal=deal,
+            text="Call before offer",
+            due_at=timezone.now() + timedelta(days=1),
+            assignee=self.admin,
+            created_by=self.admin,
+            organization=self.organization,
+        )
+        ContactActivity.objects.create(
+            owner=self.owner,
+            deal=deal,
+            channel=ContactActivity.Channel.PHONE,
+            outcome_code="INTERESTED",
+            note="Asked for an indicative price.",
+            created_by=self.admin,
+            organization=self.organization,
+        )
+        WorkflowAuditEvent.objects.create(
+            owner=self.owner,
+            deal=deal,
+            event_type="OWNER_360_TEST_AUDIT",
+            actor=self.admin,
+            organization=self.organization,
+        )
+        offer = DealOffer.objects.create(
+            deal=deal,
+            revision=1,
+            kind=DealOffer.Kind.OFFER,
+            status=DealOffer.Status.ACCEPTED,
+            amount=Decimal("42000.00"),
+            terms="Accepted",
+            created_by=self.admin,
+            organization=self.organization,
+        )
+        Contract.objects.create(id="OWNER-360-CONTRACT", source_deal=deal, source_offer=offer, organization=self.organization)
+        OwnershipTransitionEvent.objects.create(
+            owner=self.owner,
+            cadastre=second,
+            event_type="OWNER_CHANGED",
+            occurred_at=timezone.now(),
+            source_reference="registry-360",
+            organization=self.organization,
+        )
+
+        summary = self.client.get(f"/api/services/owners/{self.owner.id}/360/summary")
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data["relations"]["active"], 1)
+        self.assertEqual(summary.data["relations"]["historical"], 1)
+        self.assertEqual(summary.data["openNextActionCount"], 1)
+        self.assertEqual(summary.data["activeDealCount"], 1)
+
+        active_page = self.client.get(f"/api/services/owners/{self.owner.id}/ownership-relations", {"active": "true"})
+        history_page = self.client.get(f"/api/services/owners/{self.owner.id}/ownership-relations", {"active": "false"})
+        self.assertEqual([item["cadastre"]["id"] for item in active_page.data["items"]], [second.id])
+        self.assertEqual([item["cadastre"]["id"] for item in history_page.data["items"]], [self.cadastre.id])
+
+        map_layer = self.client.get(f"/api/services/owners/{self.owner.id}/360/map")
+        self.assertEqual(map_layer.status_code, 200, map_layer.data)
+        self.assertEqual(map_layer.data["type"], "FeatureCollection")
+        self.assertEqual(map_layer.data["features"][0]["properties"]["cadastreId"], second.id)
+
+        workflow = self.client.get(f"/api/services/owners/{self.owner.id}/360/workflow")
+        self.assertEqual(workflow.status_code, 200, workflow.data)
+        self.assertEqual(workflow.data["nextActions"][0]["id"], str(action.id))
+        self.assertEqual(workflow.data["activeDeals"][0]["id"], str(deal.id))
+        self.assertEqual(workflow.data["recentOwnershipChanges"][0]["sourceReference"], "registry-360")
+
+        timeline = self.client.get(f"/api/services/owners/{self.owner.id}/360/timeline")
+        self.assertEqual(timeline.status_code, 200, timeline.data)
+        timeline_types = {item["type"] for item in timeline.data}
+        self.assertTrue({"CONTACT", "NEXT_ACTION", "DEAL", "CONTRACT", "OWNERSHIP_RELATION", "OWNERSHIP_CHANGE", "WORKFLOW_AUDIT"}.issubset(timeline_types))
 
     def test_decision_evidence_preview_and_confirm_freeze_reproducible_snapshot(self):
         self.owner.phone = ""
