@@ -130,46 +130,49 @@ class FullImportReport:
     resumed_from: int = 0
     checkpoint_cursor: int = 0
     checkpoint_pages: int = 0
+    completed: bool = False
 
-    def data(self) -> dict[str, int]:
+    def data(self) -> dict[str, int | bool]:
         return asdict(self)
 
 
 def _open_full_import_checkpoint(*, layer: str, run: DataSyncRun | None) -> ImportCheckpoint:
-    """Reuse the last incomplete import cursor, or begin a separately auditable run."""
+    """Reuse one incomplete import cursor under a row lock, or begin a new run."""
 
-    checkpoint = (
-        ImportCheckpoint.objects.filter(
-            source="metsaregister-full",
-            source_layer=layer,
-            completed=False,
+    with transaction.atomic():
+        checkpoint = (
+            ImportCheckpoint.objects.select_for_update()
+            .filter(
+                source="metsaregister-full",
+                source_layer=layer,
+                completed=False,
+            )
+            .order_by("-checkpointed_at", "-id")
+            .first()
         )
-        .order_by("-checkpointed_at", "-id")
-        .first()
-    )
-    if checkpoint is None:
-        return ImportCheckpoint.objects.create(
-            source="metsaregister-full",
-            source_layer=layer,
-            last_run=run,
-        )
-    checkpoint.last_run = run
-    checkpoint.last_error = ""
-    checkpoint.save(update_fields=("last_run", "last_error", "checkpointed_at"))
-    return checkpoint
+        if checkpoint is None:
+            return ImportCheckpoint.objects.create(
+                source="metsaregister-full",
+                source_layer=layer,
+                last_run=run,
+            )
+        checkpoint.last_run = run
+        checkpoint.last_error = ""
+        checkpoint.save(update_fields=("last_run", "last_error", "checkpointed_at"))
+        return checkpoint
 
 
 def _confirm_checkpoint_page(
     checkpoint: ImportCheckpoint,
     *,
-    page_size: int,
+    rows: int,
     run: DataSyncRun | None,
 ) -> None:
     """Persist only a completely stored page as the next safe restart cursor."""
 
-    checkpoint.cursor += page_size
+    checkpoint.cursor += rows
     checkpoint.pages_completed += 1
-    checkpoint.rows_completed += page_size
+    checkpoint.rows_completed += rows
     checkpoint.last_run = run
     checkpoint.last_error = ""
     checkpoint.save(
@@ -247,12 +250,15 @@ def import_all_metsaregister(
     page_size: int | None = None,
     fetch_notifications: bool = True,
     run: DataSyncRun | None = None,
+    max_pages: int | None = None,
 ) -> FullImportReport:
-    """Import every allocation from the last confirmed page, then close its checkpoint.
+    """Import allocations from the last confirmed page and stop safely at a chunk boundary.
 
     Entity writes are idempotent `update_or_create` operations. If a worker stops
     before a page is confirmed, the prior cursor remains durable and the entire
     page can safely be requested and stored again on the next controlled run.
+    `max_pages` lets Celery orchestrate a chain of bounded task executions until
+    EOF instead of relying on one long-running import task.
     """
 
     _require_organization_context(organization_id)
@@ -266,6 +272,7 @@ def import_all_metsaregister(
         checkpoint_cursor=checkpoint.cursor,
         checkpoint_pages=checkpoint.pages_completed,
     )
+    pages_done = 0
     try:
         for page in _pages(
             layer=layer,
@@ -274,9 +281,16 @@ def import_all_metsaregister(
         ):
             for feature in page:
                 _store_allocation(report=report, layer=layer, feature=feature, fetch_notifications=fetch_notifications)
-            _confirm_checkpoint_page(checkpoint, page_size=len(page), run=run)
+            _confirm_checkpoint_page(checkpoint, rows=len(page), run=run)
+            pages_done += 1
             report.checkpoint_cursor = checkpoint.cursor
             report.checkpoint_pages = checkpoint.pages_completed
+            if len(page) < effective_page_size:
+                report.completed = True
+                break
+            if max_pages is not None and pages_done >= max_pages:
+                report.completed = False
+                return report
     except Exception as exc:
         checkpoint.completed = False
         checkpoint.last_run = run
@@ -287,6 +301,7 @@ def import_all_metsaregister(
     checkpoint.last_run = run
     checkpoint.last_error = ""
     checkpoint.save(update_fields=("completed", "last_run", "last_error", "checkpointed_at"))
+    report.completed = True
     return report
 
 
@@ -311,4 +326,5 @@ def import_metsaregister_delta(
     for page in _pages(layer=layer, page_size=page_size or settings.FORESTIQ_METSAREGISTER_FULL_PAGE_SIZE, cql_filter=cql_filter):
         for feature in page:
             _store_allocation(report=report, layer=layer, feature=feature, fetch_notifications=fetch_notifications)
+    report.completed = True
     return report
