@@ -5,16 +5,20 @@ import base64
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 import json
 
+from django.conf import settings
 from django.db.models import DateTimeField, F, Q, Value
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from forestry.models import Cadastre, CadastreNotification
+from operations.models import ApplicationMessage
 from operations.p3_models import NotificationPreference
+from operations.realtime import publish_org_event, unread_application_message_count
 from operations.notifications import SUPPORTED_CHANNELS, SUPPORTED_EVENTS
 from .permissions import CanUseAssignedOwners, CanViewOrganizationData, can_access_owner
 from .serializers import notification_data
@@ -156,3 +160,82 @@ def notification_preferences(request):
         "supportedEventTypes": sorted(SUPPORTED_EVENTS),
         "supportedChannels": sorted(SUPPORTED_CHANNELS),
     })
+
+
+def _application_message_data(message: ApplicationMessage) -> dict:
+    return {
+        "id": message.pk,
+        "text": message.text,
+        "category": message.category or None,
+        "eventKey": message.event_key or None,
+        "createdAt": int(message.created_at.timestamp() * 1000),
+        "readAt": int(message.read_at.timestamp() * 1000) if message.read_at else None,
+        "archivedAt": int(message.archived_at.timestamp() * 1000) if message.archived_at else None,
+    }
+
+
+def _publish_unread_count(request):
+    publish_org_event(
+        "APPLICATION_MESSAGE_COUNT",
+        {"unreadCount": unread_application_message_count(request.user)},
+        actor=request.user,
+        recipient=request.user,
+        topic="user",
+    )
+
+
+@api_view(["GET"])
+@permission_classes([CanViewOrganizationData])
+def application_messages(request):
+    records = ApplicationMessage.objects.filter(recipient=request.user)
+    include_archived = str(request.query_params.get("includeArchived", "false")).lower() == "true"
+    if not include_archived:
+        records = records.filter(archived_at__isnull=True)
+    try:
+        limit = min(max(int(request.query_params.get("limit", 100)), 1), 200)
+    except (TypeError, ValueError):
+        return _detail("limit must be an integer.")
+    rows = list(records.order_by("-created_at", "-id")[:limit])
+    return Response({
+        "items": [_application_message_data(item) for item in rows],
+        "unreadCount": unread_application_message_count(request.user),
+    })
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([CanViewOrganizationData])
+def application_message_detail(request, message_id: int):
+    message = get_object_or_404(ApplicationMessage, pk=message_id, recipient=request.user)
+    if request.method == "DELETE":
+        if message.archived_at is None:
+            return _detail("Archive the message before deleting it.", status.HTTP_409_CONFLICT)
+        delete_after = message.archived_at + timedelta(days=settings.FORESTIQ_APPLICATION_MESSAGE_DELETE_AFTER_DAYS)
+        if timezone.now() < delete_after:
+            return _detail(
+                f"Archived messages are retained for {settings.FORESTIQ_APPLICATION_MESSAGE_DELETE_AFTER_DAYS} days.",
+                status.HTTP_409_CONFLICT,
+            )
+        message.delete()
+        _publish_unread_count(request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    operation = str(request.data.get("operation", "")).upper()
+    now = timezone.now()
+    if operation == "READ":
+        if message.read_at is None:
+            message.read_at = now
+            message.save(update_fields=("read_at",))
+    elif operation == "ARCHIVE":
+        message.read_at = message.read_at or now
+        message.archived_at = now
+        message.save(update_fields=("read_at", "archived_at"))
+    else:
+        return _detail("operation must be READ or ARCHIVE.")
+    _publish_unread_count(request)
+    return Response(_application_message_data(message))
+
+
+@api_view(["GET"])
+@permission_classes([CanViewOrganizationData])
+def application_message_unread_count(request):
+    return Response({"unreadCount": unread_application_message_count(request.user)})
