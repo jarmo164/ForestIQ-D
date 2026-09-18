@@ -274,8 +274,7 @@ class P3WfsGenerationTests(P3NotificationHistoryTests):
             status=status,
             feature_count=1,
             cadastre_count=1,
-            schema_hash=f"hash-{sequence}",
-            schema_fields={"title": ["string"]},
+            observed_at=timezone.now(),
             validation={"featureCount": 1, "schemaDrift": False, "emptyGeneration": False},
             organization=self.organization,
         )
@@ -287,6 +286,11 @@ class P3WfsGenerationTests(P3NotificationHistoryTests):
             geometry={"type": "Point", "coordinates": [500000, 6500000]},
             organization=self.organization,
         )
+        from forestry.services.wfs_generations import generation_schema_from_storage
+        fields, schema_hash = generation_schema_from_storage(generation)
+        generation.schema_fields = fields
+        generation.schema_hash = schema_hash
+        generation.save(update_fields=("schema_fields", "schema_hash"))
         return generation
 
     def test_publish_second_generation_and_rollback_restore_previous_projection(self):
