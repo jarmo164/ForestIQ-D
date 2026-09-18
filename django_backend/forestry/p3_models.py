@@ -152,13 +152,14 @@ class WfsGenerationFeature(OrganizationScopedModel):
         ]
 
     def __init__(self, *args, **kwargs):
+        generation = kwargs.get("generation")
         super().__init__(*args, **kwargs)
-        generation = getattr(self, "generation", None)
-        if self.organization_id and generation is not None and self.organization_id != generation.organization_id:
-            from django.core.exceptions import ValidationError
-            raise ValidationError("WFS generation feature organization must match its generation.")
-        if generation is not None and not self.organization_id:
-            self.organization_id = generation.organization_id
+        if generation is not None:
+            if self.organization_id and self.organization_id != generation.organization_id:
+                from django.core.exceptions import ValidationError
+                raise ValidationError("WFS generation feature organization must match its generation.")
+            if not self.organization_id:
+                self.organization_id = generation.organization_id
 
     def save(self, *args, **kwargs):
         if not self._state.adding:
