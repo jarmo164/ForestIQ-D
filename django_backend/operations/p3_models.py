@@ -20,11 +20,11 @@ def default_notification_channels():
 class NotificationPreference(OrganizationScopedModel):
     """Per-user delivery policy. Only explicitly supported channels may be persisted."""
 
-    user = models.OneToOneField(
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        primary_key=True,
-        related_name="notification_preference",
+        related_name="notification_preferences",
     )
     enabled = models.BooleanField(default=True)
     event_types = models.JSONField(default=default_notification_events)
@@ -34,6 +34,9 @@ class NotificationPreference(OrganizationScopedModel):
 
     class Meta:
         db_table = "p3_notification_preferences"
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "user"), name="p3_uq_notification_preference_user"),
+        ]
 
 
 class ReminderNotificationDelivery(OrganizationScopedModel):
