@@ -1919,6 +1919,11 @@ def data_quality_issues(request):
 def _quality_scan_data(run: DataQualityScanRun | None) -> dict | None:
     if run is None:
         return None
+    observed_at = run.finished_at or run.started_at
+    stale = bool(
+        observed_at
+        and observed_at < timezone.now() - timedelta(seconds=settings.FORESTIQ_DATA_QUALITY_STALE_AFTER_SECONDS)
+    )
     return {
         "id": str(run.id),
         "status": run.status,
@@ -1929,6 +1934,7 @@ def _quality_scan_data(run: DataQualityScanRun | None) -> dict | None:
         "processedOwners": run.processed_owner_count,
         "processedDeals": run.processed_deal_count,
         "error": run.error_message or None,
+        "stale": stale,
         "startedAt": json_value(run.started_at),
         "finishedAt": json_value(run.finished_at),
     }
