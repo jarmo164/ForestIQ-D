@@ -1,0 +1,120 @@
+"""P3 platform-control APIs: stable notification history, map services, realtime and preferences."""
+from __future__ import annotations
+
+import base64
+from datetime import date, datetime, timedelta, timezone as dt_timezone
+import json
+
+from django.db.models import DateTimeField, F, Q, Value
+from django.db.models.functions import Coalesce
+from django.shortcuts import get_object_or_404
+from django.utils.dateparse import parse_date
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+
+from forestry.models import Cadastre, CadastreNotification
+from .permissions import CanUseAssignedOwners, can_access_owner
+from .serializers import notification_data
+
+
+_NOTIFICATION_PAGE_MAX = 100
+_ARCHIVE_RANGE_MAX_DAYS = 366
+_CURSOR_FALLBACK = datetime(1970, 1, 1, tzinfo=dt_timezone.utc)
+
+
+def _detail(message: str, http_status: int = status.HTTP_400_BAD_REQUEST) -> Response:
+    return Response({"detail": message}, status=http_status)
+
+
+def _cadastre_or_403(request, cadastre_id: str):
+    cadastre = get_object_or_404(Cadastre.objects.prefetch_related("owners"), id=cadastre_id)
+    if not any(can_access_owner(request, owner) for owner in cadastre.owners.all()):
+        return None, _detail("You do not have access to this cadastre.", status.HTTP_403_FORBIDDEN)
+    return cadastre, None
+
+
+def _page_size(request) -> int:
+    try:
+        value = int(request.query_params.get("limit", 50))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer.") from exc
+    if value < 1 or value > _NOTIFICATION_PAGE_MAX:
+        raise ValueError(f"limit must be between 1 and {_NOTIFICATION_PAGE_MAX}.")
+    return value
+
+
+def _encode_notification_cursor(sort_date: datetime, notification_id: int) -> str:
+    raw = json.dumps({"at": sort_date.isoformat(), "id": notification_id}, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_notification_cursor(value: str | None) -> tuple[datetime, int] | None:
+    if not value:
+        return None
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+        anchor = datetime.fromisoformat(str(payload["at"]).replace("Z", "+00:00"))
+        if anchor.tzinfo is None:
+            anchor = anchor.replace(tzinfo=dt_timezone.utc)
+        return anchor, int(payload["id"])
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("cursor is invalid.") from exc
+
+
+def _notification_page(request, *, cadastre: Cadastre, archived: bool, from_date: date | None = None, to_date: date | None = None):
+    try:
+        limit = _page_size(request)
+        cursor = _decode_notification_cursor(request.query_params.get("cursor"))
+    except ValueError as exc:
+        return _detail(str(exc))
+
+    sort_expression = (
+        Coalesce("archive_date", "registration_date", Value(_CURSOR_FALLBACK, output_field=DateTimeField()))
+        if archived
+        else Coalesce("registration_date", Value(_CURSOR_FALLBACK, output_field=DateTimeField()))
+    )
+    queryset = CadastreNotification.objects.filter(cadastre=cadastre, archived=archived).annotate(_sort_date=sort_expression)
+    if from_date is not None and to_date is not None:
+        start = datetime.combine(from_date, datetime.min.time(), tzinfo=dt_timezone.utc)
+        end = datetime.combine(to_date + timedelta(days=1), datetime.min.time(), tzinfo=dt_timezone.utc)
+        queryset = queryset.filter(_sort_date__gte=start, _sort_date__lt=end)
+    if cursor:
+        anchor, notification_id = cursor
+        queryset = queryset.filter(Q(_sort_date__lt=anchor) | Q(_sort_date=anchor, id__lt=notification_id))
+    rows = list(queryset.order_by(F("_sort_date").desc(), "-id")[: limit + 1])
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    next_cursor = None
+    if has_more and rows:
+        next_cursor = _encode_notification_cursor(rows[-1]._sort_date, rows[-1].id)
+    return Response({"items": [notification_data(item) for item in rows], "nextCursor": next_cursor, "pageSize": limit})
+
+
+@api_view(["GET"])
+@permission_classes([CanUseAssignedOwners])
+def cadastre_active_notifications(request, cadastre_id: str):
+    """Return current notices with a stable two-part keyset cursor."""
+    cadastre, denied = _cadastre_or_403(request, cadastre_id)
+    if denied:
+        return denied
+    return _notification_page(request, cadastre=cadastre, archived=False)
+
+
+@api_view(["GET"])
+@permission_classes([CanUseAssignedOwners])
+def cadastre_archived_notifications(request, cadastre_id: str):
+    """Return archive notices only inside an explicit bounded date range."""
+    cadastre, denied = _cadastre_or_403(request, cadastre_id)
+    if denied:
+        return denied
+    from_value = parse_date(str(request.query_params.get("from", "")))
+    to_value = parse_date(str(request.query_params.get("to", "")))
+    if from_value is None or to_value is None:
+        return _detail("from and to are required ISO dates for archive queries.")
+    if to_value < from_value:
+        return _detail("to must not be earlier than from.")
+    if (to_value - from_value).days > _ARCHIVE_RANGE_MAX_DAYS:
+        return _detail(f"Archive range must not exceed {_ARCHIVE_RANGE_MAX_DAYS} days.")
+    return _notification_page(request, cadastre=cadastre, archived=True, from_date=from_value, to_date=to_value)
