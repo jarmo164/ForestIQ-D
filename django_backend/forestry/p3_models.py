@@ -37,6 +37,7 @@ class ExternalMapLayer(OrganizationScopedModel):
     name = models.CharField(max_length=160)
     service_type = models.CharField(max_length=10, choices=ServiceType.choices)
     url_template = models.URLField(max_length=1500)
+    source_layer = models.CharField(max_length=160, blank=True)
     visible = models.BooleanField(default=False)
     opacity = models.DecimalField(max_digits=4, decimal_places=3, default=0.75)
     usage_rights = models.TextField(blank=True)
