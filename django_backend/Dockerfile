@@ -10,6 +10,8 @@ RUN addgroup --system forestiq && adduser --system --ingroup forestiq forestiq
 
 RUN apt-get update && apt-get install --no-install-recommends -y \
     gdal-bin libgdal-dev libgeos-dev libproj-dev \
+    libglib2.0-0 libpango-1.0-0 libpangoft2-1.0-0 \
+    libcairo2 libgdk-pixbuf-2.0-0 shared-mime-info \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
@@ -21,6 +23,7 @@ COPY scripts/render-predeploy.sh /app/scripts/render-predeploy.sh
 RUN python manage.py collectstatic --noinput \
     && chown -R forestiq:forestiq /app
 USER forestiq
+ENV XDG_CACHE_HOME=/tmp/.cache
 
 EXPOSE 8000
 
